@@ -1,0 +1,10 @@
+node_modules/
+pb_data/
+pb_backups/
+pb_public/
+.env
+.env.*
+*.zip
+*.tar.gz
+*.log
+.DS_Store
