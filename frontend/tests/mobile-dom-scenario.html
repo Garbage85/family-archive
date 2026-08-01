@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <style>
+      body {
+        width: 390px;
+        height: 844px;
+      }
+      #FamilyChart {
+        height: 240px;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="topbar app-ui-chrome" data-ui-chrome>Панель приложения</header>
+    <nav class="toolbar app-ui-chrome" data-ui-chrome>
+      <div id="search-host"></div>
+    </nav>
+    <div id="FamilyChart" class="f3 chart-surface" data-tree-canvas></div>
+    <div id="person-sidebar-host"></div>
+    <pre id="scenario-result">RUNNING</pre>
+    <script type="module">
+      import { applyPersonAction } from '/src/person-editor.js';
+      import { PersonSidebar } from '/src/person-sidebar.js';
+      import { SidebarZoomGuard } from '/src/sidebar-zoom-guard.js';
+
+      void (async () => {
+        const checks = [];
+        const check = (name, passed, details = '') => checks.push({ name, passed, details });
+        const frame = () => new Promise((resolve) => setTimeout(resolve, 20));
+
+        const viewModel = {
+          id: 'child',
+          fullName: 'Иван Тестов',
+          initials: 'ИТ',
+          photoUrl: '',
+          fields: [],
+          relationGroups: [
+            { key: 'parents', label: 'Родители', people: [] },
+            { key: 'spouses', label: 'Супруг(а)', people: [] },
+            { key: 'children', label: 'Дети', people: [] },
+          ],
+          values: {
+            first_name: 'Иван',
+            last_name: 'Тестов',
+            middle_name: '',
+            gender: 'M',
+            birth_date: '2000-01-01',
+            death_date: '',
+            birth_place: '',
+            occupation: '',
+            notes: '',
+          },
+        };
+
+        const sidebar = new PersonSidebar(document.querySelector('#person-sidebar-host'));
+        sidebar.open(viewModel, { editable: true, handlers: {} });
+        sidebar.showMode('edit');
+        const editForm = document.querySelector('#person-sidebar-edit-form');
+        const select = document.createElement('select');
+        select.innerHTML = '<option>Проверка select</option>';
+        const editable = document.createElement('div');
+        editable.contentEditable = 'true';
+        editable.textContent = 'Проверка contenteditable';
+        editForm.querySelector('.person-sidebar-form-grid').append(select, editable);
+        await frame();
+
+        const scaleBefore = visualViewport?.scale || 1;
+        const controls = [
+          ...editForm.querySelectorAll('input, textarea, select, [contenteditable]'),
+        ];
+        const sizes = [];
+        for (const control of controls) {
+          control.focus();
+          await frame();
+          sizes.push([
+            control.type || control.tagName,
+            parseFloat(getComputedStyle(control).fontSize),
+          ]);
+        }
+        check(
+          'all sidebar controls use at least 16px',
+          sizes.every(([, size]) => size >= 16),
+          JSON.stringify(sizes),
+        );
+        check(
+          'focus keeps visual viewport scale',
+          (visualViewport?.scale || 1) === scaleBefore,
+          `${scaleBefore} -> ${visualViewport?.scale || 1}`,
+        );
+
+        const scrollArea = document.querySelector('.person-sidebar-scroll');
+        scrollArea.scrollTop = 0;
+        editForm.elements.first_name.focus();
+        editForm.elements.notes.focus();
+        await frame();
+        check('focus scrolls only sidebar content', scrollArea.scrollTop > 0 && scrollY === 0);
+
+        const panel = document.querySelector('.person-sidebar');
+        panel.style.setProperty('--person-sidebar-visual-height', '420px');
+        await frame();
+        const closeRect = document.querySelector('[data-sidebar-close]').getBoundingClientRect();
+        const footerRect = document.querySelector('.person-sidebar-footer').getBoundingClientRect();
+        const panelRect = panel.getBoundingClientRect();
+        check(
+          'close remains inside simulated keyboard viewport',
+          closeRect.bottom <= panelRect.bottom,
+        );
+        check(
+          'footer remains inside simulated keyboard viewport',
+          footerRect.bottom <= panelRect.bottom,
+        );
+        check(
+          'document is locked while sidebar is open',
+          document.documentElement.classList.contains('person-sidebar-document-locked'),
+        );
+
+        const chrome = document.querySelector('[data-ui-chrome]');
+        const chromeGuard = new SidebarZoomGuard(chrome);
+        chromeGuard.activate();
+        const chromeGesture = new Event('gesturestart', { bubbles: true, cancelable: true });
+        chrome.dispatchEvent(chromeGesture);
+        const canvasGesture = new Event('gesturestart', { bubbles: true, cancelable: true });
+        document.querySelector('[data-tree-canvas]').dispatchEvent(canvasGesture);
+        check(
+          'chrome blocks zoom while canvas does not',
+          chromeGesture.defaultPrevented && !canvasGesture.defaultPrevented,
+        );
+        check('chrome keeps vertical pan', getComputedStyle(chrome).touchAction === 'pan-y');
+        check(
+          'canvas owns pan and zoom gestures',
+          getComputedStyle(document.querySelector('[data-tree-canvas]')).touchAction === 'none',
+        );
+
+        const canvas = document.querySelector('[data-tree-canvas]');
+        let canvasScale = 1;
+        canvas.addEventListener('wheel', (event) => {
+          event.preventDefault();
+          canvasScale += event.deltaY < 0 ? 0.1 : -0.1;
+        });
+        canvas.dispatchEvent(
+          new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: -120 }),
+        );
+        check('tree canvas still receives zoom input', canvasScale > 1, `1 -> ${canvasScale}`);
+
+        const baseState = {
+          role: 'admin',
+          previewMode: false,
+          data: [
+            {
+              id: 'child',
+              data: { first_name: 'Иван', gender: 'M' },
+              rels: { parents: [], spouses: [], children: [] },
+            },
+          ],
+        };
+        const fatherResult = applyPersonAction(baseState, {
+          type: 'add-relative',
+          personId: 'child',
+          relation: 'father',
+          values: { first_name: 'Отец' },
+        });
+        const motherResult = applyPersonAction(baseState, {
+          type: 'add-relative',
+          personId: 'child',
+          relation: 'mother',
+          values: { first_name: 'Мать', maiden_name: 'Соколова' },
+        });
+        check(
+          'father and mother create parent links with correct genders',
+          fatherResult.data.find((person) => person.id === fatherResult.createdPersonId).data
+            .gender === 'M' &&
+            motherResult.data.find((person) => person.id === motherResult.createdPersonId).data
+              .gender === 'F' &&
+            fatherResult.data[0].rels.parents.includes(fatherResult.createdPersonId) &&
+            motherResult.data[0].rels.parents.includes(motherResult.createdPersonId),
+        );
+
+        chromeGuard.destroy();
+        sidebar.destroy();
+        check(
+          'destroy removes document lock and gesture handlers',
+          !document.documentElement.classList.contains('person-sidebar-document-locked') &&
+            chromeGuard.active === false,
+        );
+
+        const passed = checks.every((item) => item.passed);
+        document.body.dataset.result = passed ? 'PASS' : 'FAIL';
+        document.querySelector('#scenario-result').textContent = JSON.stringify(
+          { passed, checks },
+          null,
+          2,
+        );
+        document.body.replaceChildren(document.querySelector('#scenario-result'));
+      })();
+    </script>
+  </body>
+</html>

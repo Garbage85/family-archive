@@ -19,6 +19,12 @@ export function personName(person) {
   return parts.join(' ') || 'Без имени';
 }
 
+function normaliseGender(value) {
+  if (value === null || value === undefined) return 'M';
+  const gender = String(value || '').toUpperCase();
+  return ['M', 'F'].includes(gender) ? gender : '';
+}
+
 export function normaliseTree(input) {
   const data = Array.isArray(input) ? cloneTree(input) : [];
   return data.map((person, index) => {
@@ -32,7 +38,7 @@ export function normaliseTree(input) {
       data: {
         ...personData,
         ...optionalMaidenName,
-        gender: personData.gender === 'F' ? 'F' : 'M',
+        gender: normaliseGender(personData.gender),
         first_name: String(personData.first_name || ''),
         last_name: String(personData.last_name || ''),
         middle_name: String(personData.middle_name || ''),
@@ -64,8 +70,8 @@ export function validateTree(data) {
     if (!person?.id) errors.push('Найдена запись без идентификатора.');
     if (ids.has(person.id)) errors.push(`Повторяется идентификатор ${person.id}.`);
     ids.add(person.id);
-    if (!['M', 'F'].includes(person?.data?.gender)) {
-      errors.push(`${personName(person)}: пол должен быть M или F.`);
+    if (!['M', 'F', ''].includes(person?.data?.gender)) {
+      errors.push(`${personName(person)}: пол должен быть M, F или не указан.`);
     }
   }
 
@@ -128,7 +134,7 @@ export function createPerson(values = {}) {
     {
       id,
       data: {
-        gender: values.gender === 'F' ? 'F' : 'M',
+        gender: normaliseGender(values.gender),
         first_name: values.first_name || '',
         last_name: values.last_name || '',
         middle_name: values.middle_name || '',
@@ -191,7 +197,7 @@ export function updatePerson(tree, personId, values) {
   person.data = {
     ...person.data,
     ...values,
-    gender: values.gender === undefined ? person.data.gender : values.gender === 'F' ? 'F' : 'M',
+    gender: values.gender === undefined ? person.data.gender : normaliseGender(values.gender),
   };
   if (!hadMaidenName && !String(values.maiden_name || '').trim()) {
     delete person.data.maiden_name;

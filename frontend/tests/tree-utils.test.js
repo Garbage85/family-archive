@@ -14,6 +14,17 @@ test('maiden_name remains optional during normalisation', () => {
   assert.equal(Object.hasOwn(person.data, 'maiden_name'), false);
 });
 
+test('normalisation preserves an explicitly unknown gender', () => {
+  const [person] = normaliseTree([{ id: '1', data: { gender: '' }, rels: {} }]);
+  assert.equal(person.data.gender, '');
+  assert.deepEqual(validateTree([person]), []);
+});
+
+test('normalisation keeps the existing male default when gender is absent', () => {
+  const [person] = normaliseTree([{ id: '1', data: {}, rels: {} }]);
+  assert.equal(person.data.gender, 'M');
+});
+
 test('changing a woman to male preserves an existing maiden_name', () => {
   const result = updatePerson(
     [

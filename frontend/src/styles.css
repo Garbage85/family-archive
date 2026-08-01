@@ -33,9 +33,14 @@ body,
 body {
   overflow: hidden;
 }
+.person-sidebar-document-locked {
+  overflow: hidden !important;
+  overscroll-behavior: none;
+}
 button,
 input,
-textarea {
+textarea,
+select {
   font: inherit;
 }
 button {
@@ -142,6 +147,10 @@ textarea:focus {
   background: var(--paper);
   border-bottom: 1px solid var(--line);
 }
+.app-ui-chrome,
+.person-sidebar {
+  touch-action: pan-y;
+}
 .brand-row,
 .user-row {
   display: flex;
@@ -246,6 +255,7 @@ button {
   height: calc(100vh - 152px);
   background: radial-gradient(circle at 25% 10%, #f7fbf9, #eaf1ed);
   color: var(--ink);
+  touch-action: none;
 }
 
 .dialog-card {
@@ -627,6 +637,18 @@ button {
 .person-sidebar-relation-actions button {
   white-space: normal;
 }
+.person-sidebar-more-actions {
+  margin-top: 0.8rem;
+  color: var(--muted);
+  font-size: 0.88rem;
+  font-weight: 750;
+}
+.person-sidebar-more-actions summary {
+  cursor: pointer;
+}
+.person-sidebar-more-actions .wide {
+  margin-top: 0.7rem;
+}
 .person-sidebar-photo-preview {
   min-height: 132px;
   display: grid;
@@ -667,9 +689,22 @@ button {
     transition-delay: 0s;
   }
   .person-sidebar {
-    inset: max(0.5rem, env(safe-area-inset-top)) max(0.5rem, env(safe-area-inset-right))
-      max(0.5rem, env(safe-area-inset-bottom)) max(0.5rem, env(safe-area-inset-left));
-    width: auto;
+    top: calc(var(--person-sidebar-visual-top, 0px) + max(0.5rem, env(safe-area-inset-top)));
+    right: auto;
+    bottom: auto;
+    left: calc(var(--person-sidebar-visual-left, 0px) + max(0.5rem, env(safe-area-inset-left)));
+    width: calc(
+      var(--person-sidebar-visual-width, 100vw) - max(0.5rem, env(safe-area-inset-left)) -
+        max(0.5rem, env(safe-area-inset-right))
+    );
+    height: calc(
+      var(--person-sidebar-visual-height, 100dvh) - max(0.5rem, env(safe-area-inset-top)) -
+        max(0.5rem, env(safe-area-inset-bottom))
+    );
+    max-height: calc(
+      var(--person-sidebar-visual-height, 100dvh) - max(0.5rem, env(safe-area-inset-top)) -
+        max(0.5rem, env(safe-area-inset-bottom))
+    );
     border: 1px solid rgba(24, 60, 53, 0.12);
     border-radius: 22px;
     box-shadow: 0 24px 80px rgba(8, 22, 18, 0.34);
@@ -680,6 +715,24 @@ button {
   .person-sidebar-footer {
     padding-right: max(1rem, env(safe-area-inset-right));
     padding-left: max(1rem, env(safe-area-inset-left));
+  }
+  .person-sidebar-header {
+    padding-top: 1rem;
+  }
+  .person-sidebar-footer {
+    padding-bottom: 1rem;
+  }
+  .person-sidebar :where(input, textarea, select, [contenteditable]:not([contenteditable='false'])),
+  [data-ui-chrome]
+    :where(input, textarea, select, [contenteditable]:not([contenteditable='false'])) {
+    font-size: 16px;
+  }
+  .person-sidebar :where(input, textarea)::placeholder,
+  [data-ui-chrome] :where(input, textarea)::placeholder,
+  .person-sidebar input[type='date']::-webkit-date-and-time-value,
+  [data-ui-chrome] input[type='date']::-webkit-date-and-time-value {
+    font-size: 16px;
+    opacity: 1;
   }
   .person-sidebar-scroll {
     padding: 1rem;

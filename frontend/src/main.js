@@ -15,6 +15,7 @@ import { FamilyTreeChart } from './adapters/family-chart-adapter.js';
 import { applyPersonAction, canEditPeople, persistTreeChanges } from './person-editor.js';
 import { preparePersonSidebarData } from './person-sidebar-model.js';
 import { PersonSidebar } from './person-sidebar.js';
+import { SidebarZoomGuard } from './sidebar-zoom-guard.js';
 import { cloneTree, diffTrees, downloadJson, validateTree } from './tree-utils.js';
 import { renderProposals, renderShell, setSaveState, setStatus, showApp, showLogin } from './ui.js';
 
@@ -22,6 +23,9 @@ const root = document.querySelector('#app');
 renderShell(root);
 const chart = new FamilyTreeChart('#FamilyChart');
 const personSidebar = new PersonSidebar(document.querySelector('#person-sidebar-host'));
+const chromeZoomGuards = [...document.querySelectorAll('[data-ui-chrome]')].map(
+  (element) => new SidebarZoomGuard(element),
+);
 let user = null,
   tree = null,
   workingData = [];
@@ -29,6 +33,13 @@ let dirty = false,
   busy = false,
   pendingProposals = [],
   previewMode = false;
+
+function setChromeZoomGuardActive(active) {
+  for (const guard of chromeZoomGuards) {
+    if (active) guard.activate();
+    else guard.deactivate();
+  }
+}
 
 function updateSaveButton() {
   setSaveState({ dirty, role: user?.role || 'viewer', busy, previewMode });
@@ -122,6 +133,7 @@ async function enterApplication(authUser) {
   previewMode = false;
   await applyKnownProfile();
   showApp(user, tree);
+  setChromeZoomGuardActive(true);
   configureRoleUi();
   mountTree();
   updateSaveButton();
@@ -258,6 +270,7 @@ document.querySelector('#logout-button').addEventListener('click', () => {
   logout();
   chart.destroy();
   personSidebar.close();
+  setChromeZoomGuardActive(false);
   user = tree = null;
   previewMode = false;
   showLogin();

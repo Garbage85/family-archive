@@ -23,11 +23,11 @@ export function renderShell(root) {
       </section>
 
       <section id="app-view" class="app-view hidden">
-        <header class="topbar">
+        <header class="topbar app-ui-chrome" data-ui-chrome>
           <div class="brand-row"><div class="brand-mark small">ДЖ</div><div><strong id="tree-title">Древо жизни</strong><div id="tree-meta" class="muted compact"></div></div></div>
           <div class="user-row"><span id="user-name"></span><span id="user-role" class="role-badge"></span><button id="logout-button" class="ghost">Выйти</button></div>
         </header>
-        <nav class="toolbar">
+        <nav class="toolbar app-ui-chrome" data-ui-chrome>
           <div id="search-host" class="search-host"></div>
           <button id="fit-button" class="ghost">Показать всё</button>
           <button id="orientation-button" class="ghost">Горизонтально</button>
@@ -35,14 +35,14 @@ export function renderShell(root) {
           <button id="proposals-button" class="ghost hidden">Предложения <span id="proposal-count"></span></button>
           <button id="save-button" class="primary" disabled>Сохранено</button>
         </nav>
-        <div id="status-line" class="status-line" role="status"></div>
-        <div id="FamilyChart" class="f3 chart-surface"></div>
+        <div id="status-line" class="status-line app-ui-chrome" data-ui-chrome role="status"></div>
+        <div id="FamilyChart" class="f3 chart-surface" data-tree-canvas></div>
         <div id="person-sidebar-host"></div>
       </section>
     </main>
 
-    <dialog id="comment-dialog" class="dialog-card"><form id="comment-form"><h2>Предложить изменение</h2><label>Комментарий<textarea id="proposal-comment" rows="4" maxlength="500"></textarea></label><div class="dialog-actions"><button type="button" data-close-dialog="comment-dialog" class="ghost">Отмена</button><button class="primary">Отправить</button></div></form></dialog>
-    <dialog id="proposals-dialog" class="dialog-card proposals-dialog"><form method="dialog"><div class="dialog-heading"><div><p class="eyebrow">Модерация</p><h2>Предложения родственников</h2></div><button type="button" data-close-dialog="proposals-dialog" class="ghost">Закрыть</button></div><div id="proposals-list" class="proposal-list"></div></form></dialog>
+    <dialog id="comment-dialog" class="dialog-card app-ui-chrome" data-ui-chrome><form id="comment-form"><h2>Предложить изменение</h2><label>Комментарий<textarea id="proposal-comment" rows="4" maxlength="500"></textarea></label><div class="dialog-actions"><button type="button" data-close-dialog="comment-dialog" class="ghost">Отмена</button><button class="primary">Отправить</button></div></form></dialog>
+    <dialog id="proposals-dialog" class="dialog-card proposals-dialog app-ui-chrome" data-ui-chrome><form method="dialog"><div class="dialog-heading"><div><p class="eyebrow">Модерация</p><h2>Предложения родственников</h2></div><button type="button" data-close-dialog="proposals-dialog" class="ghost">Закрыть</button></div><div id="proposals-list" class="proposal-list"></div></form></dialog>
   `;
 }
 

@@ -158,6 +158,52 @@ test('adding every supported relative marks the tree dirty and creates reciproca
   }
 });
 
+test('father action creates a male parent and preserves existing parents', () => {
+  const result = applyPersonAction(editableState(), {
+    type: 'add-relative',
+    personId: 'person-1',
+    relation: 'father',
+    values: { first_name: 'Сергей', gender: 'F' },
+  });
+  const child = result.data.find((person) => person.id === 'person-1');
+  const father = result.data.find((person) => person.id === result.createdPersonId);
+
+  assert.equal(father.data.gender, 'M');
+  assert.deepEqual(child.rels.parents, ['person-2', father.id]);
+  assert.deepEqual(father.rels.children, ['person-1']);
+});
+
+test('mother action creates a female parent and stores maiden_name', () => {
+  const result = applyPersonAction(editableState(), {
+    type: 'add-relative',
+    personId: 'person-1',
+    relation: 'mother',
+    values: { first_name: 'Мария', gender: 'M', maiden_name: 'Соколова' },
+  });
+  const child = result.data.find((person) => person.id === 'person-1');
+  const mother = result.data.find((person) => person.id === result.createdPersonId);
+
+  assert.equal(mother.data.gender, 'F');
+  assert.equal(mother.data.maiden_name, 'Соколова');
+  assert.deepEqual(child.rels.parents, ['person-2', mother.id]);
+  assert.deepEqual(mother.rels.children, ['person-1']);
+});
+
+test('generic parent action supports an unknown gender from additional actions', () => {
+  const result = applyPersonAction(editableState(), {
+    type: 'add-relative',
+    personId: 'person-1',
+    relation: 'parent',
+    values: { first_name: 'Другой родитель', gender: '' },
+  });
+  const child = result.data.find((person) => person.id === 'person-1');
+  const parent = result.data.find((person) => person.id === result.createdPersonId);
+
+  assert.equal(parent.data.gender, '');
+  assert.deepEqual(child.rels.parents, ['person-2', parent.id]);
+  assert.deepEqual(parent.rels.children, ['person-1']);
+});
+
 test('deleting a person removes links and marks the tree dirty', () => {
   const result = applyPersonAction(editableState(), {
     type: 'delete',

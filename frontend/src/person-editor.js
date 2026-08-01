@@ -15,7 +15,14 @@ export function applyPersonAction(state, action) {
   if (action.type === 'update') {
     data = updatePerson(state.data, action.personId, action.values);
   } else if (action.type === 'add-relative') {
-    const result = addRelative(state.data, action.personId, action.relation, action.values);
+    const presets = {
+      father: { relation: 'parent', gender: 'M' },
+      mother: { relation: 'parent', gender: 'F' },
+    };
+    const preset = presets[action.relation];
+    const relation = preset?.relation || action.relation;
+    const values = preset ? { ...action.values, gender: preset.gender } : action.values;
+    const result = addRelative(state.data, action.personId, relation, values);
     data = result.data;
     createdPersonId = result.person.id;
   } else if (action.type === 'delete') {

@@ -1,12 +1,17 @@
 import { SidebarZoomGuard } from './sidebar-zoom-guard.js';
 import { getInitialMaidenName } from './person-relationship-rules.js';
 
-const RELATION_LABELS = {
-  parent: 'родителя',
-  spouse: 'супруга',
-  child: 'ребёнка',
-  sibling: 'брата или сестру',
+const RELATION_CONFIG = {
+  father: { label: 'отца', gender: 'M', lockGender: true },
+  mother: { label: 'мать', gender: 'F', lockGender: true },
+  parent: { label: 'другого родителя', gender: '' },
+  spouse: { label: 'супруга', gender: 'M' },
+  child: { label: 'ребёнка', gender: 'M' },
+  sibling: { label: 'брата или сестру', gender: 'M' },
 };
+
+const FORM_CONTROL_SELECTOR =
+  'input, textarea, select, [contenteditable]:not([contenteditable="false"])';
 
 export class PersonSidebar {
   constructor(host) {
@@ -20,6 +25,7 @@ export class PersonSidebar {
     this.mode = 'view';
     this.busy = false;
     this.eventCleanups = [];
+    this.viewportCleanups = [];
     this.maidenNameFormStates = new WeakMap();
     this.renderShell();
     this.zoomGuard = new SidebarZoomGuard(this.sidebar);
@@ -56,7 +62,7 @@ export class PersonSidebar {
               <label class="hidden" data-maiden-name-field>Девичья фамилия<input name="maiden_name" /></label>
               <label>Имя<input name="first_name" autocomplete="given-name" required /></label>
               <label>Отчество<input name="middle_name" /></label>
-              <fieldset class="person-sidebar-gender"><legend>Пол</legend><label><input type="radio" name="gender" value="M" /> Мужчина</label><label><input type="radio" name="gender" value="F" /> Женщина</label></fieldset>
+              <fieldset class="person-sidebar-gender"><legend>Пол</legend><label><input type="radio" name="gender" value="M" /> Мужчина</label><label><input type="radio" name="gender" value="F" /> Женщина</label><label><input type="radio" name="gender" value="" /> Не указан</label></fieldset>
               <label>Дата рождения<input name="birth_date" type="date" /></label>
               <label>Дата смерти<input name="death_date" type="date" /></label>
               <label class="full">Место рождения<input name="birth_place" /></label>
@@ -66,11 +72,16 @@ export class PersonSidebar {
             <section class="person-sidebar-edit-actions">
               <h3>Добавить родственника</h3>
               <div class="person-sidebar-relation-actions">
-                <button type="button" class="ghost" data-sidebar-relation="parent">Родителя</button>
+                <button type="button" class="ghost" data-sidebar-relation="father">Отца</button>
+                <button type="button" class="ghost" data-sidebar-relation="mother">Мать</button>
                 <button type="button" class="ghost" data-sidebar-relation="spouse">Супруга</button>
                 <button type="button" class="ghost" data-sidebar-relation="child">Ребёнка</button>
                 <button type="button" class="ghost" data-sidebar-relation="sibling">Брата/сестру</button>
               </div>
+              <details class="person-sidebar-more-actions">
+                <summary>Дополнительные действия</summary>
+                <button type="button" class="ghost wide" data-sidebar-relation="parent">Другой родитель</button>
+              </details>
               <button type="button" class="ghost wide" data-sidebar-photo>Изменить фотографию</button>
               <button type="button" class="danger wide" data-sidebar-delete>Удалить человека</button>
             </section>
@@ -84,7 +95,7 @@ export class PersonSidebar {
               <label class="hidden" data-maiden-name-field>Девичья фамилия<input name="maiden_name" /></label>
               <label>Имя<input name="first_name" required /></label>
               <label>Отчество<input name="middle_name" /></label>
-              <fieldset class="person-sidebar-gender"><legend>Пол</legend><label><input type="radio" name="gender" value="M" checked /> Мужчина</label><label><input type="radio" name="gender" value="F" /> Женщина</label></fieldset>
+              <fieldset class="person-sidebar-gender"><legend>Пол</legend><label><input type="radio" name="gender" value="M" checked /> Мужчина</label><label><input type="radio" name="gender" value="F" /> Женщина</label><label><input type="radio" name="gender" value="" /> Не указан</label></fieldset>
               <label class="full">Дата рождения<input name="birth_date" type="date" /></label>
             </div>
           </form>
@@ -168,6 +179,10 @@ export class PersonSidebar {
     listen(document, 'keydown', (event) => {
       if (event.key === 'Escape' && this.isOpen()) this.close();
     });
+    listen(this.sidebar, 'focusin', (event) => {
+      if (!this.isOpen() || !event.target.matches?.(FORM_CONTROL_SELECTOR)) return;
+      this.requestFrame(() => this.scrollControlIntoView(event.target));
+    });
 
     for (const form of [this.editForm, this.relativeForm]) {
       this.maidenNameFormStates.set(form, { initialised: false });
@@ -194,11 +209,13 @@ export class PersonSidebar {
     this.host.classList.add('open');
     this.sidebar.setAttribute('aria-hidden', 'false');
     this.zoomGuard.activate();
+    this.activateViewportHandling();
     this.closeButton.focus();
   }
 
   close() {
     this.zoomGuard.deactivate();
+    this.deactivateViewportHandling();
     if (!this.isOpen()) return;
 
     this.host.classList.remove('open');
@@ -219,14 +236,90 @@ export class PersonSidebar {
   }
 
   showRelativeMode(relation) {
-    if (!RELATION_LABELS[relation]) return;
+    const config = RELATION_CONFIG[relation];
+    if (!config) return;
     this.relativeForm.reset();
+    for (const input of this.relativeForm.querySelectorAll('[name="gender"]')) {
+      input.checked = input.value === config.gender;
+    }
+    this.relativeForm.querySelector('.person-sidebar-gender').disabled = Boolean(config.lockGender);
     this.maidenNameFormStates.set(this.relativeForm, { initialised: false });
     this.updateMaidenNameField(this.relativeForm);
     this.relativeForm.elements.relative_type.value = relation;
     this.relativeForm.querySelector('[data-sidebar-relative-title]').textContent =
-      `Добавить ${RELATION_LABELS[relation]}`;
+      `Добавить ${config.label}`;
     this.showMode('relative');
+  }
+
+  requestFrame(callback) {
+    const view = this.sidebar.ownerDocument?.defaultView;
+    if (typeof view?.requestAnimationFrame === 'function') view.requestAnimationFrame(callback);
+    else callback();
+  }
+
+  scrollControlIntoView(control) {
+    const scrollArea = this.host.querySelector('.person-sidebar-scroll');
+    if (!scrollArea?.contains(control)) return;
+
+    const controlRect = control.getBoundingClientRect();
+    const scrollRect = scrollArea.getBoundingClientRect();
+    const gap = 16;
+    if (controlRect.top < scrollRect.top + gap) {
+      scrollArea.scrollTop -= scrollRect.top + gap - controlRect.top;
+    } else if (controlRect.bottom > scrollRect.bottom - gap) {
+      scrollArea.scrollTop += controlRect.bottom - (scrollRect.bottom - gap);
+    }
+  }
+
+  activateViewportHandling() {
+    if (this.viewportCleanups.length) return;
+
+    const doc = this.sidebar.ownerDocument;
+    const view = doc?.defaultView;
+    doc?.documentElement?.classList.add('person-sidebar-document-locked');
+    doc?.body?.classList.add('person-sidebar-document-locked');
+
+    const viewport = view?.visualViewport;
+    const syncViewport = () => {
+      const width = viewport?.width || view?.innerWidth;
+      const height = viewport?.height || view?.innerHeight;
+      const left = viewport?.offsetLeft || 0;
+      const top = viewport?.offsetTop || 0;
+      if (width) this.sidebar.style.setProperty('--person-sidebar-visual-width', `${width}px`);
+      if (height) this.sidebar.style.setProperty('--person-sidebar-visual-height', `${height}px`);
+      this.sidebar.style.setProperty('--person-sidebar-visual-left', `${left}px`);
+      this.sidebar.style.setProperty('--person-sidebar-visual-top', `${top}px`);
+
+      const activeControl = doc?.activeElement;
+      if (activeControl?.matches?.(FORM_CONTROL_SELECTOR)) {
+        this.requestFrame(() => this.scrollControlIntoView(activeControl));
+      }
+    };
+    const listen = (target, type) => {
+      if (!target?.addEventListener) return;
+      target.addEventListener(type, syncViewport, { passive: true });
+      this.viewportCleanups.push(() => target.removeEventListener(type, syncViewport));
+    };
+
+    listen(viewport, 'resize');
+    listen(viewport, 'scroll');
+    listen(view, 'orientationchange');
+    syncViewport();
+  }
+
+  deactivateViewportHandling() {
+    for (const cleanup of this.viewportCleanups.splice(0)) cleanup();
+    const doc = this.sidebar?.ownerDocument;
+    doc?.documentElement?.classList.remove('person-sidebar-document-locked');
+    doc?.body?.classList.remove('person-sidebar-document-locked');
+    for (const property of [
+      '--person-sidebar-visual-width',
+      '--person-sidebar-visual-height',
+      '--person-sidebar-visual-left',
+      '--person-sidebar-visual-top',
+    ]) {
+      this.sidebar?.style.removeProperty(property);
+    }
   }
 
   showMode(mode, { focus = true } = {}) {
@@ -281,8 +374,11 @@ export class PersonSidebar {
       const field = this.editForm.elements.namedItem(key);
       if (field && key !== 'gender') field.value = value || '';
     }
-    const gender = this.editForm.querySelector(
-      `[name="gender"][value="${this.viewModel.values.gender === 'F' ? 'F' : 'M'}"]`,
+    const genderValue = ['M', 'F'].includes(this.viewModel.values.gender)
+      ? this.viewModel.values.gender
+      : '';
+    const gender = [...this.editForm.querySelectorAll('[name="gender"]')].find(
+      (input) => input.value === genderValue,
     );
     if (gender) gender.checked = true;
     this.maidenNameFormStates.set(this.editForm, { initialised: false });
