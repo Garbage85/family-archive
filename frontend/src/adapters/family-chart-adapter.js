@@ -1,5 +1,6 @@
 import * as f3 from 'family-chart';
 import 'family-chart/styles/family-chart.css';
+import { formatPersonCardBirthDate, formatPersonCardName } from '../person-card-formatters.js';
 import { cloneTree, normaliseTree, personName } from '../tree-utils.js';
 
 export class FamilyTreeChart {
@@ -37,7 +38,7 @@ export class FamilyTreeChart {
       .setCardHtml()
       .setStyle('imageCircleRect')
       .setCardImageField('avatar')
-      .setCardDisplay([['first_name', 'last_name'], ['middle_name'], ['birth_date', 'death_date']])
+      .setCardDisplay([formatPersonCardName, formatPersonCardBirthDate])
       .setOnCardClick((_event, treeDatum) => {
         const person = this.extractPerson(treeDatum);
         if (!person) return;

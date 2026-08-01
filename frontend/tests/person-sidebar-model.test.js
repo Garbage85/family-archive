@@ -58,6 +58,10 @@ test('preparePersonSidebarData prepares facts and resolves relatives', () => {
       ['children', ['Маша']],
     ],
   );
+  assert.equal(result.relationGroups[0].people[0].roleLabel, 'Отец');
+  assert.equal(result.relationGroups[0].people[0].relationType, 'biological');
+  assert.equal(result.relationGroups[1].label, 'Супруг');
+  assert.equal(result.relationGroups[1].people[0].roleLabel, 'Супруг(а)');
 });
 
 test('preparePersonSidebarData removes empty and null-like labels', () => {
@@ -86,10 +90,79 @@ test('preparePersonSidebarData removes empty and null-like labels', () => {
     result.relationGroups.map((group) => [group.label, group.people]),
     [
       ['Родители', []],
-      ['Супруги', []],
+      ['Супруг(а)', []],
       ['Дети', []],
     ],
   );
+});
+
+test('preparePersonSidebarData shows maiden name only for a woman', () => {
+  const woman = preparePersonSidebarData(
+    [
+      {
+        id: 'woman',
+        data: { gender: 'F', last_name: 'Иванова', maiden_name: 'Петрова' },
+        rels: {},
+      },
+    ],
+    'woman',
+  );
+  const man = preparePersonSidebarData(
+    [
+      {
+        id: 'man',
+        data: { gender: 'M', last_name: 'Иванов', maiden_name: 'Петров' },
+        rels: {},
+      },
+    ],
+    'man',
+  );
+
+  assert.equal(woman.fields.find((field) => field.key === 'maiden_name').value, 'Петрова');
+  assert.equal(
+    man.fields.some((field) => field.key === 'maiden_name'),
+    false,
+  );
+  assert.equal(man.values.maiden_name, 'Петров');
+});
+
+test('preparePersonSidebarData keeps same-gender parents and labels every relationship', () => {
+  const source = [
+    {
+      id: 'selected',
+      data: { first_name: 'Иван', gender: 'M' },
+      rels: {
+        parents: ['mother-1', 'mother-2', 'parent-3'],
+        spouses: ['wife', 'husband', 'partner'],
+      },
+    },
+    { id: 'mother-1', data: { first_name: 'Анна', gender: 'F' }, rels: {} },
+    { id: 'mother-2', data: { first_name: 'Мария', gender: 'female' }, rels: {} },
+    { id: 'parent-3', data: { first_name: 'Саша' }, rels: {} },
+    { id: 'wife', data: { first_name: 'Ольга', gender: 'F' }, rels: {} },
+    { id: 'husband', data: { first_name: 'Пётр', gender: 'M' }, rels: {} },
+    { id: 'partner', data: { first_name: 'Женя' }, rels: {} },
+  ];
+  const snapshot = structuredClone(source);
+
+  const result = preparePersonSidebarData(source, 'selected');
+  const parents = result.relationGroups.find((group) => group.key === 'parents');
+  const spouses = result.relationGroups.find((group) => group.key === 'spouses');
+
+  assert.deepEqual(
+    parents.people.map((person) => [person.name, person.roleLabel, person.relationType]),
+    [
+      ['Анна', 'Мать', 'biological'],
+      ['Мария', 'Мать', 'biological'],
+      ['Саша', 'Родитель', 'biological'],
+    ],
+  );
+  assert.equal(spouses.label, 'Супруги');
+  assert.deepEqual(
+    spouses.people.map((person) => person.roleLabel),
+    ['Супруга', 'Супруг', 'Супруг(а)'],
+  );
+  assert.deepEqual(source, snapshot);
 });
 
 test('preparePersonSidebarData returns null for an unknown selection', () => {

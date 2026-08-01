@@ -1,3 +1,6 @@
+import { SidebarZoomGuard } from './sidebar-zoom-guard.js';
+import { getInitialMaidenName } from './person-relationship-rules.js';
+
 const RELATION_LABELS = {
   parent: 'родителя',
   spouse: 'супруга',
@@ -16,7 +19,10 @@ export class PersonSidebar {
     this.editable = false;
     this.mode = 'view';
     this.busy = false;
+    this.eventCleanups = [];
+    this.maidenNameFormStates = new WeakMap();
     this.renderShell();
+    this.zoomGuard = new SidebarZoomGuard(this.sidebar);
     this.bindEvents();
   }
 
@@ -47,6 +53,7 @@ export class PersonSidebar {
             <h2 tabindex="-1">Изменить сведения</h2>
             <div class="person-sidebar-form-grid">
               <label>Фамилия<input name="last_name" autocomplete="family-name" /></label>
+              <label class="hidden" data-maiden-name-field>Девичья фамилия<input name="maiden_name" /></label>
               <label>Имя<input name="first_name" autocomplete="given-name" required /></label>
               <label>Отчество<input name="middle_name" /></label>
               <fieldset class="person-sidebar-gender"><legend>Пол</legend><label><input type="radio" name="gender" value="M" /> Мужчина</label><label><input type="radio" name="gender" value="F" /> Женщина</label></fieldset>
@@ -74,6 +81,7 @@ export class PersonSidebar {
             <input name="relative_type" type="hidden" />
             <div class="person-sidebar-form-grid">
               <label>Фамилия<input name="last_name" /></label>
+              <label class="hidden" data-maiden-name-field>Девичья фамилия<input name="maiden_name" /></label>
               <label>Имя<input name="first_name" required /></label>
               <label>Отчество<input name="middle_name" /></label>
               <fieldset class="person-sidebar-gender"><legend>Пол</legend><label><input type="radio" name="gender" value="M" checked /> Мужчина</label><label><input type="radio" name="gender" value="F" /> Женщина</label></fieldset>
@@ -116,9 +124,14 @@ export class PersonSidebar {
   }
 
   bindEvents() {
-    this.closeButton.addEventListener('click', () => this.close());
-    this.backdrop.addEventListener('click', () => this.close());
-    this.host.addEventListener('click', (event) => {
+    const listen = (target, type, handler, options) => {
+      target.addEventListener(type, handler, options);
+      this.eventCleanups.push(() => target.removeEventListener(type, handler, options));
+    };
+
+    listen(this.closeButton, 'click', () => this.close());
+    listen(this.backdrop, 'click', () => this.close());
+    listen(this.host, 'click', (event) => {
       const button = event.target.closest('button');
       if (!button || button === this.closeButton) return;
       if (button.matches('[data-sidebar-edit]')) this.showMode('edit');
@@ -131,18 +144,18 @@ export class PersonSidebar {
       if (button.matches('[data-sidebar-confirm-delete]')) this.runAction('onDelete');
       if (button.matches('[data-sidebar-remove-photo]')) this.runAction('onRemovePhoto');
     });
-    this.editForm.addEventListener('submit', (event) => {
+    listen(this.editForm, 'submit', (event) => {
       event.preventDefault();
       this.runAction('onUpdate', Object.fromEntries(new FormData(this.editForm)));
     });
-    this.relativeForm.addEventListener('submit', (event) => {
+    listen(this.relativeForm, 'submit', (event) => {
       event.preventDefault();
       const values = Object.fromEntries(new FormData(this.relativeForm));
       const relation = values.relative_type;
       delete values.relative_type;
       this.runAction('onAddRelative', relation, values);
     });
-    this.photoForm.addEventListener('submit', (event) => {
+    listen(this.photoForm, 'submit', (event) => {
       event.preventDefault();
       const file = new FormData(this.photoForm).get('photo');
       if (!file?.size) return;
@@ -152,9 +165,21 @@ export class PersonSidebar {
       }
       this.runAction('onUploadPhoto', file);
     });
-    document.addEventListener('keydown', (event) => {
+    listen(document, 'keydown', (event) => {
       if (event.key === 'Escape' && this.isOpen()) this.close();
     });
+
+    for (const form of [this.editForm, this.relativeForm]) {
+      this.maidenNameFormStates.set(form, { initialised: false });
+      listen(form.elements.maiden_name, 'input', () => {
+        this.maidenNameFormStates.get(form).initialised = true;
+      });
+      listen(form, 'change', (event) => {
+        if (!event.target.matches('[name="gender"]')) return;
+        this.updateMaidenNameField(form, { genderChanged: true });
+      });
+      this.updateMaidenNameField(form);
+    }
   }
 
   open(viewModel, options = {}) {
@@ -168,10 +193,12 @@ export class PersonSidebar {
     this.showMode('view', { focus: false });
     this.host.classList.add('open');
     this.sidebar.setAttribute('aria-hidden', 'false');
+    this.zoomGuard.activate();
     this.closeButton.focus();
   }
 
   close() {
+    this.zoomGuard.deactivate();
     if (!this.isOpen()) return;
 
     this.host.classList.remove('open');
@@ -181,6 +208,12 @@ export class PersonSidebar {
     this.previousFocus = null;
   }
 
+  destroy() {
+    this.close();
+    this.zoomGuard.destroy();
+    for (const cleanup of this.eventCleanups.splice(0)) cleanup();
+  }
+
   isOpen() {
     return this.host.classList.contains('open');
   }
@@ -188,6 +221,8 @@ export class PersonSidebar {
   showRelativeMode(relation) {
     if (!RELATION_LABELS[relation]) return;
     this.relativeForm.reset();
+    this.maidenNameFormStates.set(this.relativeForm, { initialised: false });
+    this.updateMaidenNameField(this.relativeForm);
     this.relativeForm.elements.relative_type.value = relation;
     this.relativeForm.querySelector('[data-sidebar-relative-title]').textContent =
       `Добавить ${RELATION_LABELS[relation]}`;
@@ -250,6 +285,26 @@ export class PersonSidebar {
       `[name="gender"][value="${this.viewModel.values.gender === 'F' ? 'F' : 'M'}"]`,
     );
     if (gender) gender.checked = true;
+    this.maidenNameFormStates.set(this.editForm, { initialised: false });
+    this.updateMaidenNameField(this.editForm);
+  }
+
+  updateMaidenNameField(form, { genderChanged = false } = {}) {
+    const maidenNameField = form.querySelector('[data-maiden-name-field]');
+    const maidenNameInput = form.elements.maiden_name;
+    const selectedGender = form.elements.gender.value;
+    const isFemale = selectedGender === 'F';
+    const state = this.maidenNameFormStates.get(form);
+
+    if (genderChanged && isFemale && !state.initialised) {
+      maidenNameInput.value = getInitialMaidenName({
+        last_name: form.elements.last_name.value,
+        maiden_name: maidenNameInput.value,
+      });
+      state.initialised = true;
+    }
+
+    maidenNameField.classList.toggle('hidden', !isFemale);
   }
 
   populatePhotoForm() {
@@ -352,7 +407,16 @@ export class PersonSidebar {
           initials.textContent = person.initials;
           const name = document.createElement('span');
           name.textContent = person.name;
-          item.append(initials, name);
+          const description = document.createElement('span');
+          description.className = 'person-sidebar-relation-description';
+          if (person.roleLabel) {
+            const role = document.createElement('span');
+            role.className = 'person-sidebar-relation-role';
+            role.textContent = person.roleLabel;
+            description.append(role);
+          }
+          description.append(name);
+          item.append(initials, description);
           list.append(item);
         }
         section.append(list);

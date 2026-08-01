@@ -21,28 +21,36 @@ export function personName(person) {
 
 export function normaliseTree(input) {
   const data = Array.isArray(input) ? cloneTree(input) : [];
-  return data.map((person, index) => ({
-    id: String(person?.id || crypto.randomUUID?.() || `person-${Date.now()}-${index}`),
-    data: {
-      ...(person?.data || {}),
-      gender: person?.data?.gender === 'F' ? 'F' : 'M',
-      first_name: String(person?.data?.first_name || ''),
-      last_name: String(person?.data?.last_name || ''),
-      middle_name: String(person?.data?.middle_name || ''),
-      birth_date: String(person?.data?.birth_date || ''),
-      death_date: String(person?.data?.death_date || ''),
-      birth_place: String(person?.data?.birth_place || ''),
-      occupation: String(person?.data?.occupation || ''),
-      notes: String(person?.data?.notes || ''),
-      avatar: String(person?.data?.avatar || ''),
-    },
-    rels: {
-      ...(person?.rels || {}),
-      parents: Array.isArray(person?.rels?.parents) ? person.rels.parents.map(String) : [],
-      spouses: Array.isArray(person?.rels?.spouses) ? person.rels.spouses.map(String) : [],
-      children: Array.isArray(person?.rels?.children) ? person.rels.children.map(String) : [],
-    },
-  }));
+  return data.map((person, index) => {
+    const personData = person?.data || {};
+    const optionalMaidenName = Object.prototype.hasOwnProperty.call(personData, 'maiden_name')
+      ? { maiden_name: String(personData.maiden_name || '') }
+      : {};
+
+    return {
+      id: String(person?.id || crypto.randomUUID?.() || `person-${Date.now()}-${index}`),
+      data: {
+        ...personData,
+        ...optionalMaidenName,
+        gender: personData.gender === 'F' ? 'F' : 'M',
+        first_name: String(personData.first_name || ''),
+        last_name: String(personData.last_name || ''),
+        middle_name: String(personData.middle_name || ''),
+        birth_date: String(personData.birth_date || ''),
+        death_date: String(personData.death_date || ''),
+        birth_place: String(personData.birth_place || ''),
+        occupation: String(personData.occupation || ''),
+        notes: String(personData.notes || ''),
+        avatar: String(personData.avatar || ''),
+      },
+      rels: {
+        ...(person?.rels || {}),
+        parents: Array.isArray(person?.rels?.parents) ? person.rels.parents.map(String) : [],
+        spouses: Array.isArray(person?.rels?.spouses) ? person.rels.spouses.map(String) : [],
+        children: Array.isArray(person?.rels?.children) ? person.rels.children.map(String) : [],
+      },
+    };
+  });
 }
 
 export function validateTree(data) {
@@ -124,6 +132,7 @@ export function createPerson(values = {}) {
         first_name: values.first_name || '',
         last_name: values.last_name || '',
         middle_name: values.middle_name || '',
+        ...(values.maiden_name ? { maiden_name: values.maiden_name } : {}),
         birth_date: values.birth_date || '',
         death_date: values.death_date || '',
         birth_place: values.birth_place || '',
@@ -178,11 +187,15 @@ export function updatePerson(tree, personId, values) {
   const data = normaliseTree(tree);
   const person = data.find((item) => item.id === personId);
   if (!person) throw new Error('Человек не найден.');
+  const hadMaidenName = Object.prototype.hasOwnProperty.call(person.data, 'maiden_name');
   person.data = {
     ...person.data,
     ...values,
     gender: values.gender === undefined ? person.data.gender : values.gender === 'F' ? 'F' : 'M',
   };
+  if (!hadMaidenName && !String(values.maiden_name || '').trim()) {
+    delete person.data.maiden_name;
+  }
   return data;
 }
 

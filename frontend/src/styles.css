@@ -317,6 +317,10 @@ button {
 .f3 .card-inner {
   border-radius: 14px !important;
 }
+.f3 div.card-rect > div,
+.f3 div.card-image-circle div.card-label > div {
+  white-space: pre-line;
+}
 .f3-form-cont {
   color: #172521;
 }
@@ -385,8 +389,13 @@ button {
   margin-left: auto;
 }
 .person-sidebar-header {
+  position: sticky;
+  z-index: 2;
+  top: 0;
   min-height: 66px;
+  padding-top: max(1rem, env(safe-area-inset-top));
   border-bottom: 1px solid var(--line);
+  background: var(--paper);
 }
 .person-sidebar-header .eyebrow {
   margin: 0;
@@ -413,6 +422,7 @@ button {
 .person-sidebar-scroll {
   overflow-y: auto;
   overscroll-behavior: contain;
+  touch-action: pan-y;
   padding: 1.3rem;
   -webkit-overflow-scrolling: touch;
 }
@@ -525,6 +535,18 @@ button {
   min-width: 0;
   font-size: 0.9rem;
   font-weight: 700;
+}
+.person-sidebar-relation-description {
+  display: grid;
+  gap: 0.1rem;
+  min-width: 0;
+}
+.person-sidebar-relation-role {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
 }
 .relation-avatar {
   width: 34px;

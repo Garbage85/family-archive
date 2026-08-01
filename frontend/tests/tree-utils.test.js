@@ -1,12 +1,34 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { diffTrees, normaliseTree, validateTree } from '../src/tree-utils.js';
+import { diffTrees, normaliseTree, updatePerson, validateTree } from '../src/tree-utils.js';
 
 test('normaliseTree creates required arrays', () => {
   const result = normaliseTree([{ id: '1', data: { gender: 'M' }, rels: {} }]);
   assert.deepEqual(result[0].rels.parents, []);
   assert.deepEqual(result[0].rels.spouses, []);
   assert.deepEqual(result[0].rels.children, []);
+});
+
+test('maiden_name remains optional during normalisation', () => {
+  const [person] = normaliseTree([{ id: '1', data: { gender: 'F' }, rels: {} }]);
+  assert.equal(Object.hasOwn(person.data, 'maiden_name'), false);
+});
+
+test('changing a woman to male preserves an existing maiden_name', () => {
+  const result = updatePerson(
+    [
+      {
+        id: '1',
+        data: { gender: 'F', last_name: 'Иванова', maiden_name: 'Петрова' },
+        rels: {},
+      },
+    ],
+    '1',
+    { gender: 'M' },
+  );
+
+  assert.equal(result[0].data.gender, 'M');
+  assert.equal(result[0].data.maiden_name, 'Петрова');
 });
 
 test('validateTree catches missing relation targets', () => {

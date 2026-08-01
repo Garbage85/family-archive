@@ -1,6 +1,14 @@
+import {
+  getParentRoleLabel,
+  getSpouseRoleLabel,
+  getSpouseSectionLabel,
+  shouldShowMaidenName,
+} from './person-relationship-rules.js';
+
 const FIELD_DEFINITIONS = [
   ['first_name', 'Имя'],
   ['last_name', 'Фамилия'],
+  ['maiden_name', 'Девичья фамилия'],
   ['middle_name', 'Отчество'],
   ['gender', 'Пол', formatGender],
   ['birth_date', 'Дата рождения', formatDate],
@@ -8,12 +16,6 @@ const FIELD_DEFINITIONS = [
   ['birth_place', 'Место рождения'],
   ['occupation', 'Профессия'],
   ['notes', 'Заметки'],
-];
-
-const RELATION_DEFINITIONS = [
-  ['parents', 'Родители'],
-  ['spouses', 'Супруги'],
-  ['children', 'Дети'],
 ];
 
 function cleanText(value) {
@@ -52,7 +54,7 @@ function sidebarPersonName(person) {
   return parts.join(' ') || 'Без имени';
 }
 
-function relationPeople(ids, peopleById) {
+function relationPeople(ids, peopleById, { getRoleLabel, relationType } = {}) {
   const uniqueIds = [...new Set((Array.isArray(ids) ? ids : []).map(String))];
   return uniqueIds.map((id) => {
     const person = peopleById.get(id);
@@ -60,6 +62,8 @@ function relationPeople(ids, peopleById) {
       id,
       name: person ? sidebarPersonName(person) : 'Неизвестный человек',
       initials: person ? personInitials(person) : '—',
+      roleLabel: getRoleLabel?.(person) || '',
+      ...(relationType ? { relationType } : {}),
     };
   });
 }
@@ -76,14 +80,30 @@ export function preparePersonSidebarData(treeData, personId) {
     key,
     label,
     value: formatter(data[key]),
-  })).filter((field) => field.value);
+  })).filter(
+    (field) => field.value && (field.key !== 'maiden_name' || shouldShowMaidenName(person)),
+  );
 
   const relations = person.rels || {};
-  const relationGroups = RELATION_DEFINITIONS.map(([key, label]) => ({
-    key,
-    label,
-    people: relationPeople(relations[key], peopleById),
-  }));
+  const parentPeople = relationPeople(relations.parents, peopleById, {
+    getRoleLabel: getParentRoleLabel,
+    // TODO: Move this display-only default into a parent-child relation object such as
+    // { parentId, childId, type: 'biological' | 'adoptive' | 'step' | 'guardian' }.
+    // Until that model is introduced, trees.data continues to store parent IDs only.
+    relationType: 'biological',
+  });
+  const spousePeople = relationPeople(relations.spouses, peopleById, {
+    getRoleLabel: getSpouseRoleLabel,
+  });
+  const relationGroups = [
+    { key: 'parents', label: 'Родители', people: parentPeople },
+    {
+      key: 'spouses',
+      label: getSpouseSectionLabel(person, spousePeople.length),
+      people: spousePeople,
+    },
+    { key: 'children', label: 'Дети', people: relationPeople(relations.children, peopleById) },
+  ];
 
   return {
     id: String(person.id),
