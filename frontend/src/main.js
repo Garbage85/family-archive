@@ -12,42 +12,26 @@ import {
   uploadPhoto,
 } from './api.js';
 import { FamilyTreeChart } from './adapters/family-chart-adapter.js';
-import {
-  addRelative,
-  cloneTree,
-  deletePerson,
-  diffTrees,
-  downloadJson,
-  personName,
-  updatePerson,
-  validateTree,
-} from './tree-utils.js';
-import {
-  closePersonDrawer,
-  openPersonDrawer,
-  renderProposals,
-  renderShell,
-  setSaveState,
-  setStatus,
-  showApp,
-  showLogin,
-} from './ui.js';
+import { applyPersonAction, canEditPeople, persistTreeChanges } from './person-editor.js';
+import { preparePersonSidebarData } from './person-sidebar-model.js';
+import { PersonSidebar } from './person-sidebar.js';
+import { cloneTree, diffTrees, downloadJson, validateTree } from './tree-utils.js';
+import { renderProposals, renderShell, setSaveState, setStatus, showApp, showLogin } from './ui.js';
 
 const root = document.querySelector('#app');
 renderShell(root);
 const chart = new FamilyTreeChart('#FamilyChart');
+const personSidebar = new PersonSidebar(document.querySelector('#person-sidebar-host'));
 let user = null,
   tree = null,
-  workingData = [],
-  selectedPerson = null;
+  workingData = [];
 let dirty = false,
   busy = false,
   pendingProposals = [],
   previewMode = false;
 
-const canEdit = () => ['member', 'admin'].includes(user?.role) && !previewMode;
 function updateSaveButton() {
-  setSaveState({ dirty, role: user?.role || 'viewer', busy });
+  setSaveState({ dirty, role: user?.role || 'viewer', busy, previewMode });
 }
 function setDirty(value) {
   dirty = value;
@@ -65,18 +49,55 @@ function configureRoleUi() {
   document.querySelector('#proposals-button').classList.toggle('hidden', user.role !== 'admin');
   document
     .querySelector('#save-button')
-    .classList.toggle('hidden', !['member', 'admin'].includes(user.role));
+    .classList.toggle('hidden', !canEditPeople(user.role, previewMode));
+}
+
+function getSidebarView(personId) {
+  return preparePersonSidebarData(workingData, personId);
+}
+
+function applySidebarAction(action, options = {}) {
+  const result = applyPersonAction(
+    { data: workingData, dirty, role: user?.role, previewMode },
+    action,
+  );
+  workingData = result.data;
+  chart.updateData(workingData, options);
+  setDirty(result.dirty);
+  updateMeta();
+  return getSidebarView(action.personId);
+}
+
+const sidebarHandlers = {
+  onUpdate: (personId, values) => applySidebarAction({ type: 'update', personId, values }),
+  onAddRelative: (personId, relation, values) =>
+    applySidebarAction(
+      { type: 'add-relative', personId, relation, values },
+      { fit: true, focusId: personId },
+    ),
+  onDelete: (personId) => {
+    applySidebarAction({ type: 'delete', personId }, { fit: true });
+    return null;
+  },
+  onUploadPhoto: async (personId, file) => {
+    const photoUrl = await uploadPhoto(personId, file, user.id);
+    return applySidebarAction({ type: 'set-photo', personId, photoUrl });
+  },
+  onRemovePhoto: (personId) => applySidebarAction({ type: 'set-photo', personId, photoUrl: '' }),
+};
+
+function openSidebar(personId) {
+  personSidebar.open(getSidebarView(personId), {
+    editable: canEditPeople(user?.role, previewMode),
+    handlers: sidebarHandlers,
+  });
 }
 
 function mountTree(data = workingData, { fit = true } = {}) {
-  selectedPerson = null;
-  closePersonDrawer();
+  personSidebar.close();
   workingData = cloneTree(data);
   chart.mount(workingData, {
-    onSelect: (person) => {
-      selectedPerson = person;
-      if (person) openPersonDrawer(person, canEdit());
-    },
+    onSelect: openSidebar,
   });
   if (fit) chart.fit();
   updateMeta();
@@ -121,7 +142,7 @@ async function refreshProposals() {
     : '';
 }
 async function handleSave() {
-  if (!dirty || busy) return;
+  if (!dirty || busy || !canEditPeople(user?.role, previewMode)) return;
   const errors = validateTree(workingData);
   if (errors.length) return alert(`Нельзя сохранить древо:\n\n${errors.slice(0, 10).join('\n')}`);
   if (user.role === 'member') {
@@ -131,8 +152,17 @@ async function handleSave() {
   busy = true;
   updateSaveButton();
   try {
-    tree = await saveTree(tree, workingData, user.id);
-    workingData = cloneTree(tree.data);
+    const result = await persistTreeChanges({
+      role: user.role,
+      previewMode,
+      tree,
+      data: workingData,
+      userId: user.id,
+      save: saveTree,
+      propose: createProposal,
+    });
+    tree = result.tree;
+    workingData = cloneTree(result.tree.data);
     setDirty(false);
     updateMeta();
   } catch (error) {
@@ -144,10 +174,20 @@ async function handleSave() {
   }
 }
 async function submitProposal(comment) {
+  if (!dirty || busy || user?.role !== 'member' || previewMode) return;
   busy = true;
   updateSaveButton();
   try {
-    await createProposal(tree, workingData, user.id, comment);
+    await persistTreeChanges({
+      role: user.role,
+      previewMode,
+      tree,
+      data: workingData,
+      userId: user.id,
+      comment,
+      save: saveTree,
+      propose: createProposal,
+    });
     workingData = cloneTree(tree.data);
     mountTree();
     setDirty(false);
@@ -159,24 +199,6 @@ async function submitProposal(comment) {
     updateSaveButton();
   }
 }
-async function handlePhotoUpload(file) {
-  if (!selectedPerson || !file) return;
-  if (file.size > 10 * 1024 * 1024) return alert('Файл больше 10 МБ.');
-  try {
-    const url = await uploadPhoto(selectedPerson.id, file, user.id);
-    selectedPerson.data.avatar = url;
-    workingData = updatePerson(workingData, selectedPerson.id, selectedPerson.data);
-    chart.updateData(workingData);
-    setDirty(true);
-    openPersonDrawer(
-      workingData.find((p) => p.id === selectedPerson.id),
-      true,
-    );
-  } catch (error) {
-    alert(error.message || error);
-  }
-}
-
 async function openProposals() {
   await refreshProposals();
   renderProposals(pendingProposals, tree, { diff: diffTrees, onAction: handleProposalAction });
@@ -188,8 +210,11 @@ async function handleProposalAction(action, id) {
   if (!proposal) return;
   if (action === 'preview') {
     previewMode = true;
+    dirty = false;
     document.querySelector('#proposals-dialog').close();
     mountTree(proposal.data);
+    configureRoleUi();
+    updateSaveButton();
     setStatus('Предпросмотр предложения. Обновите страницу для возврата.', 'warning');
     return;
   }
@@ -202,7 +227,9 @@ async function handleProposalAction(action, id) {
     tree = await approveProposal(proposal, tree, user.id);
     workingData = cloneTree(tree.data);
     dirty = false;
+    previewMode = false;
     mountTree();
+    configureRoleUi();
     updateSaveButton();
     return openProposals();
   }
@@ -230,7 +257,9 @@ document.querySelector('#login-form').addEventListener('submit', async (e) => {
 document.querySelector('#logout-button').addEventListener('click', () => {
   logout();
   chart.destroy();
+  personSidebar.close();
   user = tree = null;
+  previewMode = false;
   showLogin();
 });
 document.querySelector('#save-button').addEventListener('click', handleSave);
@@ -243,79 +272,6 @@ document
   .querySelector('#export-button')
   .addEventListener('click', () => downloadJson(`family-tree-v${tree.revision}.json`, workingData));
 document.querySelector('#proposals-button').addEventListener('click', openProposals);
-document.querySelector('#drawer-close').addEventListener('click', closePersonDrawer);
-document.querySelector('#drawer-cancel').addEventListener('click', closePersonDrawer);
-document.querySelector('#drawer-backdrop').addEventListener('click', closePersonDrawer);
-
-document.querySelector('#person-form').addEventListener('submit', (e) => {
-  e.preventDefault();
-  const form = e.currentTarget;
-  const values = Object.fromEntries(new FormData(form));
-  workingData = updatePerson(workingData, form.dataset.personId, values);
-  selectedPerson = workingData.find((p) => p.id === form.dataset.personId);
-  chart.updateData(workingData);
-  setDirty(true);
-  closePersonDrawer();
-});
-document.querySelector('#delete-person').addEventListener('click', () => {
-  if (!selectedPerson || !confirm(`Удалить ${personName(selectedPerson)}?`)) return;
-  try {
-    workingData = deletePerson(workingData, selectedPerson.id);
-    chart.updateData(workingData, { fit: true });
-    setDirty(true);
-    closePersonDrawer();
-    updateMeta();
-  } catch (e) {
-    alert(e.message);
-  }
-});
-for (const b of document.querySelectorAll('[data-relation]'))
-  b.addEventListener('click', () => {
-    const labels = {
-      parent: 'родителя',
-      spouse: 'супруга',
-      child: 'ребёнка',
-      sibling: 'брата или сестру',
-    };
-    document.querySelector('#relative-type').value = b.dataset.relation;
-    document.querySelector('#relative-title').textContent =
-      `Добавить ${labels[b.dataset.relation]}`;
-    document.querySelector('#relative-form').reset();
-    document.querySelector('#relative-type').value = b.dataset.relation;
-    document.querySelector('#relative-dialog').showModal();
-  });
-document.querySelector('#relative-form').addEventListener('submit', (e) => {
-  e.preventDefault();
-  if (!selectedPerson) return;
-  try {
-    const values = Object.fromEntries(new FormData(e.currentTarget));
-    const result = addRelative(
-      workingData,
-      selectedPerson.id,
-      values.relative_type || document.querySelector('#relative-type').value,
-      values,
-    );
-    workingData = result.data;
-    chart.updateData(workingData, { fit: true, focusId: selectedPerson.id });
-    setDirty(true);
-    document.querySelector('#relative-dialog').close();
-    updateMeta();
-  } catch (error) {
-    alert(error.message);
-  }
-});
-document.querySelector('#photo-button').addEventListener('click', () => {
-  if (!selectedPerson) return;
-  document.querySelector('#photo-person-name').textContent = personName(selectedPerson);
-  document.querySelector('#photo-file').value = '';
-  document.querySelector('#photo-dialog').showModal();
-});
-document.querySelector('#photo-form').addEventListener('submit', (e) => {
-  e.preventDefault();
-  const file = document.querySelector('#photo-file').files?.[0];
-  document.querySelector('#photo-dialog').close();
-  handlePhotoUpload(file);
-});
 document.querySelector('#comment-form').addEventListener('submit', (e) => {
   e.preventDefault();
   document.querySelector('#comment-dialog').close();

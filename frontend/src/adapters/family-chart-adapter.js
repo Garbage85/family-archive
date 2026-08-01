@@ -64,8 +64,7 @@ export class FamilyTreeChart {
 
   select(id) {
     this.selectedPersonId = id;
-    const person = this.data.find((item) => item.id === id) || null;
-    this.onSelect(person);
+    this.onSelect(id);
   }
 
   getData() {

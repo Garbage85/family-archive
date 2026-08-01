@@ -181,7 +181,7 @@ export function updatePerson(tree, personId, values) {
   person.data = {
     ...person.data,
     ...values,
-    gender: values.gender === 'F' ? 'F' : 'M',
+    gender: values.gender === undefined ? person.data.gender : values.gender === 'F' ? 'F' : 'M',
   };
   return data;
 }
