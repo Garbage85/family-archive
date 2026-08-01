@@ -36,7 +36,7 @@ node --check "$INSTALL_DIR/pb_migrations/1785456000_initial_family_tree.js"
 
 cd "$INSTALL_DIR/frontend"
 echo "[3/8] Собираю интерфейс"
-npm install --no-audit --no-fund
+npm ci --no-audit --no-fund
 npm run check
 npm test
 npm run build

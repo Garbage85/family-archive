@@ -9,7 +9,7 @@ rsync -a --delete --exclude node_modules "$SOURCE_DIR/frontend/" "$INSTALL_DIR/f
 
 echo "[2/4] Устанавливаю зависимости"
 cd "$INSTALL_DIR/frontend"
-npm install --no-audit --no-fund
+npm ci --no-audit --no-fund
 
 echo "[3/4] Проверяю и собираю"
 npm run check
