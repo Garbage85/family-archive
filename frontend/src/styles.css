@@ -317,6 +317,10 @@ button {
 .f3 .card-inner {
   border-radius: 14px !important;
 }
+.f3 div.card-rect > div,
+.f3 div.card-image-circle div.card-label > div {
+  white-space: pre-line;
+}
 .f3-form-cont {
   color: #172521;
 }
@@ -345,57 +349,66 @@ button {
   }
 }
 
-/* Собственная карточка человека. Family Chart теперь только рисует древо. */
-.drawer-backdrop {
-  position: fixed;
-  inset: 152px 0 0;
-  background: rgba(12, 24, 21, 0.32);
-  z-index: 40;
-  backdrop-filter: blur(2px);
+/* Собственная панель человека. Family Chart только рисует древо. */
+.person-sidebar-backdrop {
+  display: none;
 }
-.person-drawer {
+.person-sidebar {
   position: fixed;
   z-index: 50;
   top: 64px;
   right: 0;
   bottom: 0;
-  width: min(480px, 100%);
+  width: min(460px, 42vw);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   background: var(--paper);
   border-left: 1px solid var(--line);
   box-shadow: -22px 0 70px rgba(15, 32, 28, 0.18);
   transform: translateX(105%);
-  transition: transform 0.22s ease;
+  visibility: hidden;
+  transition:
+    transform 0.24s ease,
+    visibility 0s linear 0.24s;
 }
-.person-drawer.open {
+.person-sidebar-host.open .person-sidebar {
   transform: translateX(0);
+  visibility: visible;
+  transition-delay: 0s;
 }
-.person-drawer form {
-  height: 100%;
-  display: grid;
-  grid-template-rows: auto 1fr auto;
-}
-.drawer-header,
-.drawer-footer {
+.person-sidebar-header,
+.person-sidebar-footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  padding: 1rem 1.15rem;
+  padding: 1rem 1.2rem;
+  background: rgba(255, 255, 255, 0.97);
+}
+.person-sidebar-footer > :only-child {
+  margin-left: auto;
+}
+.person-sidebar-header {
+  position: sticky;
+  z-index: 2;
+  top: 0;
+  min-height: 66px;
+  padding-top: max(1rem, env(safe-area-inset-top));
   border-bottom: 1px solid var(--line);
-  background: #fff;
+  background: var(--paper);
 }
-.drawer-footer {
-  border-top: 1px solid var(--line);
-  border-bottom: 0;
-  justify-content: flex-end;
-}
-.drawer-header h2 {
+.person-sidebar-header .eyebrow {
   margin: 0;
-  font-size: 1.35rem;
+}
+.person-sidebar-footer {
+  min-height: 72px;
+  border-top: 1px solid var(--line);
+  padding-bottom: max(1rem, env(safe-area-inset-bottom));
 }
 .icon-button {
-  width: 42px;
-  height: 42px;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
   padding: 0;
   border-radius: 50%;
   background: #eef4f1;
@@ -403,106 +416,308 @@ button {
   font-size: 1.65rem;
   line-height: 1;
 }
-.drawer-scroll {
-  overflow-y: auto;
-  padding: 1.1rem;
+.icon-button:hover {
+  background: #dfeae5;
 }
-.photo-block {
+.person-sidebar-scroll {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  padding: 1.3rem;
+  -webkit-overflow-scrolling: touch;
+}
+.person-sidebar-scroll h2 {
+  margin: 0 0 1rem;
+  font-size: 1.35rem;
+}
+.person-sidebar-identity {
   display: grid;
   justify-items: center;
-  gap: 0.7rem;
-  margin-bottom: 1.2rem;
+  gap: 0.85rem;
+  padding: 0.35rem 0 1.35rem;
+  text-align: center;
 }
-.person-avatar,
-.avatar-placeholder {
-  width: 108px;
-  height: 108px;
+.person-sidebar-identity h2 {
+  margin: 0;
+  max-width: 100%;
+  font-size: clamp(1.35rem, 4vw, 1.75rem);
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+.person-sidebar-avatar,
+.person-sidebar-placeholder {
+  width: 124px;
+  height: 124px;
   border-radius: 50%;
   object-fit: cover;
   border: 1px solid var(--line);
+  box-shadow: 0 12px 34px rgba(24, 60, 53, 0.13);
 }
-.avatar-placeholder {
+.person-sidebar-placeholder {
   display: grid;
   place-items: center;
-  background: #e9f0ed;
-  color: var(--muted);
-  font-weight: 800;
+  background: linear-gradient(145deg, #e1ece7, #f4f8f6);
+  color: var(--forest);
+  font-size: 1.7rem;
+  font-weight: 850;
+  letter-spacing: 0.04em;
 }
-.form-grid {
+.person-sidebar-facts {
+  margin: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.7rem;
+}
+.person-sidebar-fact {
+  display: grid;
+  align-content: start;
+  gap: 0.25rem;
+  min-width: 0;
+  padding: 0.8rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #f8fbf9;
+}
+.person-sidebar-fact-birth_place,
+.person-sidebar-fact-occupation,
+.person-sidebar-fact-notes {
+  grid-column: 1 / -1;
+}
+.person-sidebar-fact dt {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+.person-sidebar-fact dd {
+  margin: 0;
+  font-size: 0.94rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.person-sidebar-relations {
+  margin-top: 1.4rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--line);
+}
+.person-sidebar-relations h3 {
+  margin: 0 0 0.85rem;
+  font-size: 1.1rem;
+}
+.person-sidebar-relation-groups {
+  display: grid;
+  gap: 0.7rem;
+}
+.person-sidebar-relation-group {
+  padding: 0.85rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+}
+.person-sidebar-relation-group h4 {
+  margin: 0 0 0.6rem;
+  font-size: 0.85rem;
+  color: var(--forest);
+}
+.person-sidebar-relation-group ul {
+  display: grid;
+  gap: 0.55rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.person-sidebar-relation-group li {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-width: 0;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+.person-sidebar-relation-description {
+  display: grid;
+  gap: 0.1rem;
+  min-width: 0;
+}
+.person-sidebar-relation-role {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+.relation-avatar {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #e8f0ed;
+  color: var(--forest);
+  font-size: 0.7rem;
+  font-weight: 850;
+}
+.person-sidebar-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+.person-sidebar-notice {
+  margin: 0;
+  color: var(--forest-2);
+  font-size: 0.82rem;
+  font-weight: 750;
+}
+.person-sidebar-form-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 0.85rem;
 }
-.form-grid label {
+.person-sidebar-form-grid label,
+#person-sidebar-photo-form > label {
   display: grid;
   gap: 0.4rem;
   font-size: 0.88rem;
   font-weight: 750;
 }
-.form-grid .full {
+.person-sidebar-form-grid .full,
+.person-sidebar-gender {
   grid-column: 1 / -1;
 }
-.gender-field {
-  grid-column: 1 / -1;
+.person-sidebar-gender {
   display: flex;
   flex-wrap: wrap;
   gap: 0.9rem;
+  margin: 0;
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 0.75rem 0.9rem;
 }
-.gender-field legend {
+.person-sidebar-gender legend {
   padding: 0 0.35rem;
   color: var(--muted);
   font-size: 0.8rem;
   font-weight: 800;
 }
-.gender-field label {
+.person-sidebar-gender label {
   display: flex;
   align-items: center;
   gap: 0.4rem;
-  font-weight: 650;
 }
-.gender-field input {
+.person-sidebar-gender input {
   width: auto;
 }
-.relations-section {
-  margin-top: 1.25rem;
-  padding-top: 1rem;
+.person-sidebar-edit-actions {
+  margin-top: 1.35rem;
+  padding-top: 1.15rem;
   border-top: 1px solid var(--line);
 }
-.relations-section h3 {
-  margin: 0 0 0.75rem;
+.person-sidebar-edit-actions h3 {
+  margin: 0 0 0.8rem;
+  font-size: 1.05rem;
 }
-.relation-buttons {
+.person-sidebar-relation-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 0.55rem;
+  gap: 0.6rem;
 }
-.relation-buttons button {
+.person-sidebar-relation-actions button {
   white-space: normal;
+}
+.person-sidebar-photo-preview {
+  min-height: 132px;
+  display: grid;
+  place-items: center;
+  margin: 1rem 0;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #f8fbf9;
+}
+.person-sidebar-delete {
+  padding: 0.5rem 0;
+}
+.person-sidebar-delete p {
+  line-height: 1.55;
 }
 .f3-form-cont {
   display: none !important;
 }
 
 @media (max-width: 760px) {
-  .person-drawer {
-    top: 0;
-    width: 100%;
-  }
-  .drawer-backdrop {
+  .person-sidebar-backdrop {
+    position: fixed;
+    z-index: 40;
     inset: 0;
+    display: block;
+    background: rgba(12, 24, 21, 0.48);
+    opacity: 0;
+    visibility: hidden;
+    backdrop-filter: blur(3px);
+    transition:
+      opacity 0.2s ease,
+      visibility 0s linear 0.2s;
   }
-  .form-grid {
+  .person-sidebar-host.open .person-sidebar-backdrop {
+    opacity: 1;
+    visibility: visible;
+    transition-delay: 0s;
+  }
+  .person-sidebar {
+    inset: max(0.5rem, env(safe-area-inset-top)) max(0.5rem, env(safe-area-inset-right))
+      max(0.5rem, env(safe-area-inset-bottom)) max(0.5rem, env(safe-area-inset-left));
+    width: auto;
+    border: 1px solid rgba(24, 60, 53, 0.12);
+    border-radius: 22px;
+    box-shadow: 0 24px 80px rgba(8, 22, 18, 0.34);
+    transform: translateX(calc(100% + 1rem));
+    overflow: hidden;
+  }
+  .person-sidebar-header,
+  .person-sidebar-footer {
+    padding-right: max(1rem, env(safe-area-inset-right));
+    padding-left: max(1rem, env(safe-area-inset-left));
+  }
+  .person-sidebar-scroll {
+    padding: 1rem;
+  }
+  .person-sidebar-identity {
+    padding-top: 0.1rem;
+  }
+  .person-sidebar-avatar,
+  .person-sidebar-placeholder {
+    width: 104px;
+    height: 104px;
+  }
+  .person-sidebar-facts {
     grid-template-columns: 1fr;
   }
-  .form-grid .full,
-  .gender-field {
+  .person-sidebar-form-grid {
+    grid-template-columns: 1fr;
+  }
+  .person-sidebar-form-grid .full,
+  .person-sidebar-gender {
     grid-column: 1;
   }
-  .relation-buttons {
-    grid-template-columns: 1fr 1fr;
+  .person-sidebar-fact-birth_place,
+  .person-sidebar-fact-occupation,
+  .person-sidebar-fact-notes {
+    grid-column: 1;
+  }
+  .person-sidebar-footer {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 0.6rem;
+  }
+  .person-sidebar-footer .primary {
+    width: 100%;
+    min-height: 46px;
+  }
+  .person-sidebar-footer > :only-child {
+    margin-left: 0;
   }
   .toolbar {
     flex-wrap: nowrap;

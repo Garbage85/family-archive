@@ -1,4 +1,4 @@
-import { ROLE_LABELS, personName } from './tree-utils.js';
+import { ROLE_LABELS } from './tree-utils.js';
 
 function escapeHtml(value = '') {
   return String(value)
@@ -37,50 +37,11 @@ export function renderShell(root) {
         </nav>
         <div id="status-line" class="status-line" role="status"></div>
         <div id="FamilyChart" class="f3 chart-surface"></div>
-        <div id="drawer-backdrop" class="drawer-backdrop hidden"></div>
-        <aside id="person-drawer" class="person-drawer" aria-hidden="true">
-          <form id="person-form">
-            <header class="drawer-header">
-              <div><p class="eyebrow">Карточка человека</p><h2 id="drawer-title">Без имени</h2></div>
-              <button id="drawer-close" type="button" class="icon-button" aria-label="Закрыть">×</button>
-            </header>
-            <div class="drawer-scroll">
-              <div class="photo-block"><img id="person-avatar" class="person-avatar hidden" alt="" /><div id="avatar-placeholder" class="avatar-placeholder">Фото</div><button id="photo-button" type="button" class="ghost">Загрузить фотографию</button></div>
-              <div class="form-grid">
-                <label>Фамилия<input name="last_name" autocomplete="family-name" /></label>
-                <label>Имя<input name="first_name" autocomplete="given-name" required /></label>
-                <label>Отчество<input name="middle_name" /></label>
-                <fieldset class="gender-field"><legend>Пол</legend><label><input type="radio" name="gender" value="M" /> Мужчина</label><label><input type="radio" name="gender" value="F" /> Женщина</label></fieldset>
-                <label>Дата рождения<input name="birth_date" type="date" /></label>
-                <label>Дата смерти<input name="death_date" type="date" /></label>
-                <label class="full">Место рождения<input name="birth_place" /></label>
-                <label class="full">Профессия или занятие<input name="occupation" /></label>
-                <label class="full">Заметки<textarea name="notes" rows="4"></textarea></label>
-              </div>
-              <section class="relations-section"><h3>Добавить родственника</h3><div class="relation-buttons"><button type="button" class="ghost" data-relation="parent">Родителя</button><button type="button" class="ghost" data-relation="spouse">Супруга</button><button type="button" class="ghost" data-relation="child">Ребёнка</button><button type="button" class="ghost" data-relation="sibling">Брата или сестру</button></div></section>
-              <button id="delete-person" type="button" class="danger wide">Удалить человека</button>
-            </div>
-            <footer class="drawer-footer"><button id="drawer-cancel" type="button" class="ghost">Отмена</button><button type="submit" class="primary">Применить</button></footer>
-          </form>
-        </aside>
+        <div id="person-sidebar-host"></div>
       </section>
     </main>
 
-    <dialog id="relative-dialog" class="dialog-card">
-      <form id="relative-form">
-        <input id="relative-type" name="relative_type" type="hidden" />
-        <h2 id="relative-title">Добавить родственника</h2>
-        <div class="form-grid">
-          <label>Имя<input name="first_name" required /></label><label>Фамилия<input name="last_name" /></label><label>Отчество<input name="middle_name" /></label>
-          <fieldset class="gender-field"><legend>Пол</legend><label><input type="radio" name="gender" value="M" checked /> Мужчина</label><label><input type="radio" name="gender" value="F" /> Женщина</label></fieldset>
-          <label class="full">Дата рождения<input name="birth_date" type="date" /></label>
-        </div>
-        <div class="dialog-actions"><button type="button" data-close-dialog="relative-dialog" class="ghost">Отмена</button><button class="primary">Создать</button></div>
-      </form>
-    </dialog>
-
     <dialog id="comment-dialog" class="dialog-card"><form id="comment-form"><h2>Предложить изменение</h2><label>Комментарий<textarea id="proposal-comment" rows="4" maxlength="500"></textarea></label><div class="dialog-actions"><button type="button" data-close-dialog="comment-dialog" class="ghost">Отмена</button><button class="primary">Отправить</button></div></form></dialog>
-    <dialog id="photo-dialog" class="dialog-card"><form id="photo-form"><h2>Фотография</h2><p id="photo-person-name" class="muted"></p><label>Файл<input id="photo-file" type="file" accept="image/jpeg,image/png,image/webp" required /></label><div class="dialog-actions"><button type="button" data-close-dialog="photo-dialog" class="ghost">Отмена</button><button class="primary">Загрузить</button></div></form></dialog>
     <dialog id="proposals-dialog" class="dialog-card proposals-dialog"><form method="dialog"><div class="dialog-heading"><div><p class="eyebrow">Модерация</p><h2>Предложения родственников</h2></div><button type="button" data-close-dialog="proposals-dialog" class="ghost">Закрыть</button></div><div id="proposals-list" class="proposal-list"></div></form></dialog>
   `;
 }
@@ -101,9 +62,9 @@ export function setStatus(message, tone = 'normal') {
   el.textContent = message || '';
   el.dataset.tone = tone;
 }
-export function setSaveState({ dirty, role, busy = false }) {
+export function setSaveState({ dirty, role, busy = false, previewMode = false }) {
   const b = document.querySelector('#save-button');
-  if (role === 'viewer') return b.classList.add('hidden');
+  if (role === 'viewer' || previewMode) return b.classList.add('hidden');
   b.classList.remove('hidden');
   b.disabled = !dirty || busy;
   b.textContent = busy
@@ -113,44 +74,6 @@ export function setSaveState({ dirty, role, busy = false }) {
       : role === 'admin'
         ? 'Сохранить'
         : 'Предложить';
-}
-
-export function openPersonDrawer(person, editable) {
-  const drawer = document.querySelector('#person-drawer');
-  const form = document.querySelector('#person-form');
-  form.dataset.personId = person.id;
-  document.querySelector('#drawer-title').textContent = personName(person);
-  for (const [key, value] of Object.entries(person.data)) {
-    const field = form.elements.namedItem(key);
-    if (field && key !== 'gender') field.value = value || '';
-  }
-  const gender = form.querySelector(`[name="gender"][value="${person.data.gender}"]`);
-  if (gender) gender.checked = true;
-  const img = document.querySelector('#person-avatar');
-  const placeholder = document.querySelector('#avatar-placeholder');
-  if (person.data.avatar) {
-    img.src = person.data.avatar;
-    img.classList.remove('hidden');
-    placeholder.classList.add('hidden');
-  } else {
-    img.classList.add('hidden');
-    placeholder.classList.remove('hidden');
-  }
-  for (const field of form.querySelectorAll(
-    'input, textarea, button[data-relation], #delete-person, #photo-button',
-  ))
-    field.disabled = !editable;
-  form.querySelector('button[type="submit"]').classList.toggle('hidden', !editable);
-  document.querySelector('#drawer-cancel').textContent = editable ? 'Отмена' : 'Закрыть';
-  drawer.classList.add('open');
-  drawer.setAttribute('aria-hidden', 'false');
-  document.querySelector('#drawer-backdrop').classList.remove('hidden');
-}
-export function closePersonDrawer() {
-  const d = document.querySelector('#person-drawer');
-  d.classList.remove('open');
-  d.setAttribute('aria-hidden', 'true');
-  document.querySelector('#drawer-backdrop').classList.add('hidden');
 }
 
 export function renderProposals(proposals, currentTree, handlers) {
