@@ -2,8 +2,11 @@ import { ROLE_LABELS, personName } from './tree-utils.js';
 
 function escapeHtml(value = '') {
   return String(value)
-    .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;').replaceAll("'", '&#039;');
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
 }
 
 export function renderShell(root) {
@@ -82,26 +85,91 @@ export function renderShell(root) {
   `;
 }
 
-export function showLogin() { document.querySelector('#login-view').classList.remove('hidden'); document.querySelector('#app-view').classList.add('hidden'); }
-export function showApp(user, tree) { document.querySelector('#login-view').classList.add('hidden'); document.querySelector('#app-view').classList.remove('hidden'); document.querySelector('#user-name').textContent = user.name || user.email; document.querySelector('#user-role').textContent = ROLE_LABELS[user.role] || user.role; document.querySelector('#tree-title').textContent = tree.name; }
-export function setStatus(message, tone = 'normal') { const el = document.querySelector('#status-line'); el.textContent = message || ''; el.dataset.tone = tone; }
-export function setSaveState({ dirty, role, busy = false }) { const b = document.querySelector('#save-button'); if (role === 'viewer') return b.classList.add('hidden'); b.classList.remove('hidden'); b.disabled = !dirty || busy; b.textContent = busy ? 'Сохраняю…' : !dirty ? 'Сохранено' : role === 'admin' ? 'Сохранить' : 'Предложить'; }
+export function showLogin() {
+  document.querySelector('#login-view').classList.remove('hidden');
+  document.querySelector('#app-view').classList.add('hidden');
+}
+export function showApp(user, tree) {
+  document.querySelector('#login-view').classList.add('hidden');
+  document.querySelector('#app-view').classList.remove('hidden');
+  document.querySelector('#user-name').textContent = user.name || user.email;
+  document.querySelector('#user-role').textContent = ROLE_LABELS[user.role] || user.role;
+  document.querySelector('#tree-title').textContent = tree.name;
+}
+export function setStatus(message, tone = 'normal') {
+  const el = document.querySelector('#status-line');
+  el.textContent = message || '';
+  el.dataset.tone = tone;
+}
+export function setSaveState({ dirty, role, busy = false }) {
+  const b = document.querySelector('#save-button');
+  if (role === 'viewer') return b.classList.add('hidden');
+  b.classList.remove('hidden');
+  b.disabled = !dirty || busy;
+  b.textContent = busy
+    ? 'Сохраняю…'
+    : !dirty
+      ? 'Сохранено'
+      : role === 'admin'
+        ? 'Сохранить'
+        : 'Предложить';
+}
 
 export function openPersonDrawer(person, editable) {
-  const drawer = document.querySelector('#person-drawer'); const form = document.querySelector('#person-form');
-  form.dataset.personId = person.id; document.querySelector('#drawer-title').textContent = personName(person);
-  for (const [key, value] of Object.entries(person.data)) { const field = form.elements.namedItem(key); if (field && key !== 'gender') field.value = value || ''; }
-  const gender = form.querySelector(`[name="gender"][value="${person.data.gender}"]`); if (gender) gender.checked = true;
-  const img = document.querySelector('#person-avatar'); const placeholder = document.querySelector('#avatar-placeholder');
-  if (person.data.avatar) { img.src = person.data.avatar; img.classList.remove('hidden'); placeholder.classList.add('hidden'); } else { img.classList.add('hidden'); placeholder.classList.remove('hidden'); }
-  for (const field of form.querySelectorAll('input, textarea, button[data-relation], #delete-person, #photo-button')) field.disabled = !editable;
-  form.querySelector('button[type="submit"]').classList.toggle('hidden', !editable); document.querySelector('#drawer-cancel').textContent = editable ? 'Отмена' : 'Закрыть';
-  drawer.classList.add('open'); drawer.setAttribute('aria-hidden', 'false'); document.querySelector('#drawer-backdrop').classList.remove('hidden');
+  const drawer = document.querySelector('#person-drawer');
+  const form = document.querySelector('#person-form');
+  form.dataset.personId = person.id;
+  document.querySelector('#drawer-title').textContent = personName(person);
+  for (const [key, value] of Object.entries(person.data)) {
+    const field = form.elements.namedItem(key);
+    if (field && key !== 'gender') field.value = value || '';
+  }
+  const gender = form.querySelector(`[name="gender"][value="${person.data.gender}"]`);
+  if (gender) gender.checked = true;
+  const img = document.querySelector('#person-avatar');
+  const placeholder = document.querySelector('#avatar-placeholder');
+  if (person.data.avatar) {
+    img.src = person.data.avatar;
+    img.classList.remove('hidden');
+    placeholder.classList.add('hidden');
+  } else {
+    img.classList.add('hidden');
+    placeholder.classList.remove('hidden');
+  }
+  for (const field of form.querySelectorAll(
+    'input, textarea, button[data-relation], #delete-person, #photo-button',
+  ))
+    field.disabled = !editable;
+  form.querySelector('button[type="submit"]').classList.toggle('hidden', !editable);
+  document.querySelector('#drawer-cancel').textContent = editable ? 'Отмена' : 'Закрыть';
+  drawer.classList.add('open');
+  drawer.setAttribute('aria-hidden', 'false');
+  document.querySelector('#drawer-backdrop').classList.remove('hidden');
 }
-export function closePersonDrawer() { const d = document.querySelector('#person-drawer'); d.classList.remove('open'); d.setAttribute('aria-hidden', 'true'); document.querySelector('#drawer-backdrop').classList.add('hidden'); }
+export function closePersonDrawer() {
+  const d = document.querySelector('#person-drawer');
+  d.classList.remove('open');
+  d.setAttribute('aria-hidden', 'true');
+  document.querySelector('#drawer-backdrop').classList.add('hidden');
+}
 
 export function renderProposals(proposals, currentTree, handlers) {
-  const list = document.querySelector('#proposals-list'); if (!proposals.length) { list.innerHTML = '<div class="empty-state">Новых предложений нет.</div>'; return; }
-  list.innerHTML = proposals.map((item) => { const author = item.expand?.author; const diff = handlers.diff(currentTree.data, item.data); const conflict = Number(item.base_revision) !== Number(currentTree.revision); return `<article class="proposal-card" data-id="${escapeHtml(item.id)}"><div class="proposal-card-head"><div><strong>${escapeHtml(author?.name || author?.email || 'Пользователь')}</strong><p class="muted compact">${new Date(item.created).toLocaleString('ru-RU')}</p></div>${conflict ? '<span class="warning-badge">Старая версия</span>' : '<span class="ok-badge">Актуально</span>'}</div><p>${escapeHtml(item.comment || 'Комментарий не указан.')}</p><div class="diff-row"><span>Добавлено: ${diff.added}</span><span>Изменено: ${diff.changed}</span><span>Удалено: ${diff.removed}</span></div><div class="proposal-actions"><button type="button" class="ghost" data-action="preview">Посмотреть</button><button type="button" class="danger" data-action="reject">Отклонить</button><button type="button" class="primary" data-action="approve">Принять</button></div></article>`; }).join('');
-  list.onclick = (event) => { const button = event.target.closest('button[data-action]'); if (!button) return; handlers.onAction(button.dataset.action, button.closest('[data-id]').dataset.id); };
+  const list = document.querySelector('#proposals-list');
+  if (!proposals.length) {
+    list.innerHTML = '<div class="empty-state">Новых предложений нет.</div>';
+    return;
+  }
+  list.innerHTML = proposals
+    .map((item) => {
+      const author = item.expand?.author;
+      const diff = handlers.diff(currentTree.data, item.data);
+      const conflict = Number(item.base_revision) !== Number(currentTree.revision);
+      return `<article class="proposal-card" data-id="${escapeHtml(item.id)}"><div class="proposal-card-head"><div><strong>${escapeHtml(author?.name || author?.email || 'Пользователь')}</strong><p class="muted compact">${new Date(item.created).toLocaleString('ru-RU')}</p></div>${conflict ? '<span class="warning-badge">Старая версия</span>' : '<span class="ok-badge">Актуально</span>'}</div><p>${escapeHtml(item.comment || 'Комментарий не указан.')}</p><div class="diff-row"><span>Добавлено: ${diff.added}</span><span>Изменено: ${diff.changed}</span><span>Удалено: ${diff.removed}</span></div><div class="proposal-actions"><button type="button" class="ghost" data-action="preview">Посмотреть</button><button type="button" class="danger" data-action="reject">Отклонить</button><button type="button" class="primary" data-action="approve">Принять</button></div></article>`;
+    })
+    .join('');
+  list.onclick = (event) => {
+    const button = event.target.closest('button[data-action]');
+    if (!button) return;
+    handlers.onAction(button.dataset.action, button.closest('[data-id]').dataset.id);
+  };
 }

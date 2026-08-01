@@ -66,7 +66,9 @@ export function validateTree(data) {
       const relations = person?.rels?.[kind] || [];
       for (const relatedId of relations) {
         if (!ids.has(relatedId)) {
-          errors.push(`${personName(person)}: связь ${kind} ведёт к отсутствующему ID ${relatedId}.`);
+          errors.push(
+            `${personName(person)}: связь ${kind} ведёт к отсутствующему ID ${relatedId}.`,
+          );
         }
         if (relatedId === person.id) {
           errors.push(`${personName(person)} не может быть родственником самому себе.`);
@@ -114,22 +116,24 @@ export function isoNow() {
 
 export function createPerson(values = {}) {
   const id = crypto.randomUUID?.() || `person-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  return normaliseTree([{
-    id,
-    data: {
-      gender: values.gender === 'F' ? 'F' : 'M',
-      first_name: values.first_name || '',
-      last_name: values.last_name || '',
-      middle_name: values.middle_name || '',
-      birth_date: values.birth_date || '',
-      death_date: values.death_date || '',
-      birth_place: values.birth_place || '',
-      occupation: values.occupation || '',
-      notes: values.notes || '',
-      avatar: values.avatar || '',
+  return normaliseTree([
+    {
+      id,
+      data: {
+        gender: values.gender === 'F' ? 'F' : 'M',
+        first_name: values.first_name || '',
+        last_name: values.last_name || '',
+        middle_name: values.middle_name || '',
+        birth_date: values.birth_date || '',
+        death_date: values.death_date || '',
+        birth_place: values.birth_place || '',
+        occupation: values.occupation || '',
+        notes: values.notes || '',
+        avatar: values.avatar || '',
+      },
+      rels: { parents: [], spouses: [], children: [] },
     },
-    rels: { parents: [], spouses: [], children: [] },
-  }])[0];
+  ])[0];
 }
 
 function addUnique(list, id) {

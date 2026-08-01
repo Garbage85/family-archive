@@ -1,6 +1,6 @@
 import * as f3 from 'family-chart';
 import 'family-chart/styles/family-chart.css';
-import { cloneTree, normaliseTree, personName } from './tree-utils.js';
+import { cloneTree, normaliseTree, personName } from '../tree-utils.js';
 
 export class FamilyTreeChart {
   constructor(containerSelector) {
@@ -23,7 +23,8 @@ export class FamilyTreeChart {
     host.innerHTML = '';
     if (searchHost) searchHost.innerHTML = '';
 
-    this.chart = f3.createChart(this.containerSelector, cloneTree(this.data))
+    this.chart = f3
+      .createChart(this.containerSelector, cloneTree(this.data))
       .setTransitionTime(300)
       .setAncestryDepth(8)
       .setProgenyDepth(8)
@@ -32,31 +33,25 @@ export class FamilyTreeChart {
 
     if (this.orientation === 'horizontal') this.chart.setOrientationHorizontal();
 
-    this.card = this.chart.setCardHtml()
+    this.card = this.chart
+      .setCardHtml()
       .setStyle('imageCircleRect')
       .setCardImageField('avatar')
-      .setCardDisplay([
-        ['first_name', 'last_name'],
-        ['middle_name'],
-        ['birth_date', 'death_date'],
-      ])
+      .setCardDisplay([['first_name', 'last_name'], ['middle_name'], ['birth_date', 'death_date']])
       .setOnCardClick((_event, treeDatum) => {
         const person = this.extractPerson(treeDatum);
         if (!person) return;
         this.select(person.id);
       });
 
-    this.chart.setPersonDropdown(
-      (datum) => personName(datum),
-      {
-        cont: searchHost,
-        placeholder: 'Найти человека',
-        onSelect: (id) => {
-          this.select(id);
-          this.chart.updateMainId(id).updateTree({ tree_position: 'main_to_middle' });
-        },
+    this.chart.setPersonDropdown((datum) => personName(datum), {
+      cont: searchHost,
+      placeholder: 'Найти человека',
+      onSelect: (id) => {
+        this.select(id);
+        this.chart.updateMainId(id).updateTree({ tree_position: 'main_to_middle' });
       },
-    );
+    });
 
     this.chart.updateTree({ initial: true, tree_position: 'fit' });
   }

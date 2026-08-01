@@ -35,7 +35,9 @@ export async function reloadTree(id) {
 export async function saveTree(record, data, userId) {
   const current = await reloadTree(record.id);
   if (Number(current.revision) !== Number(record.revision)) {
-    const error = new Error('Древо уже изменил другой пользователь. Обновите страницу перед сохранением.');
+    const error = new Error(
+      'Древо уже изменил другой пользователь. Обновите страницу перед сохранением.',
+    );
     error.code = 'REVISION_CONFLICT';
     throw error;
   }

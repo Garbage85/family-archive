@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 if [[ ${EUID} -ne 0 ]]; then echo "Запустите через sudo."; exit 1; fi
 cd /opt/family-tree/frontend
-npm install --no-audit --no-fund
+npm ci --no-audit --no-fund
 npm run check
 npm test
 npm run build
