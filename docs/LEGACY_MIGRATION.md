@@ -31,9 +31,11 @@ ExecStart=/opt/family-tree/pocketbase serve --http=0.0.0.0:8090
 sudo ./scripts/migrate-legacy-server.sh --dry-run
 ```
 
-Dry-run проверяет абсолютные нормализованные пути, отсутствие симлинков и `..`,
-legacy-каталоги, unit, свободное место и конфликты целевых путей. Он не останавливает
-сервис, не создаёт backup и не обращается к GitHub.
+Dry-run получает фактический unit через
+`systemctl show family-tree.service --property=FragmentPath --value`, проверяет абсолютный путь, обычный файл или
+безопасный symlink внутри разрешённых systemd-каталогов, legacy-каталоги, свободное
+место и конфликты целевых путей. Он не останавливает сервис, не создаёт backup и не
+обращается к GitHub.
 
 Прямая in-place миграция после проверки (без `--yes` она также запросит
 подтверждение):
@@ -55,7 +57,8 @@ sudo ./scripts/migrate-legacy-server.sh \
 
 1. проверяет layout, unit, команды ОС, пути и место;
 2. останавливает сервис и создаёт preflight offline backup `pb_data`, миграций,
-   исходного unit и JSON metadata;
+   исходного unit под стабильным путём `systemd/family-tree.service` и JSON metadata
+   с исходным `FragmentPath`;
 3. проверяет tar и его SHA-256;
 4. снова запускает и проверяет legacy-сервис;
 5. во внешнем временном каталоге получает Git mirror и выполняет `npm ci`, lint,
@@ -98,7 +101,10 @@ read-only режим. Он служит для расследования, а н
 старый unit, восстанавливает `pb_data` из final backup, выполняет `daemon-reload` и
 возвращает исходные active/inactive и enabled/disabled состояния сервиса. После
 ошибки печатается `ROLLBACK REPORT` с этапом, результатом восстановления, состоянием
-сервиса и путём recovery artifacts.
+сервиса и путём recovery artifacts. Если final backup завершился ошибкой до
+изменения root, unit, данных и `current`, rollback не восстанавливает их из backup:
+он выполняет `reset-failed`, запускает старый сервис и проверяет systemd, TCP, HTTP и
+`/api/health`. Успешный отчёт содержит `service: restored` и `result: COMPLETE`.
 
 Если отчёт имеет `result: INCOMPLETE`, не запускайте обе версии вручную. Сохраните
 указанные каталоги и архивы, проверьте:

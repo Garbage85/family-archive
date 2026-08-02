@@ -60,6 +60,7 @@ FAILED_INSTALL=""
 NEW_RELEASE=""
 RELEASE_STAGING=""
 UNIT_PATH=""
+UNIT_FILE_PATH=""
 ORIGINAL_UNIT_COPY=""
 RELEASE_ID=""
 COMMIT=""
@@ -229,6 +230,51 @@ path_is_below() {
   [[ $path == "$parent"/* ]]
 }
 
+systemd_unit_directory_is_allowed() {
+  local directory=$1 allowed
+  local -a allowed_directories=(
+    /etc/systemd/system
+    /run/systemd/system
+    /usr/local/lib/systemd/system
+    /usr/lib/systemd/system
+    /lib/systemd/system
+  )
+  if (( TEST_MODE )); then
+    [[ $directory == "$SYSTEMD_DIR" ]] || return 1
+    return 0
+  fi
+  for allowed in "${allowed_directories[@]}"; do
+    [[ $directory == "$allowed" ]] && return 0
+  done
+  return 1
+}
+
+resolve_legacy_unit_path() {
+  local fragment resolved previous_path=$UNIT_PATH previous_file=$UNIT_FILE_PATH
+  fragment=$(systemctl show "${SERVICE_NAME}.service" \
+    --property=FragmentPath --value 2>/dev/null || true)
+  [[ -n $fragment && $fragment != *$'\n'* && $fragment == /* ]] ||
+    die "systemd вернул пустой или не абсолютный FragmentPath для ${SERVICE_NAME}.service."
+  [[ $fragment != */ && $fragment != *//* && $fragment != *$'\r'* ]] ||
+    die "FragmentPath legacy unit имеет небезопасный формат: $fragment"
+  path_entry_is_safe "${fragment#/}" || die "FragmentPath legacy unit содержит '..': $fragment"
+  systemd_unit_directory_is_allowed "$(dirname "$fragment")" ||
+    die "FragmentPath legacy unit находится вне разрешённых systemd-каталогов: $fragment"
+  [[ -e $fragment || -L $fragment ]] || die "Legacy unit из FragmentPath отсутствует: $fragment"
+  [[ -f $fragment ]] || die "Legacy unit из FragmentPath не является обычным файлом: $fragment"
+  resolved=$(realpath -e -- "$fragment" 2>/dev/null || true)
+  [[ -n $resolved && $resolved == /* && -f $resolved && ! -L $resolved ]] ||
+    die "Не удалось безопасно разрешить FragmentPath legacy unit: $fragment"
+  systemd_unit_directory_is_allowed "$(dirname "$resolved")" ||
+    die "Symlink legacy unit выходит за разрешённые systemd-каталоги: $fragment -> $resolved"
+  if [[ -n $previous_path ]]; then
+    [[ $fragment == "$previous_path" && $resolved == "$previous_file" ]] ||
+      die "FragmentPath legacy unit изменился во время миграции: $previous_path -> $fragment"
+  fi
+  UNIT_PATH=$fragment
+  UNIT_FILE_PATH=$resolved
+}
+
 validate_test_sandbox() {
   local sandbox
   (( TEST_MODE )) || return 0
@@ -248,10 +294,13 @@ migration_failpoint() {
 }
 
 legacy_health_ok() {
-  systemctl is-active --quiet "$SERVICE_NAME" &&
-    port_is_listening &&
-    [[ $(http_status_code /) == 200 ]] &&
-    api_health_ok
+  local status
+  systemctl is-active --quiet "$SERVICE_NAME" || { LEGACY_HEALTH_FAILURE=systemd; return 1; }
+  port_is_listening || { LEGACY_HEALTH_FAILURE=port; return 1; }
+  status=$(http_status_code /)
+  [[ $status == 200 ]] || { LEGACY_HEALTH_FAILURE="http-$status"; return 1; }
+  api_health_ok || { LEGACY_HEALTH_FAILURE=api-health; return 1; }
+  LEGACY_HEALTH_FAILURE=""
 }
 
 wait_for_legacy_health() {
@@ -260,6 +309,7 @@ wait_for_legacy_health() {
     legacy_health_ok && return 0
     sleep "$HEALTH_DELAY_SECONDS"
   done
+  [[ -z ${LEGACY_HEALTH_FAILURE:-} ]] || warn "Legacy health check не пройден: $LEGACY_HEALTH_FAILURE"
   return 1
 }
 
@@ -275,7 +325,7 @@ check_migration_free_space() {
 }
 
 validate_legacy_layout() {
-  local required entry expected_exec count fragment unit_text effective_exec dropins endpoint prefix
+  local required entry expected_exec unexpected_exec count unit_text effective_exec dropins endpoint prefix
   local -a exec_lines=()
   [[ -d $LEGACY_ROOT && ! -L $LEGACY_ROOT ]] || die "Legacy-root не является обычным каталогом: $LEGACY_ROOT"
   [[ -f $LEGACY_ROOT/pocketbase && -x $LEGACY_ROOT/pocketbase && ! -L $LEGACY_ROOT/pocketbase ]] ||
@@ -287,7 +337,7 @@ validate_legacy_layout() {
   if find "$LEGACY_ROOT/pb_data" -type l -print -quit | grep -q .; then
     die "Legacy pb_data содержит симлинк; миграция остановлена."
   fi
-  [[ -f $UNIT_PATH && ! -L $UNIT_PATH ]] || die "Legacy unit должен быть обычным файлом: $UNIT_PATH"
+  [[ -f $UNIT_PATH ]] || die "Legacy unit должен разрешаться в обычный файл: $UNIT_PATH"
   mapfile -t exec_lines < <(grep '^ExecStart=' "$UNIT_PATH" || true)
   (( ${#exec_lines[@]} == 1 )) || die "Legacy unit должен содержать единственный ExecStart."
   expected_exec=${exec_lines[0]}
@@ -311,12 +361,9 @@ validate_legacy_layout() {
   validate_legacy_ownership
   count=$(grep -Fxc -- "$expected_exec" <<< "$unit_text" || true)
   (( count == 1 )) || die "Загруженный systemd unit не совпадает с проверенным legacy unit."
-  if grep '^ExecStart=' <<< "$unit_text" | grep -Fvx -- "$expected_exec" | grep -q .; then
+  unexpected_exec=$(grep '^ExecStart=' <<< "$unit_text" | grep -Fvx -- "$expected_exec" || true)
+  [[ -z $unexpected_exec ]] ||
     die "Загруженный systemd unit содержит дополнительный или переопределённый ExecStart."
-  fi
-  fragment=$(systemctl show "$SERVICE_NAME" --property=FragmentPath --value 2>/dev/null || true)
-  [[ -z $fragment || $fragment == "$UNIT_PATH" ]] ||
-    die "systemd использует другой unit: ${fragment:-неизвестно}"
   effective_exec=$(systemctl show "$SERVICE_NAME" --property=ExecStart --value 2>/dev/null || true)
   [[ -z $effective_exec || $effective_exec == *"$LEGACY_ROOT/pocketbase"* &&
     $effective_exec == *"--http=$endpoint"* ]] ||
@@ -325,41 +372,77 @@ validate_legacy_layout() {
   [[ -z $dropins ]] || die "Для legacy unit настроены drop-in файлы; сначала разберите их вручную: $dropins"
 }
 
+show_backup_tar_listing() {
+  local archive=$1 listing=${2:-}
+  printf 'Tar listing проблемного backup %s:\n' "$archive" >&2
+  if [[ -n $listing && -s $listing ]]; then
+    sed 's/^/  /' "$listing" >&2
+  else
+    tar -tzf "$archive" 2>&1 | sed 's/^/  /' >&2 || true
+  fi
+}
+
+backup_verification_error() {
+  local archive=$1 listing=$2 message=$3
+  show_backup_tar_listing "$archive" "$listing"
+  die "$message"
+}
+
+verify_created_legacy_backup() {
+  local archive=$1 listing=$2
+  if ! tar -tzf "$archive" > "$listing"; then
+    backup_verification_error "$archive" "$listing" "Созданный backup не читается как tar.gz."
+  fi
+  if ! (validate_tar_archive "$archive"); then
+    backup_verification_error "$archive" "$listing" "Созданный backup не прошёл безопасную проверку tar."
+  fi
+  grep -Eq '^(\./)?pb_data(/|$)' "$listing" ||
+    backup_verification_error "$archive" "$listing" "Backup не содержит pb_data."
+  grep -Eq '^(\./)?metadata\.json$' "$listing" ||
+    backup_verification_error "$archive" "$listing" "Backup не содержит metadata.json."
+  grep -Eq "^(\\./)?systemd/${SERVICE_NAME}\\.service$" "$listing" ||
+    backup_verification_error "$archive" "$listing" "Backup не содержит legacy unit."
+}
+
 create_legacy_backup() {
-  local label=$1 archive snapshot staging checksum metadata_name
+  local label=$1 archive snapshot staging staged_archive staged_checksum checksum metadata_name listing
   archive="$BACKUP_DIR/family-archive-legacy-${TIMESTAMP}-${label}.tar.gz"
   snapshot="$WORK_DIR/snapshot-$label"
   staging="$WORK_DIR/.backup-$label"
+  staged_archive="$staging/$(basename "$archive")"
+  staged_checksum="$staged_archive.sha256"
+  listing="$staging/tar-listing.txt"
   [[ ! -e $archive && ! -e $archive.sha256 ]] || die "Backup уже существует: $archive"
   mkdir -p "$snapshot/pb_data" "$snapshot/pb_migrations" "$snapshot/systemd" "$staging"
   rsync -a --delete "$LEGACY_ROOT/pb_data/" "$snapshot/pb_data/"
   rsync -a --delete "$LEGACY_ROOT/pb_migrations/" "$snapshot/pb_migrations/"
-  install -m 0644 "$UNIT_PATH" "$snapshot/systemd/${SERVICE_NAME}.service"
+  install -m 0644 "$UNIT_FILE_PATH" "$snapshot/systemd/${SERVICE_NAME}.service"
   metadata_name="$snapshot/metadata.json"
   jq -n \
     --arg created_at "$(date --iso-8601=seconds)" \
     --arg phase "$label" \
     --arg legacy_root "$LEGACY_ROOT" \
     --arg install_root "$INSTALL_ROOT" \
-    --arg unit "$UNIT_PATH" \
+    --arg fragment_path "$UNIT_PATH" \
     --arg repo "$REPOSITORY_URL" \
     --arg branch "$DEFAULT_BRANCH" \
-    '{format_version:1,created_at:$created_at,phase:$phase,legacy_root:$legacy_root,install_root:$install_root,unit:$unit,repository:$repo,branch:$branch}' \
+    '{format_version:1,created_at:$created_at,phase:$phase,legacy_root:$legacy_root,install_root:$install_root,unit:$fragment_path,fragment_path:$fragment_path,repository:$repo,branch:$branch}' \
     > "$metadata_name"
   migration_failpoint "$label-backup"
-  tar -C "$snapshot" -czf "$staging/$(basename "$archive")" .
-  chmod 0600 "$staging/$(basename "$archive")"
-  validate_tar_archive "$staging/$(basename "$archive")"
-  tar -tzf "$staging/$(basename "$archive")" | grep -Eq '^\./metadata\.json$|^metadata\.json$' ||
-    die "Backup не содержит metadata.json."
-  tar -tzf "$staging/$(basename "$archive")" | grep -Eq "^\./systemd/${SERVICE_NAME}\.service$|^systemd/${SERVICE_NAME}\.service$" ||
-    die "Backup не содержит legacy unit."
-  checksum=$(sha256sum "$staging/$(basename "$archive")" | awk '{print $1}')
-  printf '%s  %s\n' "$checksum" "$(basename "$archive")" > "$staging/$(basename "$archive").sha256"
-  chmod 0600 "$staging/$(basename "$archive").sha256"
-  mv "$staging/$(basename "$archive").sha256" "$archive.sha256"
-  mv "$staging/$(basename "$archive")" "$archive"
-  verify_backup_checksum "$archive"
+  tar -C "$snapshot" -czf "$staged_archive" .
+  chmod 0600 "$staged_archive"
+  verify_created_legacy_backup "$staged_archive" "$listing"
+  checksum=$(sha256sum "$staged_archive" | awk '{print $1}')
+  printf '%s  %s\n' "$checksum" "$(basename "$archive")" > "$staged_checksum"
+  chmod 0600 "$staged_checksum"
+  if ! (cd "$staging" && sha256sum --check --status "$(basename "$staged_checksum")"); then
+    backup_verification_error "$staged_archive" "$listing" "Не удалось проверить SHA-256 созданного backup."
+  fi
+  mv "$staged_archive" "$archive"
+  mv "$staged_checksum" "$archive.sha256"
+  if ! (verify_backup_checksum "$archive"); then
+    backup_verification_error "$archive" "$listing" "Не удалось проверить опубликованный backup и его SHA-256."
+  fi
   printf '%s\n' "$archive"
 }
 
@@ -374,6 +457,7 @@ stop_legacy_service() {
 }
 
 revalidate_under_lock() {
+  resolve_legacy_unit_path
   validate_legacy_layout
   [[ ! -e $LEGACY_ARCHIVE && ! -L $LEGACY_ARCHIVE ]] ||
     die "Путь сохранения legacy появился во время подготовки: $LEGACY_ARCHIVE"
@@ -497,7 +581,7 @@ migration_failure_rollback() {
     fi
   fi
   if (( UNIT_REPLACED )) && [[ -f $ORIGINAL_UNIT_COPY ]]; then
-    if install -m 0644 "$ORIGINAL_UNIT_COPY" "$UNIT_PATH"; then
+    if install -m 0644 "$ORIGINAL_UNIT_COPY" "$UNIT_FILE_PATH"; then
       unit_result=restored
     else
       unit_result=FAILED
@@ -517,13 +601,17 @@ migration_failure_rollback() {
   if (( CONFIG_DIR_CREATED )); then
     rmdir "$CONFIG_DIR" 2>/dev/null || true
   fi
-  systemctl daemon-reload >/dev/null 2>&1 || rollback_ok=0
+  if (( UNIT_REPLACED )); then
+    systemctl daemon-reload >/dev/null 2>&1 || rollback_ok=0
+  fi
   if (( INITIAL_SERVICE_ACTIVE )); then
+    systemctl reset-failed "$SERVICE_NAME" >/dev/null 2>&1 || rollback_ok=0
     if systemctl start "$SERVICE_NAME" >/dev/null 2>&1 && wait_for_legacy_health; then
-      service_result=legacy-active-and-healthy
+      service_result=restored
     else
       service_result=FAILED
       rollback_ok=0
+      journalctl -u "$SERVICE_NAME" -n 100 --no-pager >&2 || true
     fi
   else
     systemctl stop "$SERVICE_NAME" >/dev/null 2>&1 || true
@@ -536,7 +624,7 @@ migration_failure_rollback() {
     "$data_result" "$service_result" >&2
   [[ -n $FAILED_INSTALL ]] && printf '  failed-install: %s\n' "$FAILED_INSTALL" >&2
   printf '  recovery-artifacts: %s\n  result: %s\n' "$WORK_DIR" \
-    "$([[ $rollback_ok == 1 ]] && printf SUCCESS || printf INCOMPLETE)" >&2
+    "$([[ $rollback_ok == 1 ]] && printf COMPLETE || printf INCOMPLETE)" >&2
 }
 
 require_commands realpath
@@ -569,8 +657,8 @@ require_commands realpath systemctl grep find df du awk sed tar sha256sum flock 
   node npm runuser install mv cp chmod chown getent id cut sleep ss mkdir basename dirname date \
   mktemp rmdir rm ln uname
 pocketbase_arch_for "$(uname -m)" >/dev/null
-UNIT_PATH="$SYSTEMD_DIR/${SERVICE_NAME}.service"
 STAGE=preflight-validation
+resolve_legacy_unit_path
 validate_legacy_layout
 
 LEGACY_CANON=$(realpath -m -- "$LEGACY_ROOT")
@@ -620,7 +708,7 @@ BACKUP_DIR="$WORK_DIR/backups"
 mkdir -p "$BACKUP_DIR"
 chmod 0700 "$WORK_DIR" "$BACKUP_DIR"
 ORIGINAL_UNIT_COPY="$WORK_DIR/original-${SERVICE_NAME}.service"
-install -m 0644 "$UNIT_PATH" "$ORIGINAL_UNIT_COPY"
+install -m 0644 "$UNIT_FILE_PATH" "$ORIGINAL_UNIT_COPY"
 write_install_config "$WORK_DIR/deployment.env"
 ROLLBACK_HANDLER=migration_failure_rollback
 
@@ -709,7 +797,7 @@ apply_migrations "$NEW_RELEASE"
 
 STAGE=unit-and-current
 UNIT_REPLACED=1
-write_systemd_unit "$UNIT_PATH"
+write_systemd_unit "$UNIT_FILE_PATH"
 atomic_symlink "$NEW_RELEASE" "$INSTALL_ROOT/current"
 systemctl daemon-reload
 ENABLE_STATE_CHANGED=1

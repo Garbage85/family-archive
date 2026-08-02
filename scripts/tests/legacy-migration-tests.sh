@@ -58,11 +58,12 @@ make_mocks() {
     'printf "%s\n" "$*" >> "$MOCK_SYSTEMCTL_LOG"' \
     'case "$command" in' \
     '  cat) cat "$MOCK_UNIT_PATH" ;;' \
-    '  show) if [[ $* == *"ExecStart"* ]]; then sed -n "s/^ExecStart=//p" "$MOCK_UNIT_PATH"; elif [[ $* == *"DropInPaths"* ]]; then :; elif [[ $* == *"DynamicUser"* ]]; then sed -n "s/^DynamicUser=//p" "$MOCK_UNIT_PATH"; elif [[ $* == *"--property=User"* ]]; then sed -n "s/^User=//p" "$MOCK_UNIT_PATH"; elif [[ $* == *"--property=Group"* ]]; then sed -n "s/^Group=//p" "$MOCK_UNIT_PATH"; else printf "%s\n" "$MOCK_UNIT_PATH"; fi ;;' \
+    '  show) if [[ $* == *"FragmentPath"* ]]; then if [[ ${MOCK_FRAGMENT_PATH_SET:-0} == 1 ]]; then printf "%s\n" "${MOCK_FRAGMENT_PATH_OVERRIDE:-}"; else printf "%s\n" "$MOCK_UNIT_PATH"; fi; elif [[ $* == *"ExecStart"* ]]; then sed -n "s/^ExecStart=//p" "$MOCK_UNIT_PATH"; elif [[ $* == *"DropInPaths"* ]]; then :; elif [[ $* == *"DynamicUser"* ]]; then sed -n "s/^DynamicUser=//p" "$MOCK_UNIT_PATH"; elif [[ $* == *"--property=User"* ]]; then sed -n "s/^User=//p" "$MOCK_UNIT_PATH"; elif [[ $* == *"--property=Group"* ]]; then sed -n "s/^Group=//p" "$MOCK_UNIT_PATH"; fi ;;' \
     '  is-active) [[ $(cat "$MOCK_SERVICE_STATE") == active ]] ;;' \
     '  is-enabled) [[ $(cat "$MOCK_ENABLED_STATE") == enabled ]] ;;' \
     '  stop) printf inactive > "$MOCK_SERVICE_STATE" ;;' \
-    '  start) printf active > "$MOCK_SERVICE_STATE" ;;' \
+    '  start) if [[ ${MOCK_FAIL_RESTART_AFTER_FINAL:-0} == 1 && $(grep -c "^stop" "$MOCK_SYSTEMCTL_LOG") -ge 2 ]]; then exit 1; fi; printf active > "$MOCK_SERVICE_STATE" ;;' \
+    '  reset-failed) : ;;' \
     '  enable) printf enabled > "$MOCK_ENABLED_STATE" ;;' \
     '  disable) printf disabled > "$MOCK_ENABLED_STATE" ;;' \
     '  daemon-reload) : ;;' \
@@ -82,7 +83,9 @@ make_mocks() {
     '    *) last=$1; shift ;;' \
     '  esac' \
     'done' \
+    'printf "%s\n" "$last" >> "$MOCK_CURL_LOG"' \
     'if [[ -n $output && $output != /dev/null ]]; then cp "$MOCK_POCKETBASE_ZIP" "$output"; exit 0; fi' \
+    'if [[ -f ${MOCK_LEGACY_HEALTH_FAIL_FILE:-/nonexistent} ]] && grep -q "/legacy/pocketbase" "$MOCK_UNIT_PATH"; then if (( write_status )); then printf 503; fi; exit 22; fi' \
     'if [[ ${FAMILY_ARCHIVE_MIGRATION_TEST_FAIL:-} == health ]] && grep -q "/current/pocketbase" "$MOCK_UNIT_PATH"; then' \
     '  if (( write_status )); then printf 503; fi' \
     '  exit 22' \
@@ -108,7 +111,8 @@ make_mocks() {
     'set -eu' \
     'while (($#)); do [[ $1 == -- ]] && { shift; break; }; shift; done' \
     'exec "$@"' > "$bin/runuser"
-  printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$bin/journalctl"
+  # shellcheck disable=SC2016 # Переменные раскрываются при запуске mock journalctl.
+  printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\n" "$*" >> "$MOCK_JOURNAL_LOG"' 'printf "mock legacy journal\n" >&2' > "$bin/journalctl"
   # shellcheck disable=SC2016 # Аргументы fake PocketBase разбираются только при его запуске.
   printf '%s\n' \
     '#!/usr/bin/env bash' \
@@ -147,24 +151,34 @@ make_legacy() {
   printf '%s' "$state" > "$root/service-state"
   printf enabled > "$root/enabled-state"
   : > "$root/systemctl.log"
+  : > "$root/curl.log"
+  : > "$root/journal.log"
 }
 
 run_migration() {
-  local root=$1 failpoint=${2:-} extra=${3:-} install_root=${4:-} checksum
+  local root=$1 failpoint=${2:-} extra=${3:-} install_root=${4:-} checksum systemd_dir unit_path
   [[ -n $install_root ]] || install_root="$root/legacy"
+  systemd_dir=${MIGRATION_TEST_SYSTEMD_DIR:-$root/systemd}
+  unit_path=${MIGRATION_TEST_UNIT_PATH:-$systemd_dir/family-tree.service}
   checksum=$(sha256sum "$root/pocketbase.zip" | awk '{print $1}')
   env PATH="$root/mock-bin:$PATH" \
     TMPDIR="$root" \
     FAMILY_ARCHIVE_MIGRATION_TEST_MODE=1 \
     FAMILY_ARCHIVE_MIGRATION_TEST_FAIL="$failpoint" \
     FAMILY_ARCHIVE_MIGRATION_TEST_POCKETBASE_SHA256="$checksum" \
-    FAMILY_ARCHIVE_SYSTEMD_DIR="$root/systemd" \
+    FAMILY_ARCHIVE_SYSTEMD_DIR="$systemd_dir" \
     FAMILY_ARCHIVE_CONFIG_DIR="$root/config" \
     FAMILY_ARCHIVE_LOCK_DIR="$root/lock" \
-    MOCK_UNIT_PATH="$root/systemd/family-tree.service" \
+    MOCK_UNIT_PATH="$unit_path" \
+    MOCK_FRAGMENT_PATH_SET="${MOCK_FRAGMENT_PATH_SET:-0}" \
+    MOCK_FRAGMENT_PATH_OVERRIDE="${MOCK_FRAGMENT_PATH_OVERRIDE:-}" \
     MOCK_SERVICE_STATE="$root/service-state" \
     MOCK_ENABLED_STATE="$root/enabled-state" \
     MOCK_SYSTEMCTL_LOG="$root/systemctl.log" \
+    MOCK_CURL_LOG="$root/curl.log" \
+    MOCK_JOURNAL_LOG="$root/journal.log" \
+    MOCK_FAIL_RESTART_AFTER_FINAL="$([[ -f $root/fail-start ]] && printf 1 || printf 0)" \
+    MOCK_LEGACY_HEALTH_FAIL_FILE="$root/fail-legacy-health" \
     MOCK_POCKETBASE_ZIP="$root/pocketbase.zip" \
     "$MIGRATOR" --legacy-root "$root/legacy" --install-root "$install_root" \
       --repo "$PROJECT_ROOT" --branch main --yes ${extra:+"$extra"}
@@ -191,6 +205,61 @@ else
 fi
 assert_file_value active "$case_root/service-state" 'dry-run не останавливает active unit'
 
+new_case case_root etc-fragment
+mkdir -p "$case_root/etc/systemd/system"
+mv "$case_root/systemd/family-tree.service" "$case_root/etc/systemd/system/family-tree.service"
+rmdir "$case_root/systemd"
+if MIGRATION_TEST_SYSTEMD_DIR="$case_root/etc/systemd/system" \
+  MIGRATION_TEST_UNIT_PATH="$case_root/etc/systemd/system/family-tree.service" \
+  run_migration "$case_root" '' --dry-run >/dev/null; then
+  pass 'фактический FragmentPath /etc/systemd/system используется без заранее заданного имени пути'
+else
+  fail 'фактический FragmentPath /etc/systemd/system не принят'
+fi
+
+new_case case_root empty-fragment
+if output=$(MOCK_FRAGMENT_PATH_SET=1 MOCK_FRAGMENT_PATH_OVERRIDE='' \
+  run_migration "$case_root" '' --dry-run 2>&1); then
+  fail 'пустой FragmentPath должен отклоняться'
+elif [[ $output == *'пустой или не абсолютный FragmentPath'* ]]; then
+  pass 'пустой FragmentPath отклоняется до изменений'
+else
+  fail 'пустой FragmentPath отклонён без ожидаемой диагностики'
+fi
+assert_file_value active "$case_root/service-state" 'пустой FragmentPath не останавливает unit'
+
+new_case case_root relative-fragment
+if output=$(MOCK_FRAGMENT_PATH_SET=1 MOCK_FRAGMENT_PATH_OVERRIDE='family-tree.service' \
+  run_migration "$case_root" '' --dry-run 2>&1); then
+  fail 'относительный FragmentPath должен отклоняться'
+elif [[ $output == *'пустой или не абсолютный FragmentPath'* ]]; then
+  pass 'относительный FragmentPath отклоняется до изменений'
+else
+  fail 'относительный FragmentPath отклонён без ожидаемой диагностики'
+fi
+
+new_case case_root missing-unit
+rm "$case_root/systemd/family-tree.service"
+if output=$(run_migration "$case_root" '' --dry-run 2>&1); then
+  fail 'отсутствующий unit из FragmentPath должен отклоняться'
+elif [[ $output == *'из FragmentPath отсутствует'* ]]; then
+  pass 'отсутствующий unit из FragmentPath отклоняется'
+else
+  fail 'отсутствующий unit отклонён без ожидаемой диагностики'
+fi
+assert_file_value active "$case_root/service-state" 'отсутствующий unit не останавливает сервис'
+
+new_case case_root escaping-symlink
+mv "$case_root/systemd/family-tree.service" "$case_root/outside-family-tree.service"
+ln -s ../outside-family-tree.service "$case_root/systemd/family-tree.service"
+if output=$(run_migration "$case_root" '' --dry-run 2>&1); then
+  fail 'symlink unit за пределы systemd-каталогов должен отклоняться'
+elif [[ $output == *'выходит за разрешённые systemd-каталоги'* ]]; then
+  pass 'symlink unit за пределы systemd-каталогов отклоняется'
+else
+  fail 'небезопасный symlink unit отклонён без ожидаемой диагностики'
+fi
+
 new_case case_root custom-port
 sed -i 's/:8090$/:8097/' "$case_root/systemd/family-tree.service"
 output=$(run_migration "$case_root" '' --dry-run)
@@ -209,6 +278,42 @@ new_case case_root backup-error
 assert_failure 'ошибка offline backup прерывает миграцию' run_migration "$case_root" preflight-backup
 assert_file_value active "$case_root/service-state" 'после ошибки backup legacy unit снова active'
 assert_file_value before "$case_root/legacy/pb_data/data.db" 'ошибка backup не меняет базу'
+
+new_case case_root final-backup-error
+if output=$(run_migration "$case_root" final-backup 2>&1); then
+  fail 'ошибка final-offline-backup должна вернуть ненулевой код'
+else
+  pass 'ошибка final-offline-backup после остановки возвращает ненулевой код'
+fi
+assert_file_value active "$case_root/service-state" 'rollback final backup повторно запускает legacy-сервис'
+assert_success 'rollback final backup выполняет reset-failed' \
+  grep -Fqx 'reset-failed family-tree' "$case_root/systemctl.log"
+assert_success 'rollback проверяет /api/health старого сервиса' \
+  grep -Fqx 'http://127.0.0.1:8090/api/health' "$case_root/curl.log"
+if [[ $output == *'service: restored'* && $output == *'result: COMPLETE'* &&
+  $output == *'data: not-required'* && $output == *'unit: '*'(not-required)'* ]]; then
+  pass 'успешный ранний rollback помечен COMPLETE без восстановления unit и данных'
+else
+  fail 'отчёт успешного раннего rollback неполон'
+fi
+
+new_case case_root final-backup-restart-error
+touch "$case_root/fail-start"
+if output=$(run_migration "$case_root" final-backup 2>&1); then
+  fail 'ошибка повторного запуска legacy должна вернуть ненулевой код'
+else
+  pass 'ошибка повторного запуска legacy возвращает ненулевой код'
+fi
+if [[ $output == *'service: FAILED'* && $output == *'result: INCOMPLETE'* ]]; then
+  pass 'ошибка повторного запуска формирует INCOMPLETE'
+else
+  fail 'ошибка повторного запуска не сформировала INCOMPLETE'
+fi
+assert_success 'при ошибке повторного запуска запрошены 100 строк journalctl' \
+  grep -Fqx -- '-u family-tree -n 100 --no-pager' "$case_root/journal.log"
+# shellcheck disable=SC2016 # Glob раскрывается внутри отдельного bash-процесса.
+assert_success 'ошибка повторного запуска сохраняет recovery artifacts' \
+  bash -c 'compgen -G "$1/.family-archive-legacy-migration.*" >/dev/null' _ "$case_root"
 
 new_case case_root build-error
 assert_failure 'ошибка frontend build прерывает подготовку release' run_migration "$case_root" build
@@ -258,6 +363,34 @@ if [[ $backup_count == 2 ]]; then
 else
   fail 'не сохранены два backup'
 fi
+
+new_case case_root symlink-unit
+mv "$case_root/systemd/family-tree.service" "$case_root/systemd/legacy-family-tree.service"
+ln -s legacy-family-tree.service "$case_root/systemd/family-tree.service"
+assert_success 'безопасный symlink FragmentPath проходит полную миграцию' run_migration "$case_root"
+assert_success 'запись нового unit сохраняет безопасный symlink' test -L "$case_root/systemd/family-tree.service"
+backup=$(find "$case_root/legacy/backups" -type f -name '*-final.tar.gz' -print -quit)
+listing=$(tar -tzf "$backup")
+if grep -Eq '^(\./)?systemd/family-tree\.service$' <<< "$listing"; then
+  pass 'backup содержит unit под стабильным внутренним путём systemd/family-tree.service'
+else
+  fail 'backup не содержит unit под стабильным внутренним путём'
+fi
+if grep -Eq '^(\./)?pb_data(/|$)' <<< "$listing" &&
+  grep -Eq '^(\./)?metadata\.json$' <<< "$listing"; then
+  pass 'проверка listing видит unit, pb_data и metadata'
+else
+  fail 'проверка listing не видит обязательные элементы backup'
+fi
+metadata=$(tar -xOzf "$backup" ./metadata.json 2>/dev/null || tar -xOzf "$backup" metadata.json)
+if [[ $(jq -r .fragment_path <<< "$metadata") == "$case_root/systemd/family-tree.service" ]]; then
+  pass 'metadata сохраняет исходный symlink FragmentPath'
+else
+  fail 'metadata не сохранила исходный FragmentPath'
+fi
+# shellcheck disable=SC2016 # Аргументы раскрываются внутри отдельного bash-процесса.
+assert_success 'SHA-256 final backup создан и проверяется' \
+  bash -c 'cd "$(dirname "$1")" && sha256sum --check --status "$(basename "$1").sha256"' _ "$backup"
 
 new_case case_root keep-legacy
 assert_success '--keep-legacy сохраняет отдельный forensic snapshot' run_migration "$case_root" '' --keep-legacy

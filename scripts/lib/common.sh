@@ -829,10 +829,11 @@ print_install_summary() {
 }
 
 tcp_port_is_listening() {
-  local requested=${1:-$PORT}
+  local requested=${1:-$PORT} listeners
   if command -v ss >/dev/null 2>&1; then
-    ss -ltnH "sport = :$requested" 2>/dev/null | grep -q .
-    return
+    listeners=$(ss -ltnH "sport = :$requested" 2>/dev/null) || return 1
+    [[ -n $listeners ]] || return 1
+    return 0
   fi
   local hex
   printf -v hex '%04X' "$requested"
