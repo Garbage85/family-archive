@@ -1,15 +1,7 @@
-import {
-  getParentRoleLabel,
-  getSpouseRoleLabel,
-  getSpouseSectionLabel,
-  shouldShowMaidenName,
-} from './person-relationship-rules.js';
+import { getParentRoleLabel, getSpouseSectionLabel } from './person-relationship-rules.js';
+import { cleanNamePart, formatPersonName, formatPersonSurname } from './person-card-formatters.js';
 
-const FIELD_DEFINITIONS = [
-  ['first_name', 'Имя'],
-  ['last_name', 'Фамилия'],
-  ['maiden_name', 'Девичья фамилия'],
-  ['middle_name', 'Отчество'],
+const DETAILS_FIELD_DEFINITIONS = [
   ['gender', 'Пол', formatGender],
   ['birth_date', 'Дата рождения', formatDate],
   ['death_date', 'Дата смерти', formatDate],
@@ -18,10 +10,16 @@ const FIELD_DEFINITIONS = [
   ['notes', 'Заметки'],
 ];
 
+const VALUE_FIELDS = [
+  'first_name',
+  'last_name',
+  'maiden_name',
+  'middle_name',
+  ...DETAILS_FIELD_DEFINITIONS.map(([key]) => key),
+];
+
 function cleanText(value) {
-  if (value === null || value === undefined) return '';
-  const result = String(value).trim();
-  return ['null', 'undefined'].includes(result.toLowerCase()) ? '' : result;
+  return cleanNamePart(value);
 }
 
 function formatGender(value) {
@@ -37,9 +35,26 @@ function formatDate(value) {
   return match ? `${match[3]}.${match[2]}.${match[1]}` : date;
 }
 
+function fieldDefinitions(person) {
+  const female = cleanText(person?.data?.gender).toUpperCase() === 'F';
+  const nameFields = female
+    ? [
+        ['maiden_name', 'Девичья фамилия'],
+        ['last_name', 'Текущая фамилия, если менялась'],
+        ['first_name', 'Имя'],
+        ['middle_name', 'Отчество'],
+      ]
+    : [
+        ['last_name', 'Фамилия'],
+        ['first_name', 'Имя'],
+        ['middle_name', 'Отчество'],
+      ];
+  return [...nameFields, ...DETAILS_FIELD_DEFINITIONS];
+}
+
 function personInitials(person) {
   const data = person?.data || {};
-  const parts = [cleanText(data.first_name), cleanText(data.last_name)].filter(Boolean);
+  const parts = [cleanText(data.first_name), formatPersonSurname(data)].filter(Boolean);
   return (
     parts
       .map((part) => part[0].toLocaleUpperCase('ru-RU'))
@@ -48,19 +63,13 @@ function personInitials(person) {
   );
 }
 
-function sidebarPersonName(person) {
-  const data = person?.data || {};
-  const parts = [data.last_name, data.first_name, data.middle_name].map(cleanText).filter(Boolean);
-  return parts.join(' ') || 'Без имени';
-}
-
 function relationPeople(ids, peopleById, { getRoleLabel, relationType } = {}) {
   const uniqueIds = [...new Set((Array.isArray(ids) ? ids : []).map(String))];
   return uniqueIds.map((id) => {
     const person = peopleById.get(id);
     return {
       id,
-      name: person ? sidebarPersonName(person) : 'Неизвестный человек',
+      name: person ? formatPersonName(person) : 'Неизвестный человек',
       initials: person ? personInitials(person) : '—',
       roleLabel: getRoleLabel?.(person) || '',
       ...(relationType ? { relationType } : {}),
@@ -76,13 +85,13 @@ export function preparePersonSidebarData(treeData, personId) {
   if (!person) return null;
 
   const data = person.data || {};
-  const fields = FIELD_DEFINITIONS.map(([key, label, formatter = cleanText]) => ({
-    key,
-    label,
-    value: formatter(data[key]),
-  })).filter(
-    (field) => field.value && (field.key !== 'maiden_name' || shouldShowMaidenName(person)),
-  );
+  const fields = fieldDefinitions(person)
+    .map(([key, label, formatter = cleanText]) => ({
+      key,
+      label,
+      value: formatter(data[key]),
+    }))
+    .filter((field) => field.value);
 
   const relations = person.rels || {};
   const parentPeople = relationPeople(relations.parents, peopleById, {
@@ -92,14 +101,14 @@ export function preparePersonSidebarData(treeData, personId) {
     // Until that model is introduced, trees.data continues to store parent IDs only.
     relationType: 'biological',
   });
-  const spousePeople = relationPeople(relations.spouses, peopleById, {
-    getRoleLabel: getSpouseRoleLabel,
-  });
+  const spousePeople = relationPeople(relations.spouses, peopleById);
+  const singleSpouse =
+    spousePeople.length === 1 ? peopleById.get(String(relations.spouses?.[0])) : null;
   const relationGroups = [
     { key: 'parents', label: 'Родители', people: parentPeople },
     {
       key: 'spouses',
-      label: getSpouseSectionLabel(person, spousePeople.length),
+      label: getSpouseSectionLabel(singleSpouse, spousePeople.length),
       people: spousePeople,
     },
     { key: 'children', label: 'Дети', people: relationPeople(relations.children, peopleById) },
@@ -107,10 +116,10 @@ export function preparePersonSidebarData(treeData, personId) {
 
   return {
     id: String(person.id),
-    fullName: sidebarPersonName(person),
+    fullName: formatPersonName(person),
     initials: personInitials(person),
     photoUrl: cleanText(data.avatar),
-    values: Object.fromEntries(FIELD_DEFINITIONS.map(([key]) => [key, cleanText(data[key])])),
+    values: Object.fromEntries(VALUE_FIELDS.map((key) => [key, cleanText(data[key])])),
     fields,
     relationGroups,
   };

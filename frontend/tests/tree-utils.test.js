@@ -42,6 +42,34 @@ test('changing a woman to male preserves an existing maiden_name', () => {
   assert.equal(result[0].data.maiden_name, 'Петрова');
 });
 
+test('saving equal female surnames preserves both legacy values without data movement', () => {
+  const result = updatePerson(
+    [
+      {
+        id: '1',
+        data: { gender: 'F', last_name: 'Иванова', maiden_name: 'Иванова' },
+        rels: {},
+      },
+    ],
+    '1',
+    { gender: 'F', last_name: 'Иванова', maiden_name: 'Иванова' },
+  );
+
+  assert.equal(result[0].data.last_name, 'Иванова');
+  assert.equal(result[0].data.maiden_name, 'Иванова');
+});
+
+test('saving a legacy woman with only last_name does not invent maiden_name', () => {
+  const result = updatePerson(
+    [{ id: '1', data: { gender: 'F', last_name: 'Иванова' }, rels: {} }],
+    '1',
+    { gender: 'F', last_name: 'Иванова', maiden_name: '' },
+  );
+
+  assert.equal(result[0].data.last_name, 'Иванова');
+  assert.equal(Object.hasOwn(result[0].data, 'maiden_name'), false);
+});
+
 test('validateTree catches missing relation targets', () => {
   const errors = validateTree([{ id: '1', data: { gender: 'M' }, rels: { children: ['2'] } }]);
   assert.equal(errors.length, 1);

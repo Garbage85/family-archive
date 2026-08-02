@@ -667,12 +667,16 @@ button {
   grid-template-columns: 1fr 1fr;
   gap: 0.85rem;
 }
+.person-sidebar-form-grid > * {
+  min-width: 0;
+}
 .person-sidebar-form-grid label,
 #person-sidebar-photo-form > label {
   display: grid;
   gap: 0.4rem;
   font-size: 0.88rem;
   font-weight: 750;
+  overflow-wrap: anywhere;
 }
 .person-sidebar-autofill-field {
   display: grid;
@@ -686,6 +690,7 @@ button {
 .person-sidebar-autofill-meta {
   min-height: 1.4rem;
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-start;
   justify-content: space-between;
   gap: 0.45rem;

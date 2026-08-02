@@ -1,8 +1,16 @@
+import { formatPersonName } from './person-card-formatters.js';
+
 const DRAFT_FIELDS = ['first_name', 'last_name', 'patronymic', 'gender', 'maiden_name'];
 
 const INVARIABLE_SURNAMES = new Set(['шевченко', 'долгих', 'черных', 'седых', 'бондарь', 'коваль']);
 
 const PATRONYMIC_EXCEPTIONS = new Map([
+  ['юрий', ['Юрьевич', 'Юрьевна']],
+  ['сергей', ['Сергеевич', 'Сергеевна']],
+  ['алексей', ['Алексеевич', 'Алексеевна']],
+  ['андрей', ['Андреевич', 'Андреевна']],
+  ['дмитрий', ['Дмитриевич', 'Дмитриевна']],
+  ['василий', ['Васильевич', 'Васильевна']],
   ['илья', ['Ильич', 'Ильинична']],
   ['павел', ['Павлович', 'Павловна']],
   ['лев', ['Львович', 'Львовна']],
@@ -45,16 +53,6 @@ function personGender(person) {
 function personPatronymic(person) {
   const data = personData(person);
   return cleanText(data.patronymic ?? data.middle_name);
-}
-
-function personName(person) {
-  const data = personData(person);
-  return (
-    [data.first_name, data.middle_name ?? data.patronymic, data.last_name]
-      .map(cleanText)
-      .filter(Boolean)
-      .join(' ') || 'Без имени'
-  );
 }
 
 function applyOriginalCase(source, value) {
@@ -134,11 +132,6 @@ export function deriveFatherNameFromPatronymic(patronymic) {
   if (!value) return '';
   const exception = FATHER_NAME_EXCEPTIONS.get(value.toLowerCase());
   if (exception) return applyOriginalCase(value, exception);
-
-  const evMatch = /^(.*)(?:евич|евна)$/iu.exec(value);
-  if (evMatch?.[1]) return applyOriginalCase(value, `${evMatch[1]}й`);
-  const ovMatch = /^(.*)(?:ович|овна)$/iu.exec(value);
-  if (ovMatch?.[1]) return applyOriginalCase(value, ovMatch[1]);
   return '';
 }
 
@@ -171,7 +164,7 @@ export function suggestSecondParent(selectedPerson, people) {
       person,
       relation: 'parent',
       kind: 'second-parent',
-      label: `Добавить ${personName(person)} как второго родителя`,
+      label: `Добавить ${formatPersonName(person)} как второго родителя`,
       checked: spouses.length === 1,
     }),
   );
@@ -188,7 +181,7 @@ export function suggestSpouseLinkForNewParent(selectedPerson, relationType, peop
       person,
       relation: 'spouse',
       kind: 'parent-spouse',
-      label: `Связать с ${personName(person)} как супругом/супругой`,
+      label: `Связать с ${formatPersonName(person)} как супругом/супругой`,
       checked: candidates.length === 1,
     }),
   );
@@ -200,7 +193,7 @@ export function suggestSharedParentsForSibling(selectedPerson, people) {
       person,
       relation: 'parent',
       kind: 'shared-parent',
-      label: personName(person),
+      label: formatPersonName(person),
       checked: true,
     }),
   );
@@ -242,13 +235,23 @@ function addSurnameSuggestion(draft, surname, gender) {
   }
 }
 
+function addMaidenSurnameSuggestion(draft, surname) {
+  const transformed = transformRussianSurname(surname, 'F');
+  setDraftField(draft, 'maiden_name', transformed.value, transformed.value ? 'suggested' : 'empty');
+  if (transformed.value && !transformed.reliable) {
+    draft.warnings.push(
+      `Форму фамилии «${transformed.value}» нельзя надёжно изменить: оставлено исходное значение.`,
+    );
+  }
+}
+
 function requiredLink(selectedPerson, relation) {
   return {
     id: `required:${relation}:${personId(selectedPerson)}`,
     personId: personId(selectedPerson),
     relation,
     kind: 'required',
-    label: `Обязательная связь с ${personName(selectedPerson)}`,
+    label: `Обязательная связь с ${formatPersonName(selectedPerson)}`,
     required: true,
   };
 }
@@ -268,7 +271,7 @@ export function buildRelativeDraft({
 
   const type = cleanText(relationType).toLowerCase();
   const selectedData = personData(selectedPerson);
-  const selectedSurname = cleanText(selectedData.last_name);
+  const selectedSurname = cleanText(selectedData.last_name) || cleanText(selectedData.maiden_name);
   const allPeople = Array.isArray(people) ? people : [];
   let gender = '';
 
@@ -289,7 +292,7 @@ export function buildRelativeDraft({
 
   if (['father', 'mother', 'parent'].includes(type)) {
     draft.requiredLinks.push(requiredLink(selectedPerson, 'child'));
-    if (gender) addSurnameSuggestion(draft, selectedSurname, gender);
+    if (type !== 'parent' && gender) addSurnameSuggestion(draft, selectedSurname, gender);
 
     if (type === 'father') {
       const fatherName = deriveFatherNameFromPatronymic(personPatronymic(selectedPerson));
@@ -298,13 +301,11 @@ export function buildRelativeDraft({
         draft.warnings.push('Имя отца нельзя надёжно вывести из отчества.');
       }
     }
-    if ((type === 'mother' || (type === 'parent' && gender === 'F')) && draft.person.last_name) {
-      setDraftField(draft, 'maiden_name', draft.person.last_name, 'suggested');
-    }
     draft.suggestedLinks = suggestSpouseLinkForNewParent(selectedPerson, type, allPeople);
   } else if (['son', 'daughter', 'child'].includes(type)) {
     draft.requiredLinks.push(requiredLink(selectedPerson, 'parent'));
-    addSurnameSuggestion(draft, selectedSurname, gender);
+    if (gender === 'F') addMaidenSurnameSuggestion(draft, selectedSurname);
+    else addSurnameSuggestion(draft, selectedSurname, gender);
     draft.suggestedLinks = suggestSecondParent(selectedPerson, allPeople);
 
     let patronymicSource = null;
@@ -329,7 +330,8 @@ export function buildRelativeDraft({
     }
   } else if (['brother', 'sister', 'sibling'].includes(type)) {
     draft.requiredLinks.push(requiredLink(selectedPerson, 'sibling'));
-    addSurnameSuggestion(draft, selectedSurname, gender);
+    if (gender === 'F') addMaidenSurnameSuggestion(draft, selectedSurname);
+    else addSurnameSuggestion(draft, selectedSurname, gender);
     setDraftField(
       draft,
       'patronymic',
@@ -344,10 +346,6 @@ export function buildRelativeDraft({
     draft.requiredLinks.push(requiredLink(selectedPerson, 'spouse'));
     if (gender === 'F' && personGender(selectedPerson) === 'M') {
       addSurnameSuggestion(draft, selectedSurname, 'F');
-      if (draft.person.last_name) {
-        setDraftField(draft, 'maiden_name', draft.person.last_name, 'suggested');
-        draft.warnings.push('Девичья фамилия предложена с низкой уверенностью и требует проверки.');
-      }
     }
   } else {
     draft.warnings.push('Этот тип родства не поддерживается.');

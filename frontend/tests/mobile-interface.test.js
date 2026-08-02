@@ -62,3 +62,19 @@ test('suggested links wrap safely and relative actions remain a compact two-colu
   assert.match(css, /\.person-sidebar-suggestion\s*\{[\s\S]*?minmax\(0, 1fr\)/);
   assert.match(css, /\.person-sidebar-suggestion\s*\{[\s\S]*?overflow-wrap: anywhere/);
 });
+
+test('female surname labels and autofill controls remain mobile-safe', async () => {
+  const [sidebar, css] = await Promise.all([
+    source('src/person-sidebar.js'),
+    source('src/styles.css'),
+  ]);
+
+  assert.match(sidebar, /Девичья фамилия[\s\S]*?data-last-name-label>Фамилия/);
+  assert.match(sidebar, /Текущая фамилия, если менялась/);
+  assert.match(sidebar, /class="hidden" data-autofill-badge>Предложено автоматически/);
+  assert.match(sidebar, /data-sidebar-cancel>\$\{cancelLabel\}/);
+  assert.match(sidebar, />Создать<\/button>/);
+  assert.match(css, /\.person-sidebar-form-grid > \*\s*\{\s*min-width: 0/);
+  assert.match(css, /\.person-sidebar-autofill-meta\s*\{[\s\S]*?flex-wrap: wrap/);
+  assert.match(css, /\.person-sidebar-form-grid label,[\s\S]*?overflow-wrap: anywhere/);
+});

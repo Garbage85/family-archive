@@ -1,14 +1,49 @@
-function cleanNamePart(value) {
+export function cleanNamePart(value) {
   if (value === null || value === undefined) return '';
 
   const result = String(value).trim().replace(/\s+/g, ' ');
   return ['null', 'undefined'].includes(result.toLowerCase()) ? '' : result;
 }
 
+function personData(person) {
+  return person?.data && typeof person.data === 'object' ? person.data : person || {};
+}
+
+function normalisedGender(value) {
+  const gender = cleanNamePart(value).toUpperCase();
+  return ['M', 'MALE'].includes(gender) ? 'M' : ['F', 'FEMALE'].includes(gender) ? 'F' : '';
+}
+
+function sameSurname(left, right) {
+  return (
+    cleanNamePart(left).toLocaleLowerCase('ru-RU') ===
+    cleanNamePart(right).toLocaleLowerCase('ru-RU')
+  );
+}
+
+export function formatPersonSurname(person) {
+  const data = personData(person);
+  const lastName = cleanNamePart(data.last_name);
+  const maidenName = cleanNamePart(data.maiden_name);
+  if (normalisedGender(data.gender) !== 'F') return lastName;
+  if (lastName && maidenName && !sameSurname(lastName, maidenName)) {
+    return `${lastName} (${maidenName})`;
+  }
+  return lastName || maidenName;
+}
+
 export function formatPersonNameLines(personData) {
-  return [personData?.last_name, personData?.first_name, personData?.middle_name]
-    .map(cleanNamePart)
-    .filter(Boolean);
+  const data =
+    personData?.data && typeof personData.data === 'object' ? personData.data : personData;
+  return [
+    formatPersonSurname(data),
+    cleanNamePart(data?.first_name),
+    cleanNamePart(data?.middle_name ?? data?.patronymic),
+  ].filter(Boolean);
+}
+
+export function formatPersonName(person) {
+  return formatPersonNameLines(person).join(' ') || 'Без имени';
 }
 
 export function formatBirthDate(value) {

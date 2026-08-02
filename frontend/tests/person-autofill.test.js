@@ -85,7 +85,8 @@ test('unknown surname is not corrupted and produces a draft warning', () => {
     relationType: 'daughter',
     people: [selected],
   });
-  assert.equal(draft.person.last_name, 'Необычная');
+  assert.equal(draft.person.maiden_name, 'Необычная');
+  assert.equal(draft.person.last_name, '');
   assert.match(draft.warnings.join(' '), /нельзя надёжно изменить/);
 });
 
@@ -131,13 +132,23 @@ test('unknown first name is not used to invent a patronymic', () => {
 });
 
 test('deriveFatherNameFromPatronymic recognises common and exception forms', () => {
-  assert.equal(deriveFatherNameFromPatronymic('Сергеевич'), 'Сергей');
-  assert.equal(deriveFatherNameFromPatronymic('Сергеевна'), 'Сергей');
-  assert.equal(deriveFatherNameFromPatronymic('Алексеевич'), 'Алексей');
-  assert.equal(deriveFatherNameFromPatronymic('Алексеевна'), 'Алексей');
-  assert.equal(deriveFatherNameFromPatronymic('Ильич'), 'Илья');
-  assert.equal(deriveFatherNameFromPatronymic('Ильинична'), 'Илья');
+  for (const [male, female, name] of [
+    ['Юрьевич', 'Юрьевна', 'Юрий'],
+    ['Сергеевич', 'Сергеевна', 'Сергей'],
+    ['Алексеевич', 'Алексеевна', 'Алексей'],
+    ['Андреевич', 'Андреевна', 'Андрей'],
+    ['Дмитриевич', 'Дмитриевна', 'Дмитрий'],
+    ['Васильевич', 'Васильевна', 'Василий'],
+    ['Ильич', 'Ильинична', 'Илья'],
+    ['Павлович', 'Павловна', 'Павел'],
+    ['Львович', 'Львовна', 'Лев'],
+    ['Никитич', 'Никитична', 'Никита'],
+  ]) {
+    assert.equal(deriveFatherNameFromPatronymic(male), name);
+    assert.equal(deriveFatherNameFromPatronymic(female), name);
+  }
   assert.equal(deriveFatherNameFromPatronymic('Кузьмич'), '');
+  assert.notEqual(deriveFatherNameFromPatronymic('Юрьевич'), 'Юрый');
 });
 
 test('father draft derives name and offers the existing mother as spouse', () => {
@@ -161,12 +172,13 @@ test('father draft derives name and offers the existing mother as spouse', () =>
   );
 });
 
-test('mother draft suggests feminine and maiden surnames and the existing father', () => {
+test('mother draft suggests only a current surname and the existing father', () => {
   const draft = buildRelativeDraft({ selectedPerson: child, relationType: 'mother', people });
   assert.equal(draft.person.gender, 'F');
   assert.equal(draft.person.last_name, 'Иванова');
-  assert.equal(draft.person.maiden_name, 'Иванова');
-  assert.equal(draft.fieldSources.maiden_name, 'suggested');
+  assert.equal(draft.person.maiden_name, '');
+  assert.equal(draft.fieldSources.last_name, 'suggested');
+  assert.equal(draft.fieldSources.maiden_name, 'empty');
   assert.equal(draft.suggestedLinks[0].personId, 'father');
 });
 
@@ -178,9 +190,16 @@ test('son and daughter drafts from Alexey receive surname and patronymic', () =>
     ['M', 'Сапожников', 'Алексеевич'],
   );
   assert.deepEqual(
-    [daughter.person.gender, daughter.person.last_name, daughter.person.patronymic],
-    ['F', 'Сапожникова', 'Алексеевна'],
+    [
+      daughter.person.gender,
+      daughter.person.last_name,
+      daughter.person.maiden_name,
+      daughter.person.patronymic,
+    ],
+    ['F', '', 'Сапожникова', 'Алексеевна'],
   );
+  assert.equal(daughter.fieldSources.last_name, 'empty');
+  assert.equal(daughter.fieldSources.maiden_name, 'suggested');
   assert.equal(son.requiredLinks[0].relation, 'parent');
   assert.equal(son.suggestedLinks[0].personId, 'elena');
 });
@@ -192,14 +211,15 @@ test('child of a woman with one male spouse gets patronymic from that spouse', (
   assert.equal(draft.suggestedLinks[0].checked, true);
 });
 
-test('siblings copy patronymic and offer every shared parent separately', () => {
-  for (const [relationType, expectedGender, expectedSurname] of [
-    ['brother', 'M', 'Иванов'],
-    ['sister', 'F', 'Иванова'],
+test('siblings use gender-appropriate surname fields and offer every shared parent separately', () => {
+  for (const [relationType, expectedGender, expectedLastName, expectedMaidenName] of [
+    ['brother', 'M', 'Иванов', ''],
+    ['sister', 'F', '', 'Иванова'],
   ]) {
     const draft = buildRelativeDraft({ selectedPerson: child, relationType, people });
     assert.equal(draft.person.gender, expectedGender);
-    assert.equal(draft.person.last_name, expectedSurname);
+    assert.equal(draft.person.last_name, expectedLastName);
+    assert.equal(draft.person.maiden_name, expectedMaidenName);
     assert.equal(draft.person.patronymic, 'Сергеевич');
     assert.deepEqual(
       draft.suggestedLinks.map((item) => [item.personId, item.checked]),
@@ -218,12 +238,13 @@ test('husband draft leaves surname empty and creates a required spouse link', ()
   assert.equal(draft.requiredLinks[0].relation, 'spouse');
 });
 
-test('wife draft suggests a feminine surname with a low-confidence maiden name', () => {
+test('wife draft suggests only a current surname', () => {
   const draft = buildRelativeDraft({ selectedPerson: alexey, relationType: 'wife', people });
   assert.equal(draft.person.gender, 'F');
   assert.equal(draft.person.last_name, 'Сапожникова');
-  assert.equal(draft.person.maiden_name, 'Сапожникова');
-  assert.match(draft.warnings.join(' '), /низкой уверенностью/);
+  assert.equal(draft.person.maiden_name, '');
+  assert.equal(draft.fieldSources.last_name, 'suggested');
+  assert.equal(draft.fieldSources.maiden_name, 'empty');
 });
 
 test('spouse of a selected person with unknown gender remains gender-neutral', () => {
@@ -269,23 +290,28 @@ test('relationship suggestion helpers return only resolved relationship targets'
   );
 });
 
-test('suggested draft fields recalculate while explicit fields are preserved', () => {
-  const initial = buildRelativeDraft({ selectedPerson: alexey, relationType: 'son', people });
-  const explicit = markDraftFieldExplicit(initial, 'last_name', 'Выбранная');
+test('suggested maiden surname recalculates while an explicit maiden surname is preserved', () => {
+  const initial = buildRelativeDraft({ selectedPerson: alexey, relationType: 'daughter', people });
+  const changedParent = {
+    ...alexey,
+    data: { ...alexey.data, last_name: 'Иванов' },
+  };
   const recalculated = buildRelativeDraft({
-    selectedPerson: alexey,
+    selectedPerson: changedParent,
     relationType: 'daughter',
-    people,
+    people: [changedParent, ...people.filter((item) => item.id !== alexey.id)],
   });
-  const merged = mergeRelativeDraft(explicit, recalculated);
+  const suggested = mergeRelativeDraft(initial, recalculated);
+  const explicit = markDraftFieldExplicit(initial, 'maiden_name', 'Выбранная');
+  const preserved = mergeRelativeDraft(explicit, recalculated);
 
-  assert.equal(merged.person.last_name, 'Выбранная');
-  assert.equal(merged.fieldSources.last_name, 'explicit');
-  assert.equal(merged.person.patronymic, 'Алексеевна');
-  assert.equal(merged.fieldSources.patronymic, 'suggested');
+  assert.equal(suggested.person.maiden_name, 'Иванова');
+  assert.equal(suggested.fieldSources.maiden_name, 'suggested');
+  assert.equal(preserved.person.maiden_name, 'Выбранная');
+  assert.equal(preserved.fieldSources.maiden_name, 'explicit');
 });
 
-test('changing gender recalculates untouched suggestions for a generic parent', () => {
+test('generic parent does not guess female surname fields', () => {
   const initial = buildRelativeDraft({ selectedPerson: child, relationType: 'parent', people });
   const changed = buildRelativeDraft({
     selectedPerson: child,
@@ -297,19 +323,27 @@ test('changing gender recalculates untouched suggestions for a generic parent', 
   const merged = mergeRelativeDraft(explicitGender, changed);
 
   assert.equal(merged.person.gender, 'F');
-  assert.equal(merged.person.last_name, 'Иванова');
-  assert.equal(merged.person.maiden_name, 'Иванова');
-  assert.equal(merged.fieldSources.last_name, 'suggested');
+  assert.equal(merged.person.last_name, '');
+  assert.equal(merged.person.maiden_name, '');
+  assert.equal(merged.fieldSources.last_name, 'empty');
+  assert.equal(merged.fieldSources.maiden_name, 'empty');
 });
 
-test('resetting an explicit field restores the current suggestion', () => {
+test('resetting an explicit maiden surname restores the current suggestion', () => {
   const suggested = buildRelativeDraft({
     selectedPerson: alexey,
     relationType: 'daughter',
     people,
   });
-  const explicit = markDraftFieldExplicit(suggested, 'last_name', 'Другая');
-  const reset = resetDraftFieldSuggestion(explicit, suggested, 'last_name');
-  assert.equal(reset.person.last_name, 'Сапожникова');
-  assert.equal(reset.fieldSources.last_name, 'suggested');
+  const explicit = markDraftFieldExplicit(suggested, 'maiden_name', 'Другая');
+  const reset = resetDraftFieldSuggestion(explicit, suggested, 'maiden_name');
+  assert.equal(reset.person.maiden_name, 'Сапожникова');
+  assert.equal(reset.fieldSources.maiden_name, 'suggested');
+});
+
+test('empty draft fields never have a suggested source', () => {
+  const draft = buildRelativeDraft({ selectedPerson: alexey, relationType: 'daughter', people });
+  for (const [field, value] of Object.entries(draft.person)) {
+    if (!value) assert.notEqual(draft.fieldSources[field], 'suggested');
+  }
 });
