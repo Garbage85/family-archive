@@ -95,9 +95,9 @@ function applySidebarAction(action, options = {}) {
 
 const sidebarHandlers = {
   onUpdate: (personId, values) => applySidebarAction({ type: 'update', personId, values }),
-  onAddRelative: (personId, relation, values) =>
+  onAddRelative: (personId, relation, values, links) =>
     applySidebarAction(
-      { type: 'add-relative', personId, relation, values },
+      { type: 'add-relative', personId, relation, values, links },
       { fit: true, focusId: personId },
     ),
   onDelete: (personId) => {
@@ -115,6 +115,8 @@ function openSidebar(personId) {
   personSidebar.open(getSidebarView(personId), {
     editable: canEditPeople(user?.role, previewMode),
     handlers: sidebarHandlers,
+    people: workingData,
+    getPeople: () => workingData,
   });
 }
 
