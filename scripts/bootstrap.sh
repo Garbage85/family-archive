@@ -164,8 +164,8 @@ check_directory_mode() {
 
 check_strict_owner() {
   local path=$1 owner group
-  owner=$(stat -c '%u' "$path")
-  group=$(stat -c '%g' "$path")
+  owner=$(privileged_stat %u "$path")
+  group=$(privileged_stat %g "$path")
   if (( owner != EXPECTED_OWNER_UID || group != EXPECTED_OWNER_GID )); then
     DETECTION_REASON="небезопасный владелец $path: uid=$owner gid=$group, ожидается $EXPECTED_OWNER_UID:$EXPECTED_OWNER_GID"
     return 1
@@ -357,15 +357,15 @@ check_legacy_ownership() {
 
 check_release_config_security() {
   local config=$INSTALL_ROOT/shared/deployment.env owner group mode
-  owner=$(sudo -- stat -c '%u' "$config") || {
+  owner=$(privileged_stat %u "$config") || {
     DETECTION_REASON="не удалось проверить владельца deployment.env через sudo"
     return 1
   }
-  group=$(sudo -- stat -c '%g' "$config") || {
+  group=$(privileged_stat %g "$config") || {
     DETECTION_REASON="не удалось проверить группу deployment.env через sudo"
     return 1
   }
-  mode=$(sudo -- stat -c '%a' "$config") || {
+  mode=$(privileged_stat %a "$config") || {
     DETECTION_REASON="не удалось проверить права deployment.env через sudo"
     return 1
   }
@@ -377,6 +377,8 @@ check_release_config_security() {
 
 check_release_tree_ownership() {
   local unsafe_path
+  validate_privileged_path_string "$INSTALL_ROOT/app" || return 1
+  validate_privileged_path_string "$INSTALL_ROOT/releases" || return 1
   unsafe_path=$(sudo -- find "$INSTALL_ROOT/app" "$INSTALL_ROOT/releases" -xdev \
     \( ! -uid "$EXPECTED_OWNER_UID" -o ! -gid "$EXPECTED_OWNER_GID" \) \
     -print -quit) || {
@@ -384,13 +386,78 @@ check_release_tree_ownership() {
     return 1
   }
   if [[ -n $unsafe_path ]]; then
-    DETECTION_REASON="release-структура содержит объект не от root:root: $unsafe_path (owner=$(sudo -- stat -c '%u:%g' "$unsafe_path" 2>/dev/null || printf unknown))"
+    validate_privileged_path_string "$unsafe_path" || {
+      DETECTION_REASON="find вернул небезопасный путь release-структуры"
+      return 1
+    }
+    DETECTION_REASON="release-структура содержит объект не от root:root: $unsafe_path (owner=$(privileged_stat %u:%g "$unsafe_path" 2>/dev/null || printf unknown))"
     return 1
   fi
 }
 
 regular_directory() {
   [[ -d $1 && ! -L $1 ]]
+}
+
+validate_privileged_path_string() {
+  local path=$1
+  [[ -n $path && $path == /* && $path != / && $path != */ && $path != *//* ]] || return 1
+  [[ $path =~ ^/[A-Za-z0-9._/-]+$ ]] || return 1
+  [[ ! $path =~ (^|/)\.\.?(/|$) ]]
+}
+
+privileged_path_exists() {
+  local path=$1
+  validate_privileged_path_string "$path" || return 2
+  sudo -- test -L "$path" || sudo -- test -e "$path"
+}
+
+privileged_is_symlink() {
+  local path=$1
+  validate_privileged_path_string "$path" || return 2
+  sudo -- test -L "$path"
+}
+
+privileged_regular_directory() {
+  local path=$1
+  validate_privileged_path_string "$path" || return 2
+  sudo -- test ! -L "$path" && sudo -- test -d "$path"
+}
+
+privileged_regular_file() {
+  local path=$1
+  validate_privileged_path_string "$path" || return 2
+  sudo -- test ! -L "$path" && sudo -- test -f "$path"
+}
+
+privileged_executable_file() {
+  local path=$1
+  privileged_regular_file "$path" && sudo -- test -x "$path"
+}
+
+privileged_stat() {
+  local format=$1 path=$2
+  validate_privileged_path_string "$path" || return 2
+  case "$format" in
+    %u|%g|%a|%u:%g) ;;
+    *) return 2 ;;
+  esac
+  sudo -- stat -c "$format" "$path"
+}
+
+privileged_canonical_symlink_target() {
+  local path=$1 target
+  validate_privileged_path_string "$path" || return 2
+  privileged_is_symlink "$path" || return 1
+  target=$(sudo -- readlink -f -- "$path" 2>/dev/null) || return 1
+  validate_privileged_path_string "$target" || return 1
+  printf '%s\n' "$target"
+}
+
+ensure_sudo_access() {
+  if ! sudo -v; then
+    die "Не удалось получить доступ через sudo. Bootstrap требует sudo для безопасной проверки защищённой release-структуры; запустите из интерактивного терминала или настройте разрешённый sudo."
+  fi
 }
 
 path_exists_or_is_symlink() {
@@ -403,11 +470,11 @@ legacy_layout_markers_present() {
 }
 
 release_layout_markers_present() {
-  path_exists_or_is_symlink "$INSTALL_ROOT/current" ||
-    path_exists_or_is_symlink "$INSTALL_ROOT/releases" ||
-    path_exists_or_is_symlink "$INSTALL_ROOT/shared" ||
-    path_exists_or_is_symlink "$INSTALL_ROOT/app" ||
-    path_exists_or_is_symlink "$INSTALL_ROOT/app/repository.git"
+  privileged_path_exists "$INSTALL_ROOT/current" ||
+    privileged_path_exists "$INSTALL_ROOT/releases" ||
+    privileged_path_exists "$INSTALL_ROOT/shared" ||
+    privileged_path_exists "$INSTALL_ROOT/app" ||
+    privileged_path_exists "$INSTALL_ROOT/app/repository.git"
 }
 
 validate_legacy_layout() {
@@ -425,9 +492,16 @@ validate_legacy_layout() {
 
 check_release_directory_permissions() {
   local path mode permissions owner group service_user=familytree service_group=familytree
-  local passwd_entry group_entry service_uid service_gid data_path data_owner data_group
+  local passwd_entry group_entry service_uid service_gid data_path data_owner data_group config_path
+  config_path="$INSTALL_ROOT/shared/deployment.env"
+  for path in "$INSTALL_ROOT/shared" "$INSTALL_ROOT/shared/pb_data" "$config_path"; do
+    validate_privileged_path_string "$path" || {
+      DETECTION_REASON="небезопасная строка пути release-структуры: $path"
+      return 1
+    }
+  done
   for path in "$INSTALL_ROOT/shared" "$INSTALL_ROOT/shared/pb_data"; do
-    mode=$(stat -c '%a' "$path") || {
+    mode=$(privileged_stat %a "$path") || {
       DETECTION_REASON="не удалось проверить права release-каталога: $path"
       return 1
     }
@@ -441,7 +515,7 @@ check_release_directory_permissions() {
       return 1
     fi
   done
-  owner=$(stat -c '%u' "$INSTALL_ROOT/shared") || {
+  owner=$(privileged_stat %u "$INSTALL_ROOT/shared") || {
     DETECTION_REASON="не удалось проверить владельца shared: $INSTALL_ROOT/shared"
     return 1
   }
@@ -449,9 +523,15 @@ check_release_directory_permissions() {
     DETECTION_REASON="небезопасный владелец shared: uid=$owner, ожидается $EXPECTED_OWNER_UID"
     return 1
   fi
-  service_user=$(sed -n 's/^SERVICE_USER=//p' "$INSTALL_ROOT/shared/deployment.env")
+  service_user=$(sudo -- sed -n 's/^SERVICE_USER=//p' "$config_path") || {
+    DETECTION_REASON="не удалось прочитать SERVICE_USER из deployment.env через sudo"
+    return 1
+  }
   service_user=${service_user:-familytree}
-  service_group=$(sed -n 's/^SERVICE_GROUP=//p' "$INSTALL_ROOT/shared/deployment.env")
+  service_group=$(sudo -- sed -n 's/^SERVICE_GROUP=//p' "$config_path") || {
+    DETECTION_REASON="не удалось прочитать SERVICE_GROUP из deployment.env через sudo"
+    return 1
+  }
   service_group=${service_group:-familytree}
   [[ $service_user =~ ^[a-z_][a-z0-9_-]*$ ]] || {
     DETECTION_REASON="deployment.env содержит небезопасный SERVICE_USER"
@@ -461,7 +541,7 @@ check_release_directory_permissions() {
     DETECTION_REASON="deployment.env содержит небезопасный SERVICE_GROUP"
     return 1
   }
-  passwd_entry=$(getent passwd "$service_user" 2>/dev/null || true)
+  passwd_entry=$(sudo -- getent passwd "$service_user" 2>/dev/null || true)
   [[ -n $passwd_entry && $passwd_entry != *$'\n'* ]] || {
     DETECTION_REASON="SERVICE_USER=$service_user из deployment.env отсутствует"
     return 1
@@ -471,7 +551,7 @@ check_release_directory_permissions() {
     DETECTION_REASON="не удалось определить uid SERVICE_USER=$service_user"
     return 1
   }
-  group_entry=$(getent group "$service_group" 2>/dev/null || true)
+  group_entry=$(sudo -- getent group "$service_group" 2>/dev/null || true)
   [[ -n $group_entry && $group_entry != *$'\n'* ]] || {
     DETECTION_REASON="SERVICE_GROUP=$service_group из deployment.env отсутствует"
     return 1
@@ -481,7 +561,7 @@ check_release_directory_permissions() {
     DETECTION_REASON="не удалось определить gid SERVICE_GROUP=$service_group"
     return 1
   }
-  group=$(stat -c '%g' "$INSTALL_ROOT/shared") || {
+  group=$(privileged_stat %g "$INSTALL_ROOT/shared") || {
     DETECTION_REASON="не удалось проверить группу shared"
     return 1
   }
@@ -490,11 +570,11 @@ check_release_directory_permissions() {
     return 1
   fi
   data_path="$INSTALL_ROOT/shared/pb_data"
-  data_owner=$(stat -c '%u' "$data_path") || {
+  data_owner=$(privileged_stat %u "$data_path") || {
     DETECTION_REASON="не удалось проверить владельца shared/pb_data"
     return 1
   }
-  data_group=$(stat -c '%g' "$data_path") || {
+  data_group=$(privileged_stat %g "$data_path") || {
     DETECTION_REASON="не удалось проверить группу shared/pb_data"
     return 1
   }
@@ -519,12 +599,20 @@ check_release_directory_permissions() {
 check_release_symlink_targets() {
   local base path target
   for base in "$1" "$INSTALL_ROOT/app/repository.git"; do
+    validate_privileged_path_string "$base" || {
+      DETECTION_REASON="небезопасная строка base path release-структуры"
+      return 1
+    }
     sudo -- find "$base" -xdev -type l -print0 >/dev/null || {
       DETECTION_REASON="не удалось проверить symlink targets release-структуры: $base"
       return 1
     }
     while IFS= read -r -d '' path; do
-      target=$(readlink -f -- "$path" 2>/dev/null || true)
+      validate_privileged_path_string "$path" || {
+        DETECTION_REASON="find вернул небезопасный symlink path release-структуры"
+        return 1
+      }
+      target=$(privileged_canonical_symlink_target "$path" 2>/dev/null || true)
       if [[ $base == "$1" && $path == "$base/pb_data" &&
         $target == "$INSTALL_ROOT/shared/pb_data" ]]; then
         continue
@@ -539,11 +627,11 @@ check_release_symlink_targets() {
 
 validate_bare_repository() {
   local repository="$INSTALL_ROOT/app/repository.git" bare
-  if ! regular_directory "$repository"; then
+  if ! privileged_regular_directory "$repository"; then
     DETECTION_REASON="bare Git-репозиторий отсутствует или имеет небезопасный тип: $repository"
     return 1
   fi
-  bare=$(git --git-dir="$repository" rev-parse --is-bare-repository 2>/dev/null || true)
+  bare=$(sudo -- git --git-dir="$repository" rev-parse --is-bare-repository 2>/dev/null || true)
   if [[ $bare != true ]]; then
     DETECTION_REASON="путь не является bare Git-репозиторием: $repository"
     return 1
@@ -554,34 +642,33 @@ validate_release_layout() {
   local current="$INSTALL_ROOT/current" releases="$INSTALL_ROOT/releases"
   local current_target releases_target pocketbase_mode pocketbase_permissions
 
-  [[ -L $current ]] || {
+  privileged_is_symlink "$current" || {
     DETECTION_REASON="release current отсутствует или не является symlink: $current"
     return 1
   }
-  regular_directory "$releases" || {
+  privileged_regular_directory "$releases" || {
     DETECTION_REASON="releases отсутствует или не является обычным каталогом: $releases"
     return 1
   }
-  releases_target=$(readlink -f -- "$releases" 2>/dev/null || true)
-  current_target=$(readlink -f -- "$current" 2>/dev/null || true)
+  releases_target=$releases
+  current_target=$(privileged_canonical_symlink_target "$current" 2>/dev/null || true)
   if [[ -z $current_target ]]; then
-    DETECTION_REASON="current указывает на отсутствующий target: $(readlink "$current" 2>/dev/null || printf unreadable)"
+    DETECTION_REASON="current указывает на отсутствующий target: $(sudo -- readlink "$current" 2>/dev/null || printf unreadable)"
     return 1
   fi
   if [[ $current_target != "$releases_target/"* ]]; then
     DETECTION_REASON="канонический target current находится вне releases: $current_target"
     return 1
   fi
-  regular_directory "$current_target" || {
+  privileged_regular_directory "$current_target" || {
     DETECTION_REASON="target current не является обычным каталогом: $current_target"
     return 1
   }
-  if [[ ! -f $current_target/pocketbase || -L $current_target/pocketbase ||
-    ! -x $current_target/pocketbase ]]; then
+  if ! privileged_executable_file "$current_target/pocketbase"; then
     DETECTION_REASON="release pocketbase отсутствует, не является обычным исполняемым файлом или является symlink: $current_target/pocketbase"
     return 1
   fi
-  pocketbase_mode=$(stat -c '%a' "$current_target/pocketbase") || {
+  pocketbase_mode=$(privileged_stat %a "$current_target/pocketbase") || {
     DETECTION_REASON="не удалось проверить права release pocketbase"
     return 1
   }
@@ -594,31 +681,35 @@ validate_release_layout() {
     DETECTION_REASON="release pocketbase доступен на запись группе или остальным (mode $pocketbase_mode)"
     return 1
   fi
-  regular_directory "$current_target/pb_public" || {
+  privileged_regular_directory "$current_target/pb_public" || {
     DETECTION_REASON="release pb_public отсутствует или не является обычным каталогом: $current_target/pb_public"
     return 1
   }
-  regular_directory "$current_target/pb_migrations" || {
+  privileged_regular_directory "$current_target/pb_migrations" || {
     DETECTION_REASON="release pb_migrations отсутствует или не является обычным каталогом: $current_target/pb_migrations"
     return 1
   }
-  regular_directory "$INSTALL_ROOT/shared" || {
+  privileged_regular_directory "$INSTALL_ROOT/shared" || {
     DETECTION_REASON="shared отсутствует или не является обычным каталогом: $INSTALL_ROOT/shared"
     return 1
   }
-  [[ -d $INSTALL_ROOT/shared/pb_data ]] || {
-    DETECTION_REASON="shared/pb_data отсутствует или не является каталогом: $INSTALL_ROOT/shared/pb_data"
+  validate_privileged_path_string "$INSTALL_ROOT/shared/pb_data" || {
+    DETECTION_REASON="небезопасная строка пути shared/pb_data"
     return 1
   }
-  [[ ! -L $INSTALL_ROOT/shared/pb_data ]] || {
+  sudo -- test ! -L "$INSTALL_ROOT/shared/pb_data" || {
     DETECTION_REASON="shared/pb_data не должен быть symlink: $INSTALL_ROOT/shared/pb_data"
     return 1
   }
-  if [[ ! -f $INSTALL_ROOT/shared/deployment.env || -L $INSTALL_ROOT/shared/deployment.env ]]; then
+  sudo -- test -d "$INSTALL_ROOT/shared/pb_data" || {
+    DETECTION_REASON="shared/pb_data отсутствует или не является каталогом: $INSTALL_ROOT/shared/pb_data"
+    return 1
+  }
+  if ! privileged_regular_file "$INSTALL_ROOT/shared/deployment.env"; then
     DETECTION_REASON="deployment.env отсутствует или не является обычным файлом: $INSTALL_ROOT/shared/deployment.env"
     return 1
   fi
-  regular_directory "$INSTALL_ROOT/app" || {
+  privileged_regular_directory "$INSTALL_ROOT/app" || {
     DETECTION_REASON="app отсутствует или не является обычным каталогом: $INSTALL_ROOT/app"
     return 1
   }
@@ -684,15 +775,18 @@ detect_installation() {
 
 print_diagnostics() {
   local current_value=absent
-  [[ -L $INSTALL_ROOT/current ]] && current_value="symlink -> $(readlink "$INSTALL_ROOT/current" 2>/dev/null || printf unreadable)"
-  [[ -e $INSTALL_ROOT/current && ! -L $INSTALL_ROOT/current ]] && current_value="обычный файл/каталог"
+  if privileged_is_symlink "$INSTALL_ROOT/current"; then
+    current_value="symlink -> $(sudo -- readlink "$INSTALL_ROOT/current" 2>/dev/null || printf unreadable)"
+  elif privileged_path_exists "$INSTALL_ROOT/current"; then
+    current_value="обычный файл/каталог"
+  fi
   printf 'Диагностика bootstrap:\n' >&2
   printf '  install-root: %s\n  current: %s\n' "$INSTALL_ROOT" "$current_value" >&2
   printf '  legacy pocketbase marker: %s\n  legacy pb_data marker: %s\n  releases: %s\n  shared: %s\n' \
     "$([[ -e $INSTALL_ROOT/pocketbase || -L $INSTALL_ROOT/pocketbase ]] && printf present || printf absent)" \
     "$([[ -e $INSTALL_ROOT/pb_data || -L $INSTALL_ROOT/pb_data ]] && printf present || printf absent)" \
-    "$([[ -e $INSTALL_ROOT/releases || -L $INSTALL_ROOT/releases ]] && printf present || printf absent)" \
-    "$([[ -e $INSTALL_ROOT/shared || -L $INSTALL_ROOT/shared ]] && printf present || printf absent)" >&2
+    "$(privileged_path_exists "$INSTALL_ROOT/releases" && printf present || printf absent)" \
+    "$(privileged_path_exists "$INSTALL_ROOT/shared" && printf present || printf absent)" >&2
   printf '  причина отказа: %s\n' "$DETECTION_REASON" >&2
   printf 'Ничего не изменено. Для release-установки запустите family-archive doctor;\n' >&2
   printf 'иначе вручную проверьте владельца, права и содержимое %s.\n' "$INSTALL_ROOT" >&2
@@ -759,10 +853,13 @@ confirm_migration() {
 [[ $(uname -s) == Linux ]] || die "Bootstrap поддерживает только Linux."
 [[ -n ${BASH_VERSION:-} ]] || die "Bootstrap необходимо запускать через bash."
 (( BASH_VERSINFO[0] >= 4 )) || die "Нужен Bash 4 или новее; установлен $BASH_VERSION."
-for required_command in curl git sudo realpath stat find readlink dirname env mktemp rm systemctl getent awk id runuser; do
+command -v sudo >/dev/null 2>&1 ||
+  die "Команда sudo недоступна. Она требуется для безопасной проверки защищённой release-структуры."
+for required_command in curl git realpath stat find readlink dirname env mktemp rm systemctl getent awk id runuser; do
   command -v "$required_command" >/dev/null 2>&1 || die "Не найдена обязательная команда: $required_command"
 done
 validate_absolute_install_root
+ensure_sudo_access
 
 BOOTSTRAP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/family-archive-bootstrap.XXXXXX")
 printf 'Клонирую Family Archive во временный каталог.\n' >&2

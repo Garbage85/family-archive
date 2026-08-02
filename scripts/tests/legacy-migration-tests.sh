@@ -385,7 +385,8 @@ printf '%s\n' '#!/usr/bin/env bash' 'set -eu' \
   'cp "$BOOTSTRAP_UPDATE_STUB" "$destination/scripts/update-server.sh"' \
   'chmod 0755 "$destination/scripts/update-server.sh"' > "$bootstrap_mock/git"
 # shellcheck disable=SC2016 # Arguments are intentionally expanded by the generated mock.
-printf '%s\n' '#!/usr/bin/env bash' '[[ ${1:-} == -- ]] && shift' 'exec "$@"' > "$bootstrap_mock/sudo"
+printf '%s\n' '#!/usr/bin/env bash' '[[ ${1:-} == -v ]] && exit 0' \
+  '[[ ${1:-} == -- ]] && shift' 'exec "$@"' > "$bootstrap_mock/sudo"
 # shellcheck disable=SC2016 # Mock executes test -r/-w as the current sandbox user.
 printf '%s\n' '#!/usr/bin/env bash' \
   'while (($#)); do [[ $1 == -- ]] && { shift; break; }; shift; done' \

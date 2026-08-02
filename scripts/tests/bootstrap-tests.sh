@@ -13,6 +13,7 @@ case_root=""
 
 cleanup() {
   if [[ -n $SUITE_ROOT && $SUITE_ROOT == "${TMPDIR:-/tmp}"/family-archive-bootstrap-tests.* && -d $SUITE_ROOT ]]; then
+    chmod -R u+rwX "$SUITE_ROOT" 2>/dev/null || true
     rm -rf -- "$SUITE_ROOT"
   fi
 }
@@ -56,7 +57,26 @@ printf '%s\n' \
   'mkdir -p "$destination/scripts"' \
   'for script in install-server.sh update-server.sh migrate-legacy-server.sh; do cp "$BOOTSTRAP_MOCK_CHILD" "$destination/scripts/$script"; chmod 0755 "$destination/scripts/$script"; done' \
   > "$MOCK_BIN/git"
-printf '%s\n' '#!/usr/bin/env bash' 'exec "$@"' > "$MOCK_BIN/sudo"
+# shellcheck disable=SC2016 # Аргументы раскрываются при запуске mock sudo.
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'set -u' \
+  'printf "%s\n" "$*" >> "$BOOTSTRAP_SUDO_RECORD"' \
+  'if [[ ${1:-} == -v ]]; then' \
+  '  [[ ! -f $BOOTSTRAP_MOCK_CASE_ROOT/deny-sudo ]] || exit 1' \
+  '  exit 0' \
+  'fi' \
+  '[[ ${1:-} == -- ]] && shift' \
+  'protected_shared="$BOOTSTRAP_MOCK_INSTALL_ROOT/shared"' \
+  'restore_mode=' \
+  'if [[ -f $BOOTSTRAP_MOCK_CASE_ROOT/protected-shared && -d $protected_shared ]]; then' \
+  '  restore_mode=$(/usr/bin/stat -c %a "$protected_shared")' \
+  '  chmod u+rwx "$protected_shared"' \
+  'fi' \
+  '"$@"' \
+  'status=$?' \
+  '[[ -z $restore_mode ]] || chmod "$restore_mode" "$protected_shared"' \
+  'exit "$status"' > "$MOCK_BIN/sudo"
 # shellcheck disable=SC2016 # Аргументы раскрываются при запуске mock runuser.
 printf '%s\n' \
   '#!/usr/bin/env bash' \
@@ -103,6 +123,13 @@ printf '%s\n' \
   'set -eu' \
   'target=${!#}' \
   'rule=' \
+  'if [[ -f $BOOTSTRAP_MOCK_CASE_ROOT/protected-shared && ${1:-} == -c ]]; then' \
+  '  case "${2:-}:$target" in' \
+  '    %a:"$BOOTSTRAP_MOCK_INSTALL_ROOT/shared"|%a:"$BOOTSTRAP_MOCK_INSTALL_ROOT/shared/pb_data") printf "750\n"; exit 0 ;;' \
+  '    %u:"$BOOTSTRAP_MOCK_INSTALL_ROOT/shared") printf "%s\n" "$FAMILY_ARCHIVE_BOOTSTRAP_EXPECTED_OWNER_UID"; exit 0 ;;' \
+  '    %g:"$BOOTSTRAP_MOCK_INSTALL_ROOT/shared"|%u:"$BOOTSTRAP_MOCK_INSTALL_ROOT/shared/pb_data"|%g:"$BOOTSTRAP_MOCK_INSTALL_ROOT/shared/pb_data") printf "997\n"; exit 0 ;;' \
+  '  esac' \
+  'fi' \
   'if [[ ${1:-} == -c && ${2:-} == %u ]]; then' \
   '  if [[ $target == "$BOOTSTRAP_MOCK_INSTALL_ROOT" ]]; then rule=root-owner;' \
   '  elif [[ $target == "$BOOTSTRAP_MOCK_INSTALL_ROOT/pocketbase" ]]; then rule=pocketbase-owner;' \
@@ -132,6 +159,7 @@ new_case() {
   : > "$root/child-record"
   : > "$root/git-record"
   : > "$root/runuser-record"
+  : > "$root/sudo-record"
   printf -v "$destination_var" '%s' "$root"
 }
 
@@ -180,7 +208,7 @@ run_bootstrap() {
   expected_gid=$(cat "$root/expected-owner-gid" 2>/dev/null || id -g)
   env PATH="$MOCK_BIN:$PATH" TMPDIR="$root" \
     FAMILY_ARCHIVE_BOOTSTRAP_TEST_MODE=1 \
-    FAMILY_ARCHIVE_BOOTSTRAP_INSTALL_ROOT="$root/install" \
+    FAMILY_ARCHIVE_BOOTSTRAP_INSTALL_ROOT="${BOOTSTRAP_CASE_INSTALL_ROOT:-$root/install}" \
     FAMILY_ARCHIVE_BOOTSTRAP_EXPECTED_OWNER_UID="$expected_uid" \
     FAMILY_ARCHIVE_BOOTSTRAP_EXPECTED_OWNER_GID="$expected_gid" \
     FAMILY_ARCHIVE_BOOTSTRAP_TEST_UID_MIN=1000 \
@@ -192,6 +220,7 @@ run_bootstrap() {
     BOOTSTRAP_CHILD_RECORD="$root/child-record" \
     BOOTSTRAP_GIT_RECORD="$root/git-record" \
     BOOTSTRAP_RUNUSER_RECORD="$root/runuser-record" \
+    BOOTSTRAP_SUDO_RECORD="$root/sudo-record" \
     BOOTSTRAP_FAIL_CHILD="${BOOTSTRAP_CASE_FAIL_CHILD:-}" \
     BOOTSTRAP_FAIL_CODE="${BOOTSTRAP_CASE_FAIL_CODE:-1}" \
     bash "$BOOTSTRAP" "$@"
@@ -223,6 +252,59 @@ assert_success 'release validation проверяет чтение shared/pb_dat
   grep -Fq -- "-u $(id -un) -- test -r $case_root/install/shared/pb_data" "$case_root/runuser-record"
 assert_success 'release validation проверяет запись shared/pb_data от SERVICE_USER' \
   grep -Fq -- "-u $(id -un) -- test -w $case_root/install/shared/pb_data" "$case_root/runuser-record"
+
+new_case case_root protected-release
+make_release "$case_root/install"
+printf 'INSTALL_ROOT=%s/install\nSERVICE_USER=familytree\nSERVICE_GROUP=familytree\n' "$case_root" \
+  > "$case_root/install/shared/deployment.env"
+chmod 0600 "$case_root/install/shared/deployment.env"
+touch "$case_root/protected-shared"
+chmod 0000 "$case_root/install/shared"
+# shellcheck disable=SC2016 # Проверяется видимость из отдельного непривилегированного shell.
+assert_failure 'обычный пользователь не может traverse protected shared' \
+  bash -c '[[ -d $1/shared/pb_data ]]' _ "$case_root/install"
+if protected_output=$(run_bootstrap "$case_root" 2>&1); then
+  pass 'privileged mock видит protected release-каталоги'
+else
+  fail "sudo-aware release validation отклонил корректный protected layout: $protected_output"
+fi
+assert_equal update-server.sh "$(recorded_modes "$case_root")" \
+  'bootstrap выбирает update без ложного «каталог отсутствует»'
+assert_success 'protected shared проверен через sudo test -d' \
+  grep -Fq -- "-- test -d $case_root/install/shared/pb_data" "$case_root/sudo-record"
+# shellcheck disable=SC2016 # Positional parameters belong to child bash.
+assert_success 'shared root:familytree 0750 проверен через privileged stat' \
+  bash -c 'grep -Fq -- "-- stat -c %u $1/shared" "$2" && grep -Fq -- "-- stat -c %g $1/shared" "$2" && grep -Fq -- "-- stat -c %a $1/shared" "$2"' \
+    _ "$case_root/install" "$case_root/sudo-record"
+# shellcheck disable=SC2016 # Positional parameters belong to child bash.
+assert_success 'pb_data familytree:familytree 0750 проверен через privileged stat' \
+  bash -c 'grep -Fq -- "-- stat -c %u $1/shared/pb_data" "$2" && grep -Fq -- "-- stat -c %g $1/shared/pb_data" "$2" && grep -Fq -- "-- stat -c %a $1/shared/pb_data" "$2"' \
+    _ "$case_root/install" "$case_root/sudo-record"
+assert_success 'доступ SERVICE_USER familytree проверен через sudo runuser' \
+  grep -Fq -- "-- runuser -u familytree -- test -w $case_root/install/shared/pb_data" \
+    "$case_root/sudo-record"
+# shellcheck disable=SC2016 # Positional parameter belongs to child bash.
+assert_success 'protected shared mode не ослаблен bootstrap' \
+  bash -c '[[ $(stat -c %a "$1") == 0 ]]' _ "$case_root/install/shared"
+
+new_case case_root sudo-unavailable
+touch "$case_root/deny-sudo"
+if sudo_error=$(run_bootstrap "$case_root" 2>&1); then
+  fail 'bootstrap без доступного sudo должен завершаться ошибкой'
+elif [[ $sudo_error == *'Не удалось получить доступ через sudo'* &&
+  $sudo_error == *'защищённой release-структуры'* ]]; then
+  pass 'bootstrap без sudo выдаёт понятную ошибку'
+else
+  fail "bootstrap без sudo выдал непонятную ошибку: $sudo_error"
+fi
+assert_equal '' "$(cat "$case_root/git-record")" 'без sudo bootstrap не начинает clone'
+
+new_case case_root unsafe-privileged-path
+BOOTSTRAP_CASE_INSTALL_ROOT="$case_root/install/../escape"
+assert_failure 'ненормализованный privileged path с .. отклоняется до sudo и clone' \
+  run_bootstrap "$case_root"
+unset BOOTSTRAP_CASE_INSTALL_ROOT
+assert_equal '' "$(cat "$case_root/git-record")" 'unsafe path не запускает clone'
 
 new_case case_root release-data-owner
 make_release "$case_root/install"
