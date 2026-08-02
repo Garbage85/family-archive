@@ -56,6 +56,45 @@ printf '%s\n' \
   'for script in install-server.sh update-server.sh migrate-legacy-server.sh; do cp "$BOOTSTRAP_MOCK_CHILD" "$destination/scripts/$script"; chmod 0755 "$destination/scripts/$script"; done' \
   > "$MOCK_BIN/git"
 printf '%s\n' '#!/usr/bin/env bash' 'exec "$@"' > "$MOCK_BIN/sudo"
+# shellcheck disable=SC2016 # Переменные раскрываются при запуске mock systemctl.
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'set -eu' \
+  'command=${1:-}' \
+  'case "$command" in' \
+  '  cat) cat "$BOOTSTRAP_MOCK_UNIT" ;;' \
+  '  is-active) [[ $(cat "$BOOTSTRAP_MOCK_SERVICE_STATE") == active ]] ;;' \
+  '  show)' \
+  '    case "$*" in' \
+  '      *--property=User*) sed -n "s/^[[:space:]]*User[[:space:]]*=[[:space:]]*//p" "$BOOTSTRAP_MOCK_UNIT" ;;' \
+  '      *--property=Group*) sed -n "s/^[[:space:]]*Group[[:space:]]*=[[:space:]]*//p" "$BOOTSTRAP_MOCK_UNIT" ;;' \
+  '      *--property=DynamicUser*) sed -n "s/^[[:space:]]*DynamicUser[[:space:]]*=[[:space:]]*//p" "$BOOTSTRAP_MOCK_UNIT" ;;' \
+  '    esac ;;' \
+  '  *) exit 1 ;;' \
+  'esac' > "$MOCK_BIN/systemctl"
+# shellcheck disable=SC2016 # familytree моделируется без изменения системного passwd.
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'set -eu' \
+  'case "${1:-}:${2:-}" in' \
+  '  passwd:familytree) printf "%s\n" "familytree:x:997:997::/nonexistent:/usr/sbin/nologin" ;;' \
+  '  group:familytree) printf "%s\n" "familytree:x:997:" ;;' \
+  '  passwd:missing-user|group:missing-group) exit 2 ;;' \
+  '  *) exec /usr/bin/getent "$@" ;;' \
+  'esac' > "$MOCK_BIN/getent"
+# shellcheck disable=SC2016 # UID путей моделируются отдельно от реального владельца test sandbox.
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'set -eu' \
+  'target=${!#}' \
+  'rule=' \
+  'if [[ ${1:-} == -c && ${2:-} == %u ]]; then' \
+  '  if [[ $target == "$BOOTSTRAP_MOCK_INSTALL_ROOT" ]]; then rule=root-owner;' \
+  '  elif [[ $target == "$BOOTSTRAP_MOCK_INSTALL_ROOT/pocketbase" ]]; then rule=pocketbase-owner;' \
+  '  elif [[ $target == "$BOOTSTRAP_MOCK_INSTALL_ROOT/pb_data" || $target == "$BOOTSTRAP_MOCK_INSTALL_ROOT/pb_data/"* ]]; then rule=pb-data-owner; fi' \
+  'fi' \
+  'if [[ -n $rule && -f $BOOTSTRAP_MOCK_CASE_ROOT/$rule ]]; then cat "$BOOTSTRAP_MOCK_CASE_ROOT/$rule"; exit 0; fi' \
+  'exec /usr/bin/stat "$@"' > "$MOCK_BIN/stat"
 # shellcheck disable=SC2016 # Переменные раскрываются при запуске mock child.
 printf '%s\n' \
   '#!/usr/bin/env bash' \
@@ -64,7 +103,8 @@ printf '%s\n' \
   'printf "%s\t%s\trepo=%s\tbranch=%s\n" "$name" "$*" "${FAMILY_ARCHIVE_BOOTSTRAP_REPOSITORY_URL:-}" "${FAMILY_ARCHIVE_BOOTSTRAP_REPOSITORY_BRANCH:-}" >> "$BOOTSTRAP_CHILD_RECORD"' \
   'if [[ ${BOOTSTRAP_FAIL_CHILD:-} == "$name" ]]; then exit "${BOOTSTRAP_FAIL_CODE:-1}"; fi' \
   'exit 0' > "$MOCK_CHILD"
-chmod 0755 "$MOCK_BIN/git" "$MOCK_BIN/sudo" "$MOCK_CHILD"
+chmod 0755 "$MOCK_BIN/git" "$MOCK_BIN/sudo" "$MOCK_BIN/systemctl" \
+  "$MOCK_BIN/getent" "$MOCK_BIN/stat" "$MOCK_CHILD"
 
 new_case() {
   local destination_var=$1 name=$2 root
@@ -82,6 +122,14 @@ make_legacy() {
   chmod 0755 "$install_root"
   printf legacy > "$install_root/pocketbase"
   chmod 0755 "$install_root/pocketbase"
+  printf database > "$install_root/pb_data/data.db"
+  printf 997 > "$(dirname "$install_root")/root-owner"
+  printf 997 > "$(dirname "$install_root")/pocketbase-owner"
+  printf 997 > "$(dirname "$install_root")/pb-data-owner"
+  printf '%s\n' '[Service]' 'User=familytree' 'Group=familytree' \
+    "ExecStart=$install_root/pocketbase serve --http=0.0.0.0:8090" \
+    > "$(dirname "$install_root")/family-tree.service"
+  printf active > "$(dirname "$install_root")/service-state"
 }
 
 make_release() {
@@ -94,15 +142,25 @@ make_release() {
   chmod 0755 "$release/pocketbase"
   printf 'COMMIT=test\n' > "$release/release.env"
   printf 'INSTALL_ROOT=%s\n' "$install_root" > "$install_root/shared/deployment.env"
+  chmod 0600 "$install_root/shared/deployment.env"
   ln -s "$release" "$install_root/current"
 }
 
 run_bootstrap() {
-  local root=$1
+  local root=$1 expected_uid expected_gid
   shift
+  expected_uid=$(cat "$root/expected-owner-uid" 2>/dev/null || id -u)
+  expected_gid=$(cat "$root/expected-owner-gid" 2>/dev/null || id -g)
   env PATH="$MOCK_BIN:$PATH" TMPDIR="$root" \
     FAMILY_ARCHIVE_BOOTSTRAP_TEST_MODE=1 \
     FAMILY_ARCHIVE_BOOTSTRAP_INSTALL_ROOT="$root/install" \
+    FAMILY_ARCHIVE_BOOTSTRAP_EXPECTED_OWNER_UID="$expected_uid" \
+    FAMILY_ARCHIVE_BOOTSTRAP_EXPECTED_OWNER_GID="$expected_gid" \
+    FAMILY_ARCHIVE_BOOTSTRAP_TEST_UID_MIN=1000 \
+    BOOTSTRAP_MOCK_CASE_ROOT="$root" \
+    BOOTSTRAP_MOCK_INSTALL_ROOT="$root/install" \
+    BOOTSTRAP_MOCK_UNIT="$root/family-tree.service" \
+    BOOTSTRAP_MOCK_SERVICE_STATE="$root/service-state" \
     BOOTSTRAP_MOCK_CHILD="$MOCK_CHILD" \
     BOOTSTRAP_CHILD_RECORD="$root/child-record" \
     BOOTSTRAP_GIT_RECORD="$root/git-record" \
@@ -131,7 +189,7 @@ assert_equal update-server.sh "$(recorded_modes "$case_root")" 'auto update за
 
 new_case case_root auto-migrate
 make_legacy "$case_root/install"
-assert_success 'legacy-layout автоматически выбирает migrate с --yes' run_bootstrap "$case_root" --yes
+assert_success 'legacy-root принадлежит familytree из active unit и разрешён' run_bootstrap "$case_root" --yes
 assert_equal 'migrate-legacy-server.sh migrate-legacy-server.sh' "$(recorded_modes "$case_root")" \
   'legacy сначала запускает dry-run, затем реальную миграцию'
 assert_success 'первый legacy-вызов содержит dry-run' grep -q $'^migrate-legacy-server.sh\t.*--dry-run' "$case_root/child-record"
@@ -176,6 +234,49 @@ make_legacy "$case_root/install"
 chmod 0775 "$case_root/install"
 assert_failure 'group-writable install root отклоняется до child' run_bootstrap "$case_root" --yes
 assert_equal '' "$(recorded_modes "$case_root")" 'небезопасные права ничего не запускают'
+
+new_case case_root legacy-root-owned
+make_legacy "$case_root/install"
+printf 0 > "$case_root/root-owner"
+assert_success 'legacy-root с владельцем root разрешён при service-owned pb_data' \
+  run_bootstrap "$case_root" --dry-run
+
+new_case case_root foreign-legacy-owner
+make_legacy "$case_root/install"
+printf 4242 > "$case_root/root-owner"
+assert_failure 'legacy-root с посторонним uid отклоняется' run_bootstrap "$case_root" --dry-run
+assert_equal '' "$(recorded_modes "$case_root")" 'посторонний legacy owner не запускает child'
+
+new_case case_root missing-unit-user
+make_legacy "$case_root/install"
+sed -i 's/User=familytree/User=missing-user/' "$case_root/family-tree.service"
+assert_failure 'отсутствующий User из unit отклоняется' run_bootstrap "$case_root" --dry-run
+
+new_case case_root empty-unit-user
+make_legacy "$case_root/install"
+sed -i 's/User=familytree/User=/' "$case_root/family-tree.service"
+assert_failure 'пустой User в legacy unit отклоняется' run_bootstrap "$case_root" --dry-run
+
+new_case case_root foreign-pb-data-owner
+make_legacy "$case_root/install"
+printf 4242 > "$case_root/pb-data-owner"
+assert_failure 'pb_data с посторонним владельцем отклоняется' run_bootstrap "$case_root" --dry-run
+
+new_case case_root dynamic-unit-user
+make_legacy "$case_root/install"
+sed -i '/Group=familytree/a DynamicUser=yes' "$case_root/family-tree.service"
+assert_failure 'DynamicUser в legacy unit отклоняется' run_bootstrap "$case_root" --dry-run
+
+new_case case_root symlink-legacy-root
+make_legacy "$case_root/real-install"
+ln -s "$case_root/real-install" "$case_root/install"
+assert_failure 'symlink вместо legacy-root отклоняется' run_bootstrap "$case_root" --dry-run
+
+new_case case_root non-root-release
+make_release "$case_root/install"
+printf 0 > "$case_root/expected-owner-uid"
+printf 0 > "$case_root/expected-owner-gid"
+assert_failure 'release-layout с не-root владельцем отклоняется' run_bootstrap "$case_root" --dry-run
 
 new_case case_root forced-install
 assert_success '--install работает только на clean layout' run_bootstrap "$case_root" --install

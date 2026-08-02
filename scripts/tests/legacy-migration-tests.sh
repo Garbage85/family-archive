@@ -58,7 +58,7 @@ make_mocks() {
     'printf "%s\n" "$*" >> "$MOCK_SYSTEMCTL_LOG"' \
     'case "$command" in' \
     '  cat) cat "$MOCK_UNIT_PATH" ;;' \
-    '  show) if [[ $* == *"ExecStart"* ]]; then sed -n "s/^ExecStart=//p" "$MOCK_UNIT_PATH"; elif [[ $* == *"DropInPaths"* ]]; then :; else printf "%s\n" "$MOCK_UNIT_PATH"; fi ;;' \
+    '  show) if [[ $* == *"ExecStart"* ]]; then sed -n "s/^ExecStart=//p" "$MOCK_UNIT_PATH"; elif [[ $* == *"DropInPaths"* ]]; then :; elif [[ $* == *"DynamicUser"* ]]; then sed -n "s/^DynamicUser=//p" "$MOCK_UNIT_PATH"; elif [[ $* == *"--property=User"* ]]; then sed -n "s/^User=//p" "$MOCK_UNIT_PATH"; elif [[ $* == *"--property=Group"* ]]; then sed -n "s/^Group=//p" "$MOCK_UNIT_PATH"; else printf "%s\n" "$MOCK_UNIT_PATH"; fi ;;' \
     '  is-active) [[ $(cat "$MOCK_SERVICE_STATE") == active ]] ;;' \
     '  is-enabled) [[ $(cat "$MOCK_ENABLED_STATE") == enabled ]] ;;' \
     '  stop) printf inactive > "$MOCK_SERVICE_STATE" ;;' \
@@ -126,17 +126,22 @@ make_mocks() {
 }
 
 make_legacy() {
-  local root=$1 legacy unit_dir state=${2:-active}
+  local root=$1 legacy unit_dir state=${2:-active} service_user service_group
+  service_user=$(id -un)
+  service_group=$(id -gn)
   legacy="$root/legacy"
   unit_dir="$root/systemd"
   mkdir -p "$legacy/"{pb_data,pb_migrations,pb_public,frontend,scripts,systemd} \
     "$unit_dir" "$root/config" "$root/lock"
+  chmod 0755 "$legacy"
   printf legacy-binary > "$legacy/pocketbase"
   chmod 0755 "$legacy/pocketbase"
   printf before > "$legacy/pb_data/data.db"
   printf 'migration\n' > "$legacy/pb_migrations/1.js"
   printf 'legacy-public\n' > "$legacy/pb_public/index.html"
   printf '%s\n' '[Unit]' '[Service]' \
+    "User=$service_user" \
+    "Group=$service_group" \
     "ExecStart=$legacy/pocketbase serve --http=0.0.0.0:8090" \
     > "$unit_dir/family-tree.service"
   printf '%s' "$state" > "$root/service-state"
@@ -235,6 +240,12 @@ else
   fail "неверный порядок active unit: $order"
 fi
 assert_file_value migrated "$case_root/legacy/shared/pb_data/data.db" 'успешная миграция применяет схему к shared data'
+# shellcheck disable=SC2016 # Подстановки выполняются внутри отдельного bash -c.
+assert_success 'shared/pb_data после миграции принадлежит SERVICE_USER:SERVICE_GROUP' \
+  bash -c '[[ $(stat -c "%U:%G" "$1/shared/pb_data") == "$(id -un):$(id -gn)" ]]' _ "$case_root/legacy"
+# shellcheck disable=SC2016 # $1 раскрывается внутри отдельного bash -c.
+assert_success 'deployment.env после миграции имеет mode 0600' \
+  bash -c '[[ $(stat -c %a "$1/shared/deployment.env") == 600 ]]' _ "$case_root/legacy"
 # shellcheck disable=SC2016 # $1 раскрывается внутри отдельного bash -c.
 assert_success 'успешная миграция создаёт current внутри releases' \
   bash -c '[[ -L $1/current && $(readlink -f "$1/current") == "$1/releases/"* ]]' _ "$case_root/legacy"

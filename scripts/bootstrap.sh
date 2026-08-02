@@ -50,6 +50,12 @@ DETECTION_REASON=""
 TEST_MODE=${FAMILY_ARCHIVE_BOOTSTRAP_TEST_MODE:-0}
 INSTALL_ROOT=/opt/family-tree
 EXPECTED_OWNER_UID=0
+EXPECTED_OWNER_GID=0
+LEGACY_SERVICE_USER=""
+LEGACY_SERVICE_GROUP=""
+LEGACY_SERVICE_UID=""
+LEGACY_SERVICE_GID=""
+LEGACY_OWNERSHIP_DIAGNOSTIC=""
 declare -a CHILD_ARGS=()
 PORT_VALUE=""
 CHANGE_PORT_VALUE=""
@@ -110,7 +116,10 @@ case "$TEST_MODE" in
   1)
     INSTALL_ROOT=${FAMILY_ARCHIVE_BOOTSTRAP_INSTALL_ROOT:-}
     [[ -n $INSTALL_ROOT ]] || die "В bootstrap test mode требуется FAMILY_ARCHIVE_BOOTSTRAP_INSTALL_ROOT."
-    EXPECTED_OWNER_UID=$(id -u)
+    EXPECTED_OWNER_UID=${FAMILY_ARCHIVE_BOOTSTRAP_EXPECTED_OWNER_UID:-$(id -u)}
+    EXPECTED_OWNER_GID=${FAMILY_ARCHIVE_BOOTSTRAP_EXPECTED_OWNER_GID:-$(id -g)}
+    [[ $EXPECTED_OWNER_UID =~ ^[0-9]+$ && $EXPECTED_OWNER_GID =~ ^[0-9]+$ ]] ||
+      die "Некорректный ожидаемый owner в bootstrap test mode."
     ;;
   *) die "FAMILY_ARCHIVE_BOOTSTRAP_TEST_MODE допускает только 0 или 1." ;;
 esac
@@ -135,25 +144,247 @@ validate_absolute_install_root() {
   fi
 }
 
-check_owner_and_mode() {
-  local path=$1 owner mode permissions
+check_directory_mode() {
+  local path=$1 mode permissions
   if [[ ! -d $path || -L $path ]]; then
     DETECTION_REASON="install root не является обычным каталогом: $path"
     return 1
   fi
-  owner=$(stat -c '%u' "$path")
   mode=$(stat -c '%a' "$path")
   if [[ ! $mode =~ ^[0-7]{3,4}$ ]]; then
     DETECTION_REASON="не удалось проверить права install root: $path"
     return 1
   fi
   permissions=$((8#$mode))
-  if (( owner != EXPECTED_OWNER_UID )); then
-    DETECTION_REASON="небезопасный владелец $path: uid=$owner, ожидается $EXPECTED_OWNER_UID"
+  if (( (permissions & 0022) != 0 )); then
+    DETECTION_REASON="install root доступен на запись группе или остальным: $path (mode $mode)"
+    return 1
+  fi
+}
+
+check_strict_owner() {
+  local path=$1 owner group
+  owner=$(stat -c '%u' "$path")
+  group=$(stat -c '%g' "$path")
+  if (( owner != EXPECTED_OWNER_UID || group != EXPECTED_OWNER_GID )); then
+    DETECTION_REASON="небезопасный владелец $path: uid=$owner gid=$group, ожидается $EXPECTED_OWNER_UID:$EXPECTED_OWNER_GID"
+    return 1
+  fi
+}
+
+trim_unit_value() {
+  local destination_var=$1 trimmed=$2
+  trimmed=${trimmed#"${trimmed%%[![:space:]]*}"}
+  trimmed=${trimmed%"${trimmed##*[![:space:]]}"}
+  printf -v "$destination_var" '%s' "$trimmed"
+}
+
+parse_single_unit_value() {
+  local unit_text=$1 key=$2 destination_var=$3 required=${4:-1}
+  local line value="" count=0
+  while IFS= read -r line || [[ -n $line ]]; do
+    [[ $line =~ ^[[:space:]]*${key}[[:space:]]*=(.*)$ ]] || continue
+    trim_unit_value value "${BASH_REMATCH[1]}"
+    count=$((count + 1))
+  done <<< "$unit_text"
+  if (( count > 1 )); then
+    DETECTION_REASON="unit family-tree.service содержит несколько $key; безопасно определить effective-значение невозможно"
+    return 1
+  fi
+  if (( required )) && (( count != 1 || ${#value} == 0 )); then
+    DETECTION_REASON="unit family-tree.service содержит пустой или отсутствующий $key"
+    return 1
+  fi
+  printf -v "$destination_var" '%s' "$value"
+}
+
+system_uid_min() {
+  local uid_min
+  if (( TEST_MODE )) && [[ -n ${FAMILY_ARCHIVE_BOOTSTRAP_TEST_UID_MIN:-} ]]; then
+    uid_min=$FAMILY_ARCHIVE_BOOTSTRAP_TEST_UID_MIN
+  else
+    uid_min=$(awk '$1 == "UID_MIN" && $2 ~ /^[0-9]+$/ {print $2; exit}' /etc/login.defs 2>/dev/null || true)
+    [[ -n $uid_min ]] || uid_min=1000
+  fi
+  [[ $uid_min =~ ^[1-9][0-9]*$ ]] || return 1
+  printf '%s\n' "$uid_min"
+}
+
+resolve_legacy_service_identity() {
+  local unit_text dynamic_user effective_user effective_group effective_dynamic
+  local passwd_entry uid_min group_entry
+  local -a passwd_fields=() group_fields=()
+  systemctl is-active --quiet family-tree.service || {
+    DETECTION_REASON="существующий family-tree.service не active"
+    return 1
+  }
+  unit_text=$(systemctl cat family-tree.service 2>/dev/null) || {
+    DETECTION_REASON="systemd не смог прочитать существующий family-tree.service"
+    return 1
+  }
+  parse_single_unit_value "$unit_text" User LEGACY_SERVICE_USER || return 1
+  parse_single_unit_value "$unit_text" Group LEGACY_SERVICE_GROUP || return 1
+  parse_single_unit_value "$unit_text" DynamicUser dynamic_user 0 || return 1
+  [[ ${dynamic_user,,} != yes && ${dynamic_user,,} != true && ${dynamic_user:-0} != 1 ]] || {
+    DETECTION_REASON="unit family-tree.service использует DynamicUser и не имеет постоянного безопасного владельца"
+    return 1
+  }
+  [[ $LEGACY_SERVICE_USER =~ ^[a-z_][a-z0-9_-]*$ ]] || {
+    DETECTION_REASON="unit family-tree.service содержит неизвестный или небезопасный User=$LEGACY_SERVICE_USER"
+    return 1
+  }
+  [[ $LEGACY_SERVICE_GROUP =~ ^[a-z_][a-z0-9_-]*$ ]] || {
+    DETECTION_REASON="unit family-tree.service содержит неизвестный или небезопасный Group=$LEGACY_SERVICE_GROUP"
+    return 1
+  }
+  effective_user=$(systemctl show family-tree.service --property=User --value 2>/dev/null || true)
+  effective_group=$(systemctl show family-tree.service --property=Group --value 2>/dev/null || true)
+  effective_dynamic=$(systemctl show family-tree.service --property=DynamicUser --value 2>/dev/null || true)
+  [[ $effective_user == "$LEGACY_SERVICE_USER" && $effective_group == "$LEGACY_SERVICE_GROUP" ]] || {
+    DETECTION_REASON="effective User/Group family-tree.service не совпадают с безопасно разобранным unit"
+    return 1
+  }
+  [[ ${effective_dynamic,,} != yes && ${effective_dynamic,,} != true && ${effective_dynamic:-0} != 1 ]] || {
+    DETECTION_REASON="effective family-tree.service использует DynamicUser"
+    return 1
+  }
+  passwd_entry=$(getent passwd "$LEGACY_SERVICE_USER" 2>/dev/null || true)
+  [[ -n $passwd_entry && $passwd_entry != *$'\n'* ]] || {
+    DETECTION_REASON="User=$LEGACY_SERVICE_USER из unit отсутствует в passwd"
+    return 1
+  }
+  IFS=: read -r -a passwd_fields <<< "$passwd_entry"
+  LEGACY_SERVICE_UID=${passwd_fields[2]:-}
+  LEGACY_SERVICE_GID=${passwd_fields[3]:-}
+  [[ ${passwd_fields[0]:-} == "$LEGACY_SERVICE_USER" && $LEGACY_SERVICE_UID =~ ^[0-9]+$ &&
+    $LEGACY_SERVICE_GID =~ ^[0-9]+$ ]] || {
+    DETECTION_REASON="не удалось однозначно определить uid/gid User=$LEGACY_SERVICE_USER"
+    return 1
+  }
+  uid_min=$(system_uid_min) || {
+    DETECTION_REASON="не удалось определить границу системных uid"
+    return 1
+  }
+  (( LEGACY_SERVICE_UID > 0 && LEGACY_SERVICE_UID < uid_min )) || {
+    DETECTION_REASON="User=$LEGACY_SERVICE_USER (uid=$LEGACY_SERVICE_UID) не является системным"
+    return 1
+  }
+  group_entry=$(getent group "$LEGACY_SERVICE_GROUP" 2>/dev/null || true)
+  [[ -n $group_entry && $group_entry != *$'\n'* ]] || {
+    DETECTION_REASON="Group=$LEGACY_SERVICE_GROUP из unit отсутствует"
+    return 1
+  }
+  IFS=: read -r -a group_fields <<< "$group_entry"
+  LEGACY_SERVICE_GID=${group_fields[2]:-}
+  [[ ${group_fields[0]:-} == "$LEGACY_SERVICE_GROUP" && $LEGACY_SERVICE_GID =~ ^[0-9]+$ ]] || {
+    DETECTION_REASON="не удалось однозначно определить gid Group=$LEGACY_SERVICE_GROUP"
+    return 1
+  }
+}
+
+check_legacy_ownership() {
+  local root_owner pocketbase_owner pocketbase_mode permissions path owner mode unsafe_path
+  resolve_legacy_service_identity || return 1
+  root_owner=$(sudo -- stat -c '%u' "$INSTALL_ROOT") || {
+    DETECTION_REASON="не удалось проверить владельца legacy-root через sudo"
+    return 1
+  }
+  if (( root_owner != 0 && root_owner != LEGACY_SERVICE_UID )); then
+    DETECTION_REASON="legacy-root принадлежит uid=$root_owner, не связанному с User=$LEGACY_SERVICE_USER (uid=$LEGACY_SERVICE_UID)"
+    return 1
+  fi
+  pocketbase_owner=$(sudo -- stat -c '%u' "$INSTALL_ROOT/pocketbase") || {
+    DETECTION_REASON="не удалось проверить владельца legacy pocketbase через sudo"
+    return 1
+  }
+  pocketbase_mode=$(sudo -- stat -c '%a' "$INSTALL_ROOT/pocketbase") || {
+    DETECTION_REASON="не удалось проверить права legacy pocketbase через sudo"
+    return 1
+  }
+  [[ $pocketbase_mode =~ ^[0-7]{3,4}$ ]] || {
+    DETECTION_REASON="не удалось проверить права legacy pocketbase"
+    return 1
+  }
+  permissions=$((8#$pocketbase_mode))
+  if (( pocketbase_owner != 0 && pocketbase_owner != LEGACY_SERVICE_UID )); then
+    DETECTION_REASON="legacy pocketbase принадлежит постороннему uid=$pocketbase_owner"
     return 1
   fi
   if (( (permissions & 0022) != 0 )); then
-    DETECTION_REASON="install root доступен на запись группе или остальным: $path (mode $mode)"
+    DETECTION_REASON="legacy pocketbase доступен на запись группе или остальным (mode $pocketbase_mode)"
+    return 1
+  fi
+  if (( TEST_MODE )); then
+    while IFS= read -r -d '' path; do
+      owner=$(stat -c '%u' "$path")
+      mode=$(stat -c '%a' "$path")
+      [[ $mode =~ ^[0-7]{3,4}$ ]] || {
+        DETECTION_REASON="не удалось проверить права файла базы: $path"
+        return 1
+      }
+      permissions=$((8#$mode))
+      if (( owner != LEGACY_SERVICE_UID )); then
+        DETECTION_REASON="небезопасный владелец файла базы $path: uid=$owner, ожидается User=$LEGACY_SERVICE_USER (uid=$LEGACY_SERVICE_UID)"
+        return 1
+      fi
+      if (( (permissions & 0002) != 0 )); then
+        DETECTION_REASON="файл базы доступен на запись остальным: $path (mode $mode)"
+        return 1
+      fi
+    done < <(find "$INSTALL_ROOT/pb_data" -xdev -print0)
+  else
+    unsafe_path=$(sudo -- find "$INSTALL_ROOT/pb_data" -xdev ! -uid "$LEGACY_SERVICE_UID" -print -quit) || {
+      DETECTION_REASON="не удалось полностью проверить владельцев legacy pb_data через sudo"
+      return 1
+    }
+    if [[ -n $unsafe_path ]]; then
+      owner=$(sudo -- stat -c '%u' "$unsafe_path" 2>/dev/null || printf unknown)
+      DETECTION_REASON="небезопасный владелец файла базы $unsafe_path: uid=$owner, ожидается User=$LEGACY_SERVICE_USER (uid=$LEGACY_SERVICE_UID)"
+      return 1
+    fi
+    unsafe_path=$(sudo -- find "$INSTALL_ROOT/pb_data" -xdev -perm -0002 -print -quit) || {
+      DETECTION_REASON="не удалось полностью проверить права legacy pb_data через sudo"
+      return 1
+    }
+    if [[ -n $unsafe_path ]]; then
+      mode=$(sudo -- stat -c '%a' "$unsafe_path" 2>/dev/null || printf unknown)
+      DETECTION_REASON="файл базы доступен на запись остальным: $unsafe_path (mode $mode)"
+      return 1
+    fi
+  fi
+  LEGACY_OWNERSHIP_DIAGNOSTIC="legacy owner uid=$root_owner разрешён; service=$LEGACY_SERVICE_USER:$LEGACY_SERVICE_GROUP ($LEGACY_SERVICE_UID:$LEGACY_SERVICE_GID); pocketbase uid=$pocketbase_owner (root или service — безопасно); pb_data принадлежит service"
+}
+
+check_release_config_security() {
+  local config=$INSTALL_ROOT/shared/deployment.env owner group mode
+  owner=$(sudo -- stat -c '%u' "$config") || {
+    DETECTION_REASON="не удалось проверить владельца deployment.env через sudo"
+    return 1
+  }
+  group=$(sudo -- stat -c '%g' "$config") || {
+    DETECTION_REASON="не удалось проверить группу deployment.env через sudo"
+    return 1
+  }
+  mode=$(sudo -- stat -c '%a' "$config") || {
+    DETECTION_REASON="не удалось проверить права deployment.env через sudo"
+    return 1
+  }
+  if (( owner != EXPECTED_OWNER_UID || group != EXPECTED_OWNER_GID )) || [[ $mode != 600 ]]; then
+    DETECTION_REASON="deployment.env должен принадлежать root:root и иметь mode 600: uid=$owner gid=$group mode=$mode"
+    return 1
+  fi
+}
+
+check_release_tree_ownership() {
+  local unsafe_path
+  unsafe_path=$(sudo -- find "$INSTALL_ROOT/app" "$INSTALL_ROOT/releases" -xdev \
+    \( ! -uid "$EXPECTED_OWNER_UID" -o ! -gid "$EXPECTED_OWNER_GID" \) \
+    -print -quit) || {
+    DETECTION_REASON="не удалось полностью проверить владельцев release-структуры через sudo"
+    return 1
+  }
+  if [[ -n $unsafe_path ]]; then
+    DETECTION_REASON="release-структура содержит объект не от root:root: $unsafe_path (owner=$(sudo -- stat -c '%u:%g' "$unsafe_path" 2>/dev/null || printf unknown))"
     return 1
   fi
 }
@@ -177,7 +408,7 @@ detect_installation() {
     return
   fi
   [[ ! -L $INSTALL_ROOT ]] || { set_detection_error 'install root является symlink'; return; }
-  if ! check_owner_and_mode "$INSTALL_ROOT"; then
+  if ! check_directory_mode "$INSTALL_ROOT"; then
     set_detection_error "$DETECTION_REASON"
     return
   fi
@@ -189,6 +420,20 @@ detect_installation() {
 
   if (( has_legacy && has_release )); then
     set_detection_error 'одновременно присутствуют legacy- и release-маркеры'
+    return
+  fi
+  if (( has_legacy )); then
+    if [[ ! -f $INSTALL_ROOT/pocketbase || -L $INSTALL_ROOT/pocketbase ||
+      ! -x $INSTALL_ROOT/pocketbase || ! -d $INSTALL_ROOT/pb_data || -L $INSTALL_ROOT/pb_data ]]; then
+      set_detection_error 'legacy-маркеры неполны или имеют небезопасный тип'
+      return
+    fi
+    if ! check_legacy_ownership; then
+      set_detection_error "$DETECTION_REASON"
+      return
+    fi
+  elif ! check_strict_owner "$INSTALL_ROOT"; then
+    set_detection_error "$DETECTION_REASON"
     return
   fi
   if [[ -e $current && ! -L $current ]]; then
@@ -215,6 +460,14 @@ detect_installation() {
       [[ ! -f $current_target/release.env || -L $current_target/release.env ]] ||
       [[ ! -f $INSTALL_ROOT/shared/deployment.env || -L $INSTALL_ROOT/shared/deployment.env ]]; then
       set_detection_error 'release-layout неполон или содержит небезопасный тип пути'
+      return
+    fi
+    if ! check_release_config_security; then
+      set_detection_error "$DETECTION_REASON"
+      return
+    fi
+    if ! check_release_tree_ownership; then
+      set_detection_error "$DETECTION_REASON"
       return
     fi
     DETECTED_MODE=update
@@ -316,7 +569,7 @@ confirm_migration() {
 [[ $(uname -s) == Linux ]] || die "Bootstrap поддерживает только Linux."
 [[ -n ${BASH_VERSION:-} ]] || die "Bootstrap необходимо запускать через bash."
 (( BASH_VERSINFO[0] >= 4 )) || die "Нужен Bash 4 или новее; установлен $BASH_VERSION."
-for required_command in curl git sudo realpath stat find readlink dirname env mktemp rm; do
+for required_command in curl git sudo realpath stat find readlink dirname env mktemp rm systemctl getent awk id; do
   command -v "$required_command" >/dev/null 2>&1 || die "Не найдена обязательная команда: $required_command"
 done
 validate_absolute_install_root
@@ -358,6 +611,7 @@ case "$SELECTED_MODE" in
     ;;
   migrate)
     printf 'Обнаружена legacy-установка.\nДействие: миграция.\n' >&2
+    printf 'Проверка владельцев: %s\n' "$LEGACY_OWNERSHIP_DIAGNOSTIC" >&2
     selected_script="$BOOTSTRAP_DIR/repository/scripts/migrate-legacy-server.sh"
     selected_args=(--legacy-root "$INSTALL_ROOT" --install-root "$INSTALL_ROOT" "${CHILD_ARGS[@]}")
     run_or_exit "$selected_script" "${selected_args[@]}" --dry-run

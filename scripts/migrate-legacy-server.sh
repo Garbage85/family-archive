@@ -93,8 +93,6 @@ while (($#)); do
 done
 
 if (( TEST_MODE )); then
-  SERVICE_USER=$(id -un)
-  SERVICE_GROUP=$(id -gn)
   HEALTH_RETRIES=1
   HEALTH_DELAY_SECONDS=1
   if [[ -n ${FAMILY_ARCHIVE_MIGRATION_TEST_POCKETBASE_SHA256:-} ]]; then
@@ -119,6 +117,111 @@ validate_migration_path() {
     [[ ! -L $partial ]] || die "$name проходит через симлинк: $partial"
   done
   [[ $(realpath -m -- "$path") == "$path" ]] || die "$name не является нормализованным путём: $path"
+}
+
+trim_unit_value() {
+  local destination_var=$1 trimmed=$2
+  trimmed=${trimmed#"${trimmed%%[![:space:]]*}"}
+  trimmed=${trimmed%"${trimmed##*[![:space:]]}"}
+  printf -v "$destination_var" '%s' "$trimmed"
+}
+
+parse_single_unit_value() {
+  local unit_text=$1 key=$2 destination_var=$3 required=${4:-1}
+  local line value="" count=0
+  while IFS= read -r line || [[ -n $line ]]; do
+    [[ $line =~ ^[[:space:]]*${key}[[:space:]]*=(.*)$ ]] || continue
+    trim_unit_value value "${BASH_REMATCH[1]}"
+    count=$((count + 1))
+  done <<< "$unit_text"
+  (( count <= 1 )) || die "Legacy unit содержит несколько $key; effective-значение неоднозначно."
+  if (( required )) && (( count != 1 || ${#value} == 0 )); then
+    die "Legacy unit содержит пустой или отсутствующий $key."
+  fi
+  printf -v "$destination_var" '%s' "$value"
+}
+
+resolve_legacy_service_identity() {
+  local unit_text=$1 dynamic_user effective_user effective_group effective_dynamic
+  local passwd_entry passwd_uid passwd_gid uid_min group_entry group_gid
+  local -a passwd_fields=() group_fields=()
+  systemctl is-active --quiet "$SERVICE_NAME" ||
+    die "Legacy unit $SERVICE_NAME должен быть active для безопасной миграции."
+  parse_single_unit_value "$unit_text" User SERVICE_USER
+  parse_single_unit_value "$unit_text" Group SERVICE_GROUP
+  parse_single_unit_value "$unit_text" DynamicUser dynamic_user 0
+  [[ ${dynamic_user,,} != yes && ${dynamic_user,,} != true && ${dynamic_user:-0} != 1 ]] ||
+    die "Legacy unit использует DynamicUser; постоянный владелец данных неизвестен."
+  [[ $SERVICE_USER =~ ^[a-z_][a-z0-9_-]*$ ]] ||
+    die "Legacy unit содержит неизвестный или небезопасный User=$SERVICE_USER."
+  [[ $SERVICE_GROUP =~ ^[a-z_][a-z0-9_-]*$ ]] ||
+    die "Legacy unit содержит неизвестный или небезопасный Group=$SERVICE_GROUP."
+  effective_user=$(systemctl show "$SERVICE_NAME" --property=User --value 2>/dev/null || true)
+  effective_group=$(systemctl show "$SERVICE_NAME" --property=Group --value 2>/dev/null || true)
+  effective_dynamic=$(systemctl show "$SERVICE_NAME" --property=DynamicUser --value 2>/dev/null || true)
+  [[ $effective_user == "$SERVICE_USER" && $effective_group == "$SERVICE_GROUP" ]] ||
+    die "Effective User/Group legacy unit не совпадают с проверенным unit-файлом."
+  [[ ${effective_dynamic,,} != yes && ${effective_dynamic,,} != true && ${effective_dynamic:-0} != 1 ]] ||
+    die "Effective legacy unit использует DynamicUser."
+  passwd_entry=$(getent passwd "$SERVICE_USER" 2>/dev/null || true)
+  [[ -n $passwd_entry && $passwd_entry != *$'\n'* ]] ||
+    die "User=$SERVICE_USER из legacy unit отсутствует."
+  IFS=: read -r -a passwd_fields <<< "$passwd_entry"
+  passwd_uid=${passwd_fields[2]:-}
+  passwd_gid=${passwd_fields[3]:-}
+  [[ ${passwd_fields[0]:-} == "$SERVICE_USER" && $passwd_uid =~ ^[0-9]+$ && $passwd_gid =~ ^[0-9]+$ ]] ||
+    die "Не удалось однозначно определить uid/gid User=$SERVICE_USER."
+  if (( TEST_MODE )); then
+    (( passwd_uid == EUID )) || die "Test legacy User=$SERVICE_USER не совпадает с uid тестового процесса."
+  else
+    uid_min=$(awk '$1 == "UID_MIN" && $2 ~ /^[0-9]+$/ {print $2; exit}' /etc/login.defs 2>/dev/null || true)
+    [[ -n $uid_min ]] || uid_min=1000
+    [[ $uid_min =~ ^[1-9][0-9]*$ ]] || die "Не удалось определить границу системных uid."
+    (( passwd_uid > 0 && passwd_uid < uid_min )) ||
+      die "User=$SERVICE_USER (uid=$passwd_uid) не является системным."
+  fi
+  group_entry=$(getent group "$SERVICE_GROUP" 2>/dev/null || true)
+  [[ -n $group_entry && $group_entry != *$'\n'* ]] ||
+    die "Group=$SERVICE_GROUP из legacy unit отсутствует."
+  IFS=: read -r -a group_fields <<< "$group_entry"
+  group_gid=${group_fields[2]:-}
+  [[ ${group_fields[0]:-} == "$SERVICE_GROUP" && $group_gid =~ ^[0-9]+$ ]] ||
+    die "Не удалось однозначно определить gid Group=$SERVICE_GROUP."
+  LEGACY_SERVICE_UID=$passwd_uid
+  LEGACY_SERVICE_GID=$group_gid
+}
+
+validate_legacy_ownership() {
+  local root_owner root_mode pocketbase_owner pocketbase_mode permissions unsafe_path owner mode
+  root_owner=$(stat -c '%u' "$LEGACY_ROOT")
+  root_mode=$(stat -c '%a' "$LEGACY_ROOT")
+  [[ $root_mode =~ ^[0-7]{3,4}$ ]] || die "Не удалось проверить права legacy-root."
+  permissions=$((8#$root_mode))
+  (( root_owner == 0 || root_owner == LEGACY_SERVICE_UID )) ||
+    die "Legacy-root принадлежит uid=$root_owner, не связанному с User=$SERVICE_USER (uid=$LEGACY_SERVICE_UID)."
+  (( (permissions & 0022) == 0 )) ||
+    die "Legacy-root доступен на запись группе или остальным (mode $root_mode)."
+  pocketbase_owner=$(stat -c '%u' "$LEGACY_ROOT/pocketbase")
+  pocketbase_mode=$(stat -c '%a' "$LEGACY_ROOT/pocketbase")
+  [[ $pocketbase_mode =~ ^[0-7]{3,4}$ ]] || die "Не удалось проверить права legacy pocketbase."
+  permissions=$((8#$pocketbase_mode))
+  (( pocketbase_owner == 0 || pocketbase_owner == LEGACY_SERVICE_UID )) ||
+    die "Legacy pocketbase принадлежит постороннему uid=$pocketbase_owner."
+  (( (permissions & 0022) == 0 )) ||
+    die "Legacy pocketbase доступен на запись группе или остальным (mode $pocketbase_mode)."
+  unsafe_path=$(find "$LEGACY_ROOT/pb_data" -xdev ! -uid "$LEGACY_SERVICE_UID" -print -quit) ||
+    die "Не удалось полностью проверить владельцев legacy pb_data."
+  if [[ -n $unsafe_path ]]; then
+    owner=$(stat -c '%u' "$unsafe_path" 2>/dev/null || printf unknown)
+    die "Небезопасный владелец файла базы $unsafe_path: uid=$owner, ожидается $LEGACY_SERVICE_UID."
+  fi
+  unsafe_path=$(find "$LEGACY_ROOT/pb_data" -xdev -perm -0002 -print -quit) ||
+    die "Не удалось полностью проверить права legacy pb_data."
+  if [[ -n $unsafe_path ]]; then
+    mode=$(stat -c '%a' "$unsafe_path" 2>/dev/null || printf unknown)
+    die "Файл базы доступен на запись остальным: $unsafe_path (mode $mode)."
+  fi
+  log "Legacy ownership: root uid=$root_owner; service=$SERVICE_USER:$SERVICE_GROUP ($LEGACY_SERVICE_UID:$LEGACY_SERVICE_GID); pocketbase uid=$pocketbase_owner; pb_data принадлежит service."
 }
 
 path_is_below() {
@@ -204,6 +307,8 @@ validate_legacy_layout() {
   validate_listen_host "$LISTEN_HOST"
   validate_port "$PORT"
   unit_text=$(systemctl cat "$SERVICE_NAME") || die "systemd не видит unit $SERVICE_NAME."
+  resolve_legacy_service_identity "$unit_text"
+  validate_legacy_ownership
   count=$(grep -Fxc -- "$expected_exec" <<< "$unit_text" || true)
   (( count == 1 )) || die "Загруженный systemd unit не совпадает с проверенным legacy unit."
   if grep '^ExecStart=' <<< "$unit_text" | grep -Fvx -- "$expected_exec" | grep -q .; then
@@ -560,6 +665,12 @@ mv "$WORK_DIR/repository.git" "$INSTALL_ROOT/app/repository.git"
 NEW_RELEASE="$INSTALL_ROOT/releases/$RELEASE_ID"
 [[ ! -e $NEW_RELEASE && ! -L $NEW_RELEASE ]] || die "Release уже существует: $NEW_RELEASE"
 mv "$RELEASE_STAGING" "$NEW_RELEASE"
+if (( TEST_MODE )); then
+  chown -R "$(id -u):$(id -g)" "$INSTALL_ROOT" "$INSTALL_ROOT/app" "$INSTALL_ROOT/releases"
+else
+  chown root:root "$INSTALL_ROOT" "$INSTALL_ROOT/app" "$INSTALL_ROOT/releases"
+  chown -R root:root "$INSTALL_ROOT/app/repository.git" "$NEW_RELEASE"
+fi
 
 STAGE=data-relocation
 if (( KEEP_LEGACY )); then
@@ -589,6 +700,9 @@ fi
 CONFIG_CREATED=1
 install -m 0600 "$WORK_DIR/deployment.env" "$CONFIG_DIR/deployment.env"
 install -m 0600 "$WORK_DIR/deployment.env" "$INSTALL_ROOT/shared/deployment.env"
+if (( ! TEST_MODE )); then
+  chown root:root "$CONFIG_DIR/deployment.env" "$INSTALL_ROOT/shared/deployment.env"
+fi
 
 STAGE=production-migrations
 apply_migrations "$NEW_RELEASE"
