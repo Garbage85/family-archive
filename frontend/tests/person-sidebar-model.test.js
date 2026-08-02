@@ -60,8 +60,8 @@ test('preparePersonSidebarData prepares facts and resolves relatives', () => {
   );
   assert.equal(result.relationGroups[0].people[0].roleLabel, 'Отец');
   assert.equal(result.relationGroups[0].people[0].relationType, 'biological');
-  assert.equal(result.relationGroups[1].label, 'Супруг');
-  assert.equal(result.relationGroups[1].people[0].roleLabel, 'Супруг(а)');
+  assert.equal(result.relationGroups[1].label, 'Супруг(а)');
+  assert.equal(result.relationGroups[1].people[0].roleLabel, '');
 });
 
 test('preparePersonSidebarData removes empty and null-like labels', () => {
@@ -119,11 +119,42 @@ test('preparePersonSidebarData shows maiden name only for a woman', () => {
   );
 
   assert.equal(woman.fields.find((field) => field.key === 'maiden_name').value, 'Петрова');
+  assert.deepEqual(
+    woman.fields.slice(0, 2).map((field) => [field.key, field.label]),
+    [
+      ['maiden_name', 'Девичья фамилия'],
+      ['last_name', 'Текущая фамилия, если менялась'],
+    ],
+  );
+  assert.equal(woman.fullName, 'Иванова (Петрова)');
   assert.equal(
     man.fields.some((field) => field.key === 'maiden_name'),
     false,
   );
   assert.equal(man.values.maiden_name, 'Петров');
+});
+
+test('woman with only maiden_name is displayed and remains editable without a current surname', () => {
+  const result = preparePersonSidebarData(
+    [
+      {
+        id: 'woman',
+        data: {
+          gender: 'F',
+          maiden_name: 'Сапожникова',
+          last_name: '',
+          first_name: 'Алиса',
+          middle_name: 'Алексеевна',
+        },
+        rels: {},
+      },
+    ],
+    'woman',
+  );
+
+  assert.equal(result.fullName, 'Сапожникова Алиса Алексеевна');
+  assert.equal(result.values.maiden_name, 'Сапожникова');
+  assert.equal(result.values.last_name, '');
 });
 
 test('preparePersonSidebarData keeps same-gender parents and labels every relationship', () => {
@@ -160,9 +191,63 @@ test('preparePersonSidebarData keeps same-gender parents and labels every relati
   assert.equal(spouses.label, 'Супруги');
   assert.deepEqual(
     spouses.people.map((person) => person.roleLabel),
-    ['Супруга', 'Супруг', 'Супруг(а)'],
+    ['', '', ''],
   );
   assert.deepEqual(source, snapshot);
+});
+
+test('single wife uses one section title and unified current-and-maiden surname format', () => {
+  const result = preparePersonSidebarData(
+    [
+      {
+        id: 'husband',
+        data: { first_name: 'Алексей', gender: 'M' },
+        rels: { spouses: ['wife'] },
+      },
+      {
+        id: 'wife',
+        data: {
+          first_name: 'Елена',
+          middle_name: 'Юрьевна',
+          last_name: 'Сапожникова',
+          maiden_name: 'Иванова',
+          gender: 'F',
+        },
+        rels: { spouses: ['husband'] },
+      },
+    ],
+    'husband',
+  );
+  const spouses = result.relationGroups.find((group) => group.key === 'spouses');
+
+  assert.equal(spouses.label, 'Супруга');
+  assert.equal(spouses.people[0].roleLabel, '');
+  assert.equal(spouses.people[0].name, 'Сапожникова (Иванова) Елена Юрьевна');
+});
+
+test('single husband has no repeated role while parents retain father and mother labels', () => {
+  const result = preparePersonSidebarData(
+    [
+      {
+        id: 'wife',
+        data: { first_name: 'Елена', gender: 'F' },
+        rels: { spouses: ['husband'], parents: ['father', 'mother'] },
+      },
+      { id: 'husband', data: { first_name: 'Алексей', gender: 'M' }, rels: {} },
+      { id: 'father', data: { first_name: 'Иван', gender: 'M' }, rels: {} },
+      { id: 'mother', data: { first_name: 'Анна', gender: 'F' }, rels: {} },
+    ],
+    'wife',
+  );
+  const spouses = result.relationGroups.find((group) => group.key === 'spouses');
+  const parents = result.relationGroups.find((group) => group.key === 'parents');
+
+  assert.equal(spouses.label, 'Супруг');
+  assert.equal(spouses.people[0].roleLabel, '');
+  assert.deepEqual(
+    parents.people.map((person) => person.roleLabel),
+    ['Отец', 'Мать'],
+  );
 });
 
 test('preparePersonSidebarData returns null for an unknown selection', () => {

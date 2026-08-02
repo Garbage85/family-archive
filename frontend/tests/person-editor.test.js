@@ -258,6 +258,8 @@ test('autofill field state is never stored in the person data', () => {
       first_name: 'Дочь',
       middle_name: 'Ивановна',
       fieldSources: { middle_name: 'suggested' },
+      warnings: ['служебное предупреждение'],
+      confidence: 'low',
     },
     links: [],
   });
@@ -265,6 +267,8 @@ test('autofill field state is never stored in the person data', () => {
 
   assert.equal(relative.data.middle_name, 'Ивановна');
   assert.equal(Object.hasOwn(relative.data, 'fieldSources'), false);
+  assert.equal(Object.hasOwn(relative.data, 'warnings'), false);
+  assert.equal(Object.hasOwn(relative.data, 'confidence'), false);
   assert.deepEqual(Object.keys(relative.rels).sort(), ['children', 'parents', 'spouses']);
 });
 

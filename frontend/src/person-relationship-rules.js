@@ -30,22 +30,12 @@ export function getSpouseRoleLabel(person) {
   return 'Супруг(а)';
 }
 
-export function getSpouseSectionLabel(selectedPerson, spouseCount) {
-  const gender = normalisedGender(selectedPerson);
-  if (spouseCount > 1) {
-    return gender === 'M' ? 'Супруги' : 'Супруги и партнёры';
-  }
-  if (gender === 'M') return 'Супруга';
-  if (gender === 'F') return 'Супруг';
-  return 'Супруг(а)';
+export function getSpouseSectionLabel(spouse, spouseCount) {
+  if (spouseCount > 1) return 'Супруги';
+  return getSpouseRoleLabel(spouse);
 }
 
 export function shouldShowMaidenName(person) {
   const data = personData(person);
   return normalisedGender(data) === 'F' && Boolean(cleanText(data.maiden_name));
-}
-
-export function getInitialMaidenName(person) {
-  const data = personData(person);
-  return cleanText(data.maiden_name) || cleanText(data.last_name);
 }

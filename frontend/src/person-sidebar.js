@@ -6,7 +6,6 @@ import {
   mergeRelativeDraft,
   resetDraftFieldSuggestion,
 } from './person-autofill.js';
-import { getInitialMaidenName } from './person-relationship-rules.js';
 
 const RELATION_CONFIG = {
   father: { action: 'Отец', label: 'отца', lockGender: true },
@@ -49,7 +48,6 @@ export class PersonSidebar {
     this.relativeContext = null;
     this.eventCleanups = [];
     this.viewportCleanups = [];
-    this.maidenNameFormStates = new WeakMap();
     this.renderShell();
     this.zoomGuard = new SidebarZoomGuard(this.sidebar);
     this.bindEvents();
@@ -81,8 +79,8 @@ export class PersonSidebar {
           <form id="person-sidebar-edit-form" class="hidden" data-sidebar-panel="edit">
             <h2 tabindex="-1">Изменить сведения</h2>
             <div class="person-sidebar-form-grid">
-              <label>Фамилия<input name="last_name" autocomplete="family-name" /></label>
               <label class="hidden" data-maiden-name-field>Девичья фамилия<input name="maiden_name" /></label>
+              <label data-last-name-field><span data-last-name-label>Фамилия</span><input name="last_name" autocomplete="family-name" /></label>
               <label>Имя<input name="first_name" autocomplete="given-name" required /></label>
               <label>Отчество<input name="middle_name" /></label>
               <fieldset class="person-sidebar-gender"><legend>Пол</legend><label><input type="radio" name="gender" value="M" /> Мужчина</label><label><input type="radio" name="gender" value="F" /> Женщина</label><label><input type="radio" name="gender" value="" /> Не указан</label></fieldset>
@@ -108,21 +106,21 @@ export class PersonSidebar {
             <h2 tabindex="-1" data-sidebar-relative-title>Добавить родственника</h2>
             <input name="relative_type" type="hidden" />
             <div class="person-sidebar-form-grid">
-              <div class="person-sidebar-autofill-field" data-autofill-control="last_name">
-                <label>Фамилия<input name="last_name" /></label>
-                <div class="person-sidebar-autofill-meta"><span data-autofill-badge>Предложено автоматически</span><button type="button" data-autofill-reset="last_name">Сбросить подсказку</button></div>
-              </div>
               <div class="person-sidebar-autofill-field hidden" data-maiden-name-field data-autofill-control="maiden_name">
                 <label>Девичья фамилия<input name="maiden_name" /></label>
-                <div class="person-sidebar-autofill-meta"><span data-autofill-badge>Предложено автоматически</span><button type="button" data-autofill-reset="maiden_name">Сбросить подсказку</button></div>
+                <div class="person-sidebar-autofill-meta"><span class="hidden" data-autofill-badge>Предложено автоматически</span><button class="hidden" type="button" data-autofill-reset="maiden_name">Сбросить подсказку</button></div>
+              </div>
+              <div class="person-sidebar-autofill-field" data-last-name-field data-autofill-control="last_name">
+                <label><span data-last-name-label>Фамилия</span><input name="last_name" /></label>
+                <div class="person-sidebar-autofill-meta"><span class="hidden" data-autofill-badge>Предложено автоматически</span><button class="hidden" type="button" data-autofill-reset="last_name">Сбросить подсказку</button></div>
               </div>
               <div class="person-sidebar-autofill-field" data-autofill-control="first_name">
                 <label>Имя<input name="first_name" required /></label>
-                <div class="person-sidebar-autofill-meta"><span data-autofill-badge>Предложено автоматически</span><button type="button" data-autofill-reset="first_name">Сбросить подсказку</button></div>
+                <div class="person-sidebar-autofill-meta"><span class="hidden" data-autofill-badge>Предложено автоматически</span><button class="hidden" type="button" data-autofill-reset="first_name">Сбросить подсказку</button></div>
               </div>
               <div class="person-sidebar-autofill-field" data-autofill-control="patronymic">
                 <label>Отчество<input name="middle_name" /></label>
-                <div class="person-sidebar-autofill-meta"><span data-autofill-badge>Предложено автоматически</span><button type="button" data-autofill-reset="patronymic">Сбросить подсказку</button></div>
+                <div class="person-sidebar-autofill-meta"><span class="hidden" data-autofill-badge>Предложено автоматически</span><button class="hidden" type="button" data-autofill-reset="patronymic">Сбросить подсказку</button></div>
               </div>
               <fieldset class="person-sidebar-gender"><legend>Пол</legend><label><input type="radio" name="gender" value="M" /> Мужчина</label><label><input type="radio" name="gender" value="F" /> Женщина</label><label><input type="radio" name="gender" value="" /> Не указан</label></fieldset>
               <label class="full">Дата рождения<input name="birth_date" type="date" /></label>
@@ -228,15 +226,11 @@ export class PersonSidebar {
       this.requestFrame(() => this.scrollControlIntoView(event.target));
     });
 
-    this.maidenNameFormStates.set(this.editForm, { initialised: false });
-    listen(this.editForm.elements.maiden_name, 'input', () => {
-      this.maidenNameFormStates.get(this.editForm).initialised = true;
-    });
     listen(this.editForm, 'change', (event) => {
       if (!event.target.matches('[name="gender"]')) return;
-      this.updateMaidenNameField(this.editForm, { genderChanged: true });
+      this.updateSurnameFieldPresentation(this.editForm);
     });
-    this.updateMaidenNameField(this.editForm);
+    this.updateSurnameFieldPresentation(this.editForm);
 
     listen(this.relativeForm, 'input', (event) => {
       const field = AUTOFILL_FIELD_NAMES[event.target.name];
@@ -366,7 +360,7 @@ export class PersonSidebar {
       input.checked = input.value === this.relativeDraft.person.gender;
     }
     for (const field of Object.values(AUTOFILL_FIELD_NAMES)) this.renderAutofillFieldState(field);
-    this.updateRelativeMaidenVisibility();
+    this.updateSurnameFieldPresentation(this.relativeForm);
     this.renderRelativeLinks();
     this.renderRelativeWarnings();
   }
@@ -401,11 +395,6 @@ export class PersonSidebar {
     const freshDraft = this.buildFreshRelativeDraft();
     this.relativeDraft = mergeRelativeDraft(this.relativeDraft, freshDraft);
     this.applyRelativeDraft();
-  }
-
-  updateRelativeMaidenVisibility() {
-    const field = this.relativeForm.querySelector('[data-maiden-name-field]');
-    field.classList.toggle('hidden', this.relativeForm.elements.gender.value !== 'F');
   }
 
   renderRelativeLinks() {
@@ -582,26 +571,15 @@ export class PersonSidebar {
       (input) => input.value === genderValue,
     );
     if (gender) gender.checked = true;
-    this.maidenNameFormStates.set(this.editForm, { initialised: false });
-    this.updateMaidenNameField(this.editForm);
+    this.updateSurnameFieldPresentation(this.editForm);
   }
 
-  updateMaidenNameField(form, { genderChanged = false } = {}) {
+  updateSurnameFieldPresentation(form) {
     const maidenNameField = form.querySelector('[data-maiden-name-field]');
-    const maidenNameInput = form.elements.maiden_name;
-    const selectedGender = form.elements.gender.value;
-    const isFemale = selectedGender === 'F';
-    const state = this.maidenNameFormStates.get(form);
-
-    if (genderChanged && isFemale && !state.initialised) {
-      maidenNameInput.value = getInitialMaidenName({
-        last_name: form.elements.last_name.value,
-        maiden_name: maidenNameInput.value,
-      });
-      state.initialised = true;
-    }
-
+    const isFemale = form.elements.gender.value === 'F';
     maidenNameField.classList.toggle('hidden', !isFemale);
+    const label = form.querySelector('[data-last-name-label]');
+    if (label) label.textContent = isFemale ? 'Текущая фамилия, если менялась' : 'Фамилия';
   }
 
   populatePhotoForm() {

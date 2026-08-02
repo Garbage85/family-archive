@@ -1,7 +1,11 @@
 import * as f3 from 'family-chart';
 import 'family-chart/styles/family-chart.css';
-import { formatPersonCardBirthDate, formatPersonCardName } from '../person-card-formatters.js';
-import { cloneTree, normaliseTree, personName } from '../tree-utils.js';
+import {
+  formatPersonCardBirthDate,
+  formatPersonCardName,
+  formatPersonName,
+} from '../person-card-formatters.js';
+import { cloneTree, normaliseTree } from '../tree-utils.js';
 
 export class FamilyTreeChart {
   constructor(containerSelector) {
@@ -45,7 +49,7 @@ export class FamilyTreeChart {
         this.select(person.id);
       });
 
-    this.chart.setPersonDropdown((datum) => personName(datum), {
+    this.chart.setPersonDropdown((datum) => formatPersonName(datum), {
       cont: searchHost,
       placeholder: 'Найти человека',
       onSelect: (id) => {

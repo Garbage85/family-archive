@@ -1,3 +1,5 @@
+import { formatPersonName } from './person-card-formatters.js';
+
 export const ROLE_LABELS = {
   viewer: 'Просмотр',
   member: 'Участник',
@@ -11,12 +13,7 @@ export function cloneTree(data) {
 }
 
 export function personName(person) {
-  const parts = [
-    person?.data?.last_name,
-    person?.data?.first_name,
-    person?.data?.middle_name,
-  ].filter(Boolean);
-  return parts.join(' ') || 'Без имени';
+  return formatPersonName(person);
 }
 
 function normaliseGender(value) {
