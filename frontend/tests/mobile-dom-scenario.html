@@ -17,7 +17,36 @@
   <body>
     <header class="topbar app-ui-chrome" data-ui-chrome>Панель приложения</header>
     <nav class="toolbar app-ui-chrome" data-ui-chrome>
-      <div id="search-host"></div>
+      <div id="search-host" class="search-host">
+        <input type="search" placeholder="Найти человека" />
+      </div>
+      <div class="toolbar-menu-shell">
+        <button
+          id="toolbar-menu-button"
+          class="ghost toolbar-icon-button"
+          type="button"
+          aria-label="Открыть меню инструментов"
+          aria-haspopup="menu"
+          aria-expanded="false"
+          aria-controls="toolbar-menu"
+        >
+          ⋮
+        </button>
+        <div id="toolbar-menu" class="toolbar-menu" role="menu" aria-label="Инструменты дерева">
+          <button class="ghost" type="button" role="menuitem">Показать всё</button>
+          <button class="ghost" type="button" role="menuitem">Горизонтально</button>
+          <button class="ghost" type="button" role="menuitem">Экспорт</button>
+        </div>
+      </div>
+      <button
+        id="save-button"
+        class="primary save-button"
+        type="button"
+        aria-label="Сохранить изменения"
+      >
+        <span class="save-button-icon" aria-hidden="true">✓</span
+        ><span class="save-button-label">Сохранить</span>
+      </button>
     </nav>
     <div id="FamilyChart" class="f3 chart-surface" data-tree-canvas></div>
     <div id="person-sidebar-host"></div>
@@ -26,11 +55,35 @@
       import { applyPersonAction } from '/src/person-editor.js';
       import { PersonSidebar } from '/src/person-sidebar.js';
       import { SidebarZoomGuard } from '/src/sidebar-zoom-guard.js';
+      import { setupToolbarMenu } from '/src/ui.js';
 
       void (async () => {
         const checks = [];
         const check = (name, passed, details = '') => checks.push({ name, passed, details });
         const frame = () => new Promise((resolve) => setTimeout(resolve, 20));
+        const toolbarMenu = setupToolbarMenu(document);
+
+        const toolbar = document.querySelector('.toolbar');
+        const searchInput = document.querySelector('#search-host input');
+        check(
+          'mobile toolbar has no horizontal overflow',
+          toolbar.scrollWidth <= toolbar.clientWidth && document.body.scrollWidth <= innerWidth,
+          `${toolbar.scrollWidth}/${toolbar.clientWidth}; body ${document.body.scrollWidth}/${innerWidth}`,
+        );
+        check(
+          'mobile search remains readable',
+          parseFloat(getComputedStyle(searchInput).fontSize) >= 16 &&
+            searchInput.clientWidth >= 128,
+          `${getComputedStyle(searchInput).fontSize}; ${searchInput.clientWidth}px`,
+        );
+        document.querySelector('#toolbar-menu-button').click();
+        const menuRect = document.querySelector('#toolbar-menu').getBoundingClientRect();
+        check(
+          'mobile menu opens inside the viewport',
+          toolbarMenu.open && menuRect.left >= 0 && menuRect.right <= innerWidth,
+        );
+        document.body.dispatchEvent(new Event('click', { bubbles: true }));
+        check('outside click closes mobile menu', !toolbarMenu.open);
 
         const viewModel = {
           id: 'child',
@@ -180,6 +233,7 @@
         );
 
         chromeGuard.destroy();
+        toolbarMenu.destroy();
         sidebar.destroy();
         check(
           'destroy removes document lock and gesture handlers',

@@ -29,11 +29,16 @@ export function renderShell(root) {
         </header>
         <nav class="toolbar app-ui-chrome" data-ui-chrome>
           <div id="search-host" class="search-host"></div>
-          <button id="fit-button" class="ghost">Показать всё</button>
-          <button id="orientation-button" class="ghost">Горизонтально</button>
-          <button id="export-button" class="ghost">Экспорт</button>
-          <button id="proposals-button" class="ghost hidden">Предложения <span id="proposal-count"></span></button>
-          <button id="save-button" class="primary" disabled>Сохранено</button>
+          <div class="toolbar-menu-shell">
+            <button id="toolbar-menu-button" class="ghost toolbar-icon-button" type="button" aria-label="Открыть меню инструментов" aria-haspopup="menu" aria-expanded="false" aria-controls="toolbar-menu">⋮</button>
+            <div id="toolbar-menu" class="toolbar-menu" role="menu" aria-label="Инструменты дерева">
+              <button id="fit-button" class="ghost" type="button" role="menuitem">Показать всё</button>
+              <button id="orientation-button" class="ghost" type="button" role="menuitem">Горизонтально</button>
+              <button id="export-button" class="ghost" type="button" role="menuitem">Экспорт</button>
+              <button id="proposals-button" class="ghost hidden" type="button" role="menuitem">Предложения <span id="proposal-count"></span></button>
+            </div>
+          </div>
+          <button id="save-button" class="primary save-button" type="button" aria-label="Сохранить изменения" disabled><span class="save-button-icon" aria-hidden="true">✓</span><span class="save-button-label">Сохранено</span></button>
         </nav>
         <div id="status-line" class="status-line app-ui-chrome" data-ui-chrome role="status"></div>
         <div id="FamilyChart" class="f3 chart-surface" data-tree-canvas></div>
@@ -62,18 +67,107 @@ export function setStatus(message, tone = 'normal') {
   el.textContent = message || '';
   el.dataset.tone = tone;
 }
-export function setSaveState({ dirty, role, busy = false, previewMode = false }) {
+export function setSaveState({ dirty, role, busy = false, previewMode = false, outcome = 'idle' }) {
   const b = document.querySelector('#save-button');
-  if (role === 'viewer' || previewMode) return b.classList.add('hidden');
-  b.classList.remove('hidden');
+  const hidden = role === 'viewer' || previewMode;
+  b.classList.toggle('hidden', hidden);
+  b.setAttribute('aria-hidden', String(hidden));
+  if (hidden) {
+    b.disabled = true;
+    return;
+  }
+
+  const state = busy
+    ? 'busy'
+    : outcome === 'error'
+      ? 'error'
+      : outcome === 'success'
+        ? 'success'
+        : 'idle';
+  const action = role === 'member' ? 'propose' : 'save';
+  const label = busy
+    ? role === 'member'
+      ? 'Отправляю…'
+      : 'Сохраняю…'
+    : outcome === 'error'
+      ? 'Повторить'
+      : !dirty
+        ? 'Сохранено'
+        : role === 'admin'
+          ? 'Сохранить'
+          : 'Предложить';
+
   b.disabled = !dirty || busy;
-  b.textContent = busy
-    ? 'Сохраняю…'
-    : !dirty
-      ? 'Сохранено'
-      : role === 'admin'
-        ? 'Сохранить'
-        : 'Предложить';
+  b.dataset.action = action;
+  b.dataset.state = state;
+  b.setAttribute(
+    'aria-label',
+    action === 'propose' ? 'Отправить предложение' : 'Сохранить изменения',
+  );
+  b.title = busy
+    ? label
+    : outcome === 'error'
+      ? 'Не удалось сохранить. Повторить'
+      : outcome === 'success'
+        ? role === 'member'
+          ? 'Предложение отправлено'
+          : 'Изменения сохранены'
+        : action === 'propose'
+          ? 'Отправить предложение'
+          : 'Сохранить изменения';
+  b.querySelector('.save-button-icon').textContent = busy ? '…' : outcome === 'error' ? '!' : '✓';
+  b.querySelector('.save-button-label').textContent = label;
+}
+
+export function setupToolbarMenu(doc = document) {
+  const button = doc.querySelector('#toolbar-menu-button');
+  const menu = doc.querySelector('#toolbar-menu');
+  let open = false;
+
+  const setOpen = (nextOpen, { returnFocus = false } = {}) => {
+    open = nextOpen;
+    menu.classList.toggle('is-open', open);
+    button.setAttribute('aria-expanded', String(open));
+    if (open) {
+      const firstItem = [...menu.querySelectorAll('button')].find(
+        (item) => !item.classList.contains('hidden') && !item.disabled,
+      );
+      firstItem?.focus();
+    } else if (returnFocus) {
+      button.focus();
+    }
+  };
+  const onButtonClick = () => setOpen(!open);
+  const onMenuClick = (event) => {
+    if (event.target.closest('button')) setOpen(false);
+  };
+  const onDocumentClick = (event) => {
+    if (open && !button.contains(event.target) && !menu.contains(event.target)) setOpen(false);
+  };
+  const onDocumentKeydown = (event) => {
+    if (open && event.key === 'Escape') {
+      event.preventDefault();
+      setOpen(false, { returnFocus: true });
+    }
+  };
+
+  button.addEventListener('click', onButtonClick);
+  menu.addEventListener('click', onMenuClick);
+  doc.addEventListener('click', onDocumentClick);
+  doc.addEventListener('keydown', onDocumentKeydown);
+
+  return {
+    get open() {
+      return open;
+    },
+    close: (options) => setOpen(false, options),
+    destroy() {
+      button.removeEventListener('click', onButtonClick);
+      menu.removeEventListener('click', onMenuClick);
+      doc.removeEventListener('click', onDocumentClick);
+      doc.removeEventListener('keydown', onDocumentKeydown);
+    },
+  };
 }
 
 export function renderProposals(proposals, currentTree, handlers) {

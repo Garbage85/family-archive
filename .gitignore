@@ -4,6 +4,7 @@ pb_backups/
 pb_public/
 .env
 .env.*
+config/deployment.env
 *.zip
 *.tar.gz
 *.log

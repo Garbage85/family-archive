@@ -17,10 +17,19 @@ import { preparePersonSidebarData } from './person-sidebar-model.js';
 import { PersonSidebar } from './person-sidebar.js';
 import { SidebarZoomGuard } from './sidebar-zoom-guard.js';
 import { cloneTree, diffTrees, downloadJson, validateTree } from './tree-utils.js';
-import { renderProposals, renderShell, setSaveState, setStatus, showApp, showLogin } from './ui.js';
+import {
+  renderProposals,
+  renderShell,
+  setSaveState,
+  setStatus,
+  setupToolbarMenu,
+  showApp,
+  showLogin,
+} from './ui.js';
 
 const root = document.querySelector('#app');
 renderShell(root);
+setupToolbarMenu(document);
 const chart = new FamilyTreeChart('#FamilyChart');
 const personSidebar = new PersonSidebar(document.querySelector('#person-sidebar-host'));
 const chromeZoomGuards = [...document.querySelectorAll('[data-ui-chrome]')].map(
@@ -32,7 +41,8 @@ let user = null,
 let dirty = false,
   busy = false,
   pendingProposals = [],
-  previewMode = false;
+  previewMode = false,
+  saveOutcome = 'idle';
 
 function setChromeZoomGuardActive(active) {
   for (const guard of chromeZoomGuards) {
@@ -42,14 +52,21 @@ function setChromeZoomGuardActive(active) {
 }
 
 function updateSaveButton() {
-  setSaveState({ dirty, role: user?.role || 'viewer', busy, previewMode });
+  setSaveState({ dirty, role: user?.role || 'viewer', busy, previewMode, outcome: saveOutcome });
 }
-function setDirty(value) {
+function setDirty(value, { outcome = value ? 'idle' : 'success' } = {}) {
   dirty = value;
+  saveOutcome = outcome;
   updateSaveButton();
   setStatus(
-    value ? 'Есть несохранённые изменения.' : 'Все изменения сохранены.',
-    value ? 'warning' : 'normal',
+    value
+      ? 'Есть несохранённые изменения.'
+      : outcome === 'success'
+        ? user?.role === 'member'
+          ? 'Предложение отправлено.'
+          : 'Изменения сохранены.'
+        : 'Все изменения сохранены.',
+    value ? 'warning' : outcome === 'success' ? 'success' : 'normal',
   );
 }
 function updateMeta() {
@@ -58,9 +75,6 @@ function updateMeta() {
 }
 function configureRoleUi() {
   document.querySelector('#proposals-button').classList.toggle('hidden', user.role !== 'admin');
-  document
-    .querySelector('#save-button')
-    .classList.toggle('hidden', !canEditPeople(user.role, previewMode));
 }
 
 function getSidebarView(personId) {
@@ -131,6 +145,7 @@ async function enterApplication(authUser) {
   workingData = cloneTree(tree.data);
   dirty = false;
   previewMode = false;
+  saveOutcome = 'idle';
   await applyKnownProfile();
   showApp(user, tree);
   setChromeZoomGuardActive(true);
@@ -178,6 +193,8 @@ async function handleSave() {
     setDirty(false);
     updateMeta();
   } catch (error) {
+    saveOutcome = 'error';
+    updateSaveButton();
     setStatus(error.message || 'Не удалось сохранить древо.', 'error');
     alert(error.message || error);
   } finally {
@@ -202,9 +219,11 @@ async function submitProposal(comment) {
     });
     workingData = cloneTree(tree.data);
     mountTree();
-    setDirty(false);
-    setStatus('Предложение отправлено.', 'success');
+    setDirty(false, { outcome: 'success' });
   } catch (error) {
+    saveOutcome = 'error';
+    updateSaveButton();
+    setStatus(error.message || 'Не удалось отправить предложение.', 'error');
     alert(error.message || error);
   } finally {
     busy = false;
@@ -223,6 +242,7 @@ async function handleProposalAction(action, id) {
   if (action === 'preview') {
     previewMode = true;
     dirty = false;
+    saveOutcome = 'idle';
     document.querySelector('#proposals-dialog').close();
     mountTree(proposal.data);
     configureRoleUi();
@@ -240,6 +260,7 @@ async function handleProposalAction(action, id) {
     workingData = cloneTree(tree.data);
     dirty = false;
     previewMode = false;
+    saveOutcome = 'idle';
     mountTree();
     configureRoleUi();
     updateSaveButton();
@@ -273,6 +294,7 @@ document.querySelector('#logout-button').addEventListener('click', () => {
   setChromeZoomGuardActive(false);
   user = tree = null;
   previewMode = false;
+  saveOutcome = 'idle';
   showLogin();
 });
 document.querySelector('#save-button').addEventListener('click', handleSave);

@@ -1,5 +1,5 @@
 [Unit]
-Description=Family Tree PocketBase
+Description=Family Archive PocketBase
 After=network-online.target
 Wants=network-online.target
 
@@ -7,15 +7,23 @@ Wants=network-online.target
 Type=simple
 User=familytree
 Group=familytree
-WorkingDirectory=/opt/family-tree
-ExecStart=/opt/family-tree/pocketbase serve --http=0.0.0.0:8090
+WorkingDirectory=/opt/family-tree/current
+ExecStart=/opt/family-tree/current/pocketbase serve --http=127.0.0.1:8090 --dir=/opt/family-tree/shared/pb_data --publicDir=/opt/family-tree/current/pb_public --migrationsDir=/opt/family-tree/current/pb_migrations --automigrate=false
 Restart=on-failure
 RestartSec=5
 LimitNOFILE=4096
+UMask=0027
 NoNewPrivileges=true
 PrivateTmp=true
-ProtectSystem=full
-ReadWritePaths=/opt/family-tree/pb_data /opt/family-tree/pb_migrations
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+ReadWritePaths=/opt/family-tree/shared/pb_data
 
 [Install]
 WantedBy=multi-user.target
