@@ -155,6 +155,62 @@ function addUnique(list, id) {
   if (!list.includes(id)) list.push(id);
 }
 
+function applyLinkFromNewPerson(data, relative, related, relation) {
+  if (relation === 'parent') {
+    addUnique(relative.rels.parents, related.id);
+    addUnique(related.rels.children, relative.id);
+  } else if (relation === 'child') {
+    addUnique(relative.rels.children, related.id);
+    addUnique(related.rels.parents, relative.id);
+  } else if (relation === 'spouse') {
+    addUnique(relative.rels.spouses, related.id);
+    addUnique(related.rels.spouses, relative.id);
+  } else {
+    throw new Error('Неизвестный тип предлагаемой связи.');
+  }
+}
+
+export function addRelativeWithLinks(tree, personId, relation, values = {}, additionalLinks = []) {
+  const data = normaliseTree(tree);
+  const selected = data.find((item) => item.id === personId);
+  if (!selected) throw new Error('Человек не найден.');
+
+  const uniqueLinks = [];
+  const seenLinks = new Set();
+  for (const item of Array.isArray(additionalLinks) ? additionalLinks : []) {
+    const targetId = String(item?.personId || '');
+    const linkRelation = String(item?.relation || '');
+    const key = `${linkRelation}:${targetId}`;
+    if (!targetId || !['parent', 'child', 'spouse'].includes(linkRelation)) {
+      throw new Error('Предлагаемая связь заполнена неверно.');
+    }
+    if (seenLinks.has(key)) continue;
+    const related = data.find((person) => person.id === targetId);
+    if (!related) throw new Error('Человек для предлагаемой связи не найден.');
+    seenLinks.add(key);
+    uniqueLinks.push({ related, relation: linkRelation });
+  }
+
+  if (relation === 'sibling' && !uniqueLinks.some((item) => item.relation === 'parent')) {
+    throw new Error('Выберите хотя бы одного общего родителя.');
+  }
+  if (!['parent', 'child', 'spouse', 'sibling'].includes(relation)) {
+    throw new Error('Неизвестный тип родства.');
+  }
+
+  const relative = createPerson(values);
+  data.push(relative);
+
+  if (relation === 'parent') applyLinkFromNewPerson(data, relative, selected, 'child');
+  if (relation === 'child') applyLinkFromNewPerson(data, relative, selected, 'parent');
+  if (relation === 'spouse') applyLinkFromNewPerson(data, relative, selected, 'spouse');
+  for (const item of uniqueLinks) {
+    applyLinkFromNewPerson(data, relative, item.related, item.relation);
+  }
+
+  return { data, person: relative };
+}
+
 export function addRelative(tree, personId, relation, values = {}) {
   const data = normaliseTree(tree);
   const person = data.find((item) => item.id === personId);

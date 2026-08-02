@@ -204,6 +204,131 @@ test('generic parent action supports an unknown gender from additional actions',
   assert.deepEqual(parent.rels.children, ['person-1']);
 });
 
+test('an unchecked suggested link is omitted while the required link is created', () => {
+  const spouseTree = [
+    ...baseTree,
+    {
+      id: 'spouse',
+      data: { first_name: 'Супруг', gender: 'M' },
+      rels: { parents: [], spouses: ['person-1'], children: [] },
+    },
+  ];
+  spouseTree[0] = {
+    ...spouseTree[0],
+    rels: { ...spouseTree[0].rels, spouses: ['spouse'] },
+  };
+
+  const result = applyPersonAction(editableState({ data: spouseTree }), {
+    type: 'add-relative',
+    personId: 'person-1',
+    relation: 'daughter',
+    values: { first_name: 'Дочь' },
+    links: [],
+  });
+  const selected = result.data.find((item) => item.id === 'person-1');
+  const relative = result.data.find((item) => item.id === result.createdPersonId);
+
+  assert.ok(selected.rels.children.includes(relative.id));
+  assert.deepEqual(relative.rels.parents, ['person-1']);
+  assert.equal(relative.rels.parents.includes('spouse'), false);
+});
+
+test('checked suggested links are created reciprocally with the new person', () => {
+  const result = applyPersonAction(editableState(), {
+    type: 'add-relative',
+    personId: 'person-1',
+    relation: 'mother',
+    values: { first_name: 'Мария' },
+    links: [{ personId: 'person-2', relation: 'spouse' }],
+  });
+  const relative = result.data.find((item) => item.id === result.createdPersonId);
+  const existingFather = result.data.find((item) => item.id === 'person-2');
+
+  assert.deepEqual(relative.rels.children, ['person-1']);
+  assert.deepEqual(relative.rels.spouses, ['person-2']);
+  assert.ok(existingFather.rels.spouses.includes(relative.id));
+});
+
+test('autofill field state is never stored in the person data', () => {
+  const result = applyPersonAction(editableState(), {
+    type: 'add-relative',
+    personId: 'person-1',
+    relation: 'daughter',
+    values: {
+      first_name: 'Дочь',
+      middle_name: 'Ивановна',
+      fieldSources: { middle_name: 'suggested' },
+    },
+    links: [],
+  });
+  const relative = result.data.find((item) => item.id === result.createdPersonId);
+
+  assert.equal(relative.data.middle_name, 'Ивановна');
+  assert.equal(Object.hasOwn(relative.data, 'fieldSources'), false);
+  assert.deepEqual(Object.keys(relative.rels).sort(), ['children', 'parents', 'spouses']);
+});
+
+test('duplicate suggested links do not create duplicate relationships', () => {
+  const link = { personId: 'person-2', relation: 'parent' };
+  const result = applyPersonAction(editableState(), {
+    type: 'add-relative',
+    personId: 'person-1',
+    relation: 'son',
+    values: { first_name: 'Сын' },
+    links: [link, link],
+  });
+  const relative = result.data.find((item) => item.id === result.createdPersonId);
+  const existingParent = result.data.find((item) => item.id === 'person-2');
+
+  assert.deepEqual(relative.rels.parents, ['person-1', 'person-2']);
+  assert.equal(existingParent.rels.children.filter((id) => id === relative.id).length, 1);
+});
+
+test('sibling creation uses only explicitly selected shared parents', () => {
+  const result = applyPersonAction(editableState(), {
+    type: 'add-relative',
+    personId: 'person-1',
+    relation: 'sister',
+    values: { first_name: 'Сестра' },
+    links: [{ personId: 'person-2', relation: 'parent' }],
+  });
+  const relative = result.data.find((item) => item.id === result.createdPersonId);
+
+  assert.equal(relative.data.gender, 'F');
+  assert.deepEqual(relative.rels.parents, ['person-2']);
+});
+
+test('a failed multi-link action leaves the original local tree unchanged', () => {
+  const snapshot = structuredClone(baseTree);
+
+  assert.throws(
+    () =>
+      applyPersonAction(editableState(), {
+        type: 'add-relative',
+        personId: 'person-1',
+        relation: 'son',
+        values: { first_name: 'Сын' },
+        links: [{ personId: 'missing', relation: 'parent' }],
+      }),
+    /не найден/,
+  );
+  assert.deepEqual(baseTree, snapshot);
+});
+
+test('a sibling cannot be created without a selected shared parent', () => {
+  assert.throws(
+    () =>
+      applyPersonAction(editableState(), {
+        type: 'add-relative',
+        personId: 'person-1',
+        relation: 'brother',
+        values: { first_name: 'Брат' },
+        links: [],
+      }),
+    /Выберите хотя бы одного общего родителя/,
+  );
+});
+
 test('deleting a person removes links and marks the tree dirty', () => {
   const result = applyPersonAction(editableState(), {
     type: 'delete',

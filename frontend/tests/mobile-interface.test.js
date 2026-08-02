@@ -40,13 +40,25 @@ test('viewport remains accessible and sidebar reacts to the visual viewport', as
   assert.match(sidebar, /person-sidebar-document-locked/);
 });
 
-test('sidebar exposes father and mother as primary actions and generic parent as additional', async () => {
+test('sidebar exposes specific relative actions and generic parent as additional', async () => {
   const sidebar = await source('src/person-sidebar.js');
 
-  assert.match(sidebar, /data-sidebar-relation="father">Отца/);
-  assert.match(sidebar, /data-sidebar-relation="mother">Мать/);
+  assert.match(sidebar, /father: \{ action: 'Отец'/);
+  assert.match(sidebar, /mother: \{ action: 'Мать'/);
+  assert.match(sidebar, /son: \{ action: 'Сын'/);
+  assert.match(sidebar, /daughter: \{ action: 'Дочь'/);
+  assert.match(sidebar, /brother: \{ action: 'Брат'/);
+  assert.match(sidebar, /sister: \{ action: 'Сестра'/);
   assert.match(
     sidebar,
     /<details class="person-sidebar-more-actions">[\s\S]*data-sidebar-relation="parent">Другой родитель/,
   );
+});
+
+test('suggested links wrap safely and relative actions remain a compact two-column grid', async () => {
+  const css = await source('src/styles.css');
+
+  assert.match(css, /\.person-sidebar-relation-actions\s*\{[\s\S]*?grid-template-columns: 1fr 1fr/);
+  assert.match(css, /\.person-sidebar-suggestion\s*\{[\s\S]*?minmax\(0, 1fr\)/);
+  assert.match(css, /\.person-sidebar-suggestion\s*\{[\s\S]*?overflow-wrap: anywhere/);
 });
