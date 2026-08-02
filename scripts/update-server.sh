@@ -125,6 +125,7 @@ cutover_health_check() {
 update_failure_rollback() {
   set +e
   warn "Обновление не завершено; возвращаю предыдущее состояние."
+  restore_cli_launchers || warn "Не удалось полностью восстановить прежние CLI launchers."
   if (( PRODUCTION_PHASE_STARTED )); then
     systemctl stop "$SERVICE_NAME" >/dev/null 2>&1 || true
     if (( CONFIG_REFRESHED )) && [[ -d $CONFIG_RECOVERY_DIR ]]; then
@@ -226,6 +227,8 @@ if (( DRY_RUN )); then
 fi
 
 if [[ $OLD_COMMIT == "$TARGET_COMMIT" ]]; then
+  ROLLBACK_HANDLER=update_failure_rollback
+  install_cli_launchers || die "Не удалось установить или восстановить CLI-команды в $(cli_bin_dir)."
   if [[ -n $CHANGE_PORT ]]; then
     make_temp_dir PORT_CHANGE_TMP 'family-archive-port-change.XXXXXX'
     perform_port_change "$PORT_CHANGE_TMP/recovery"
@@ -236,9 +239,7 @@ if [[ $OLD_COMMIT == "$TARGET_COMMIT" ]]; then
     printf 'Обновление не требуется.\nСтарый commit: %s\nНовый commit: %s\nСтарый порт: %s\nНовый порт: %s\nBackup: не создавался\nHealth: %s\n' \
       "$OLD_COMMIT" "$OLD_COMMIT" "$OLD_PORT" "$PORT" "$NOOP_HEALTH"
   fi
-  if ! install_cli_launchers; then
-    warn "Обновление не требуется, но launcher в /usr/local/bin не установлен."
-  fi
+  commit_cli_transaction
   log "Уже установлен commit $OLD_COMMIT; обновление не требуется."
   ROLLBACK_HANDLER=""
   exit 0
@@ -280,18 +281,17 @@ run_update_cutover_steps \
   cutover_start_service \
   cutover_health_check
 
-ROLLBACK_HANDLER=""
-if ! install_cli_launchers; then
-  warn "Новый release работает, но launcher в /usr/local/bin не установлен."
-fi
-if ! prune_releases "$KEEP_RELEASES"; then
-  warn "Новый release работает, но удалить часть старых releases не удалось."
-fi
-END_EPOCH=$(date +%s)
+install_cli_launchers || die "Не удалось установить или восстановить CLI-команды в $(cli_bin_dir)."
 if [[ -n $CHANGE_PORT ]]; then
   make_temp_dir PORT_CHANGE_TMP 'family-archive-port-change.XXXXXX'
   perform_port_change "$PORT_CHANGE_TMP/recovery"
 fi
+commit_cli_transaction
+ROLLBACK_HANDLER=""
+if ! prune_releases "$KEEP_RELEASES"; then
+  warn "Новый release работает, но удалить часть старых releases не удалось."
+fi
+END_EPOCH=$(date +%s)
 printf 'Обновление завершено.\nСтарый commit: %s\nНовый commit: %s\nСтарый порт: %s\nНовый порт: %s\nBackup: %s\nBackup смены порта: %s\nHealth: %s\nВремя: %s секунд\nURL: %s/\n' \
   "$OLD_COMMIT" "$TARGET_COMMIT" "$OLD_PORT" "$PORT" "$BACKUP_PATH" "${PORT_CHANGE_BACKUP:-не требовался}" \
   "$([[ -n $CHANGE_PORT ]] && printf '%s' "$PORT_CHANGE_HEALTH" || printf ok)" "$((END_EPOCH - START_EPOCH))" "$(local_base_url)"

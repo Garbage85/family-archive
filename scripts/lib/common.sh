@@ -18,7 +18,9 @@ TRAPS_SETUP=0
 # shellcheck disable=SC2034 # Результат restore читается вызывающим скриптом.
 RESTORED_PREVIOUS_DATA=""
 declare -a TEMP_DIRS=()
-declare -a CLI_CREATED_PATHS=()
+CLI_TRANSACTION_ACTIVE=0
+CLI_RECOVERY_DIR=""
+declare -A CLI_PREVIOUS_STATE=()
 
 readonly -a DEPLOYMENT_CONFIG_KEYS=(
   APP_NAME
@@ -665,83 +667,224 @@ atomic_symlink() {
   mv -Tf "$staging/link" "$link"
 }
 
-install_cli_launchers() {
-  local bin_dir=${FAMILY_ARCHIVE_CLI_BIN_DIR:-/usr/local/bin}
-  local launcher_target="$INSTALL_ROOT/current/scripts/family-archive.sh"
-  local path command
-  if [[ ! -x $launcher_target ]]; then
-    warn "Launcher не найден в release: $launcher_target"
+cli_bin_dir() {
+  if [[ ${FAMILY_ARCHIVE_CLI_TEST_MODE:-0} == 1 ]]; then
+    printf '%s\n' "${FAMILY_ARCHIVE_CLI_BIN_DIR:-}"
+  else
+    printf '/usr/local/bin\n'
+  fi
+}
+
+cli_expected_uid() {
+  if [[ ${FAMILY_ARCHIVE_CLI_TEST_MODE:-0} == 1 ]]; then
+    printf '%s\n' "${FAMILY_ARCHIVE_CLI_EXPECTED_UID:-$(id -u)}"
+  else
+    printf '0\n'
+  fi
+}
+
+cli_expected_gid() {
+  if [[ ${FAMILY_ARCHIVE_CLI_TEST_MODE:-0} == 1 ]]; then
+    printf '%s\n' "${FAMILY_ARCHIVE_CLI_EXPECTED_GID:-$(id -g)}"
+  else
+    printf '0\n'
+  fi
+}
+
+validate_cli_test_sandbox() {
+  local bin_dir sandbox
+  [[ ${FAMILY_ARCHIVE_CLI_TEST_MODE:-0} == 1 ]] || return 0
+  [[ -n ${FAMILY_ARCHIVE_CLI_BIN_DIR:-} ]] || {
+    warn "В CLI test mode требуется FAMILY_ARCHIVE_CLI_BIN_DIR."
     return 1
-  fi
-  mkdir -p "$bin_dir" || return 1
+  }
+  bin_dir=$(realpath -m -- "$(cli_bin_dir)")
+  sandbox=$(realpath -m -- "${TMPDIR:-/tmp}")
+  [[ $bin_dir == "$sandbox"/* ]] || {
+    warn "CLI test bin dir должен находиться внутри TMPDIR: $bin_dir"
+    return 1
+  }
+}
 
-  path="$bin_dir/family-archive"
-  if [[ -e $path || -L $path ]]; then
-    if [[ ! -L $path || $(readlink "$path") != "$launcher_target" ]]; then
-      warn "$path уже существует и не является launcher этой установки."
-      return 1
-    fi
+cli_bin_directory_is_safe() {
+  local bin_dir owner group mode permissions
+  bin_dir=$(cli_bin_dir)
+  [[ $bin_dir == /* && $(realpath -m -- "$bin_dir") == "$bin_dir" ]] || return 1
+  [[ -d $bin_dir && ! -L $bin_dir ]] || return 1
+  owner=$(stat -c '%u' "$bin_dir" 2>/dev/null) || return 1
+  group=$(stat -c '%g' "$bin_dir" 2>/dev/null) || return 1
+  mode=$(stat -c '%a' "$bin_dir" 2>/dev/null) || return 1
+  [[ $mode =~ ^[0-7]{3,4}$ ]] || return 1
+  permissions=$((8#$mode))
+  [[ $owner == "$(cli_expected_uid)" && $group == "$(cli_expected_gid)" &&
+    $((permissions & 0022)) == 0 ]]
+}
+
+cli_launcher_names() {
+  printf '%s\n' family-archive family-archive-update family-archive-backup \
+    family-archive-rollback family-archive-status
+}
+
+cli_launcher_content() {
+  local name=$1 bin_dir
+  bin_dir=$(cli_bin_dir)
+  printf '#!/usr/bin/env bash\n'
+  case "$name" in
+    family-archive)
+      printf 'exec %q/current/scripts/family-archive.sh "$@"\n' "$INSTALL_ROOT"
+      ;;
+    family-archive-update) printf 'exec %q/family-archive update "$@"\n' "$bin_dir" ;;
+    family-archive-backup) printf 'exec %q/family-archive backup "$@"\n' "$bin_dir" ;;
+    family-archive-rollback) printf 'exec %q/family-archive rollback "$@"\n' "$bin_dir" ;;
+    family-archive-status) printf 'exec %q/family-archive status "$@"\n' "$bin_dir" ;;
+    *) return 1 ;;
+  esac
+}
+
+cli_launcher_is_valid() {
+  local path=$1 name=${1##*/} expected actual owner group mode
+  [[ -f $path && ! -L $path ]] || return 1
+  owner=$(stat -c '%u' "$path" 2>/dev/null) || return 1
+  group=$(stat -c '%g' "$path" 2>/dev/null) || return 1
+  mode=$(stat -c '%a' "$path" 2>/dev/null) || return 1
+  [[ $owner == "$(cli_expected_uid)" && $group == "$(cli_expected_gid)" && $mode == 755 ]] || return 1
+  expected=$(cli_launcher_content "$name") || return 1
+  actual=$(cat "$path" 2>/dev/null) || return 1
+  [[ $actual == "$expected" ]]
+}
+
+cli_installation_state() {
+  local bin_dir name path found=0 invalid=0
+  bin_dir=$(cli_bin_dir)
+  if [[ -e $bin_dir || -L $bin_dir ]]; then
+    cli_bin_directory_is_safe || {
+      printf 'invalid\n'
+      return
+    }
   fi
-  for command in update backup rollback status; do
-    path="$bin_dir/family-archive-$command"
+  while IFS= read -r name; do
+    path="$bin_dir/$name"
     if [[ -e $path || -L $path ]]; then
-      if [[ ! -L $path || $(readlink "$path") != family-archive ]]; then
-        warn "$path уже существует и не является совместимой командой Family Archive."
-        return 1
-      fi
+      found=$((found + 1))
+      cli_launcher_is_valid "$path" || invalid=1
     fi
-  done
+  done < <(cli_launcher_names)
+  if (( invalid || found > 0 && found < 5 )); then
+    printf 'invalid\n'
+  elif (( found == 5 )); then
+    printf 'installed\n'
+  else
+    printf 'missing\n'
+  fi
+}
 
-  path="$bin_dir/family-archive"
-  if [[ ! -e $path && ! -L $path ]]; then
-    if ! atomic_symlink "$launcher_target" "$path"; then
-      remove_created_cli_launchers
+begin_cli_transaction() {
+  local bin_dir name path bin_dir_created=0
+  (( CLI_TRANSACTION_ACTIVE == 0 )) || return 0
+  validate_cli_test_sandbox || return 1
+  bin_dir=$(cli_bin_dir)
+  if [[ ! -e $bin_dir && ! -L $bin_dir ]]; then
+    mkdir -p "$bin_dir" || return 1
+    bin_dir_created=1
+  fi
+  (( bin_dir_created == 0 )) || chmod 0755 "$bin_dir" || return 1
+  cli_bin_directory_is_safe || {
+    warn "CLI bin dir имеет небезопасный тип, владельца или права: $bin_dir"
+    return 1
+  }
+  make_temp_dir CLI_RECOVERY_DIR 'family-archive-cli-recovery.XXXXXX'
+  CLI_PREVIOUS_STATE=()
+  while IFS= read -r name; do
+    path="$bin_dir/$name"
+    if [[ -d $path && ! -L $path ]]; then
+      warn "CLI path является каталогом; безопасная замена невозможна: $path"
+      return 1
+    elif [[ -e $path || -L $path ]]; then
+      cp -a -- "$path" "$CLI_RECOVERY_DIR/$name" || return 1
+      CLI_PREVIOUS_STATE[$name]=present
+    else
+      CLI_PREVIOUS_STATE[$name]=absent
+    fi
+  done < <(cli_launcher_names)
+  CLI_TRANSACTION_ACTIVE=1
+}
+
+write_cli_launcher_atomic() {
+  local path=$1 name=${1##*/} bin_dir staging temporary
+  bin_dir=$(dirname "$path")
+  make_temp_dir staging "$bin_dir/.family-archive-cli.XXXXXX"
+  temporary="$staging/$name"
+  cli_launcher_content "$name" > "$temporary" || return 1
+  chmod 0755 "$temporary" || return 1
+  if [[ ${FAMILY_ARCHIVE_CLI_TEST_MODE:-0} == 1 ]]; then
+    chown "$(cli_expected_uid):$(cli_expected_gid)" "$temporary" || return 1
+  else
+    chown root:root "$temporary" || return 1
+  fi
+  mv -Tf "$temporary" "$path"
+}
+
+restore_cli_launchers() {
+  local bin_dir name path staging temporary
+  (( CLI_TRANSACTION_ACTIVE )) || return 0
+  bin_dir=$(cli_bin_dir)
+  while IFS= read -r name; do
+    path="$bin_dir/$name"
+    if [[ ${CLI_PREVIOUS_STATE[$name]:-absent} == absent ]]; then
+      [[ ! -e $path && ! -L $path ]] || rm -f -- "$path"
+      continue
+    fi
+    make_temp_dir staging "$bin_dir/.family-archive-cli-restore.XXXXXX"
+    temporary="$staging/$name"
+    cp -a -- "$CLI_RECOVERY_DIR/$name" "$temporary" || return 1
+    mv -Tf "$temporary" "$path" || return 1
+  done < <(cli_launcher_names)
+  CLI_TRANSACTION_ACTIVE=0
+  CLI_PREVIOUS_STATE=()
+  return 0
+}
+
+commit_cli_transaction() {
+  CLI_TRANSACTION_ACTIVE=0
+  CLI_PREVIOUS_STATE=()
+}
+
+install_cli_launchers() {
+  local bin_dir name path
+  bin_dir=$(cli_bin_dir)
+  [[ -x $INSTALL_ROOT/current/scripts/family-archive.sh ]] || {
+    warn "Launcher не найден в release: $INSTALL_ROOT/current/scripts/family-archive.sh"
+    return 1
+  }
+  begin_cli_transaction || return 1
+  while IFS= read -r name; do
+    path="$bin_dir/$name"
+    cli_launcher_is_valid "$path" && continue
+    if ! write_cli_launcher_atomic "$path"; then
+      restore_cli_launchers || true
       return 1
     fi
-    CLI_CREATED_PATHS+=("$path")
-  fi
-  for command in update backup rollback status; do
-    path="$bin_dir/family-archive-$command"
-    if [[ ! -e $path && ! -L $path ]]; then
-      if ! atomic_symlink family-archive "$path"; then
-        remove_created_cli_launchers
-        return 1
-      fi
-      CLI_CREATED_PATHS+=("$path")
-    fi
-  done
+  done < <(cli_launcher_names)
+  while IFS= read -r name; do
+    cli_launcher_is_valid "$bin_dir/$name" || {
+      restore_cli_launchers || true
+      return 1
+    }
+  done < <(cli_launcher_names)
 }
 
-remove_created_cli_launchers() {
-  local path expected
-  for path in "${CLI_CREATED_PATHS[@]:-}"; do
-    if [[ ${path##*/} == family-archive ]]; then
-      expected="$INSTALL_ROOT/current/scripts/family-archive.sh"
-    else
-      expected=family-archive
-    fi
-    if [[ -L $path && $(readlink "$path") == "$expected" ]]; then
-      rm -f -- "$path"
-    fi
-  done
-  CLI_CREATED_PATHS=()
-}
+# Совместимость для rollback старого installer-кода.
+remove_created_cli_launchers() { restore_cli_launchers; }
 
 remove_cli_launchers() {
-  local bin_dir=${FAMILY_ARCHIVE_CLI_BIN_DIR:-/usr/local/bin}
-  local launcher_target="$INSTALL_ROOT/current/scripts/family-archive.sh"
-  local path command
-  for command in update backup rollback status; do
-    path="$bin_dir/family-archive-$command"
-    if [[ -L $path && $(readlink "$path") == family-archive ]]; then
-      rm -f -- "$path"
-    fi
-  done
-  path="$bin_dir/family-archive"
-  if [[ -L $path && $(readlink "$path") == "$launcher_target" ]]; then
-    rm -f -- "$path"
-  fi
-  CLI_CREATED_PATHS=()
+  local bin_dir name path
+  bin_dir=$(cli_bin_dir)
+  while IFS= read -r name; do
+    path="$bin_dir/$name"
+    cli_launcher_is_valid "$path" && rm -f -- "$path"
+  done < <(cli_launcher_names)
+  CLI_TRANSACTION_ACTIVE=0
+  CLI_PREVIOUS_STATE=()
 }
 
 listen_host() { printf '%s\n' "$LISTEN_HOST"; }

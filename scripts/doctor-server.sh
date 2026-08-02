@@ -52,6 +52,9 @@ done
 setup_traps
 if [[ ${FAMILY_ARCHIVE_DOCTOR_TEST_MODE:-0} == 1 ]]; then
   [[ $INSTALL_ROOT == "${TMPDIR:-/tmp}"/* ]] || die "Doctor test root должен находиться внутри TMPDIR."
+  FAMILY_ARCHIVE_CLI_TEST_MODE=1
+  export FAMILY_ARCHIVE_CLI_TEST_MODE
+  validate_cli_test_sandbox || die "Doctor test CLI path должен находиться внутри TMPDIR."
 else
   require_root
 fi
@@ -190,20 +193,44 @@ else
   failure "Checksum последнего backup не совпадает: $LATEST_BACKUP"
 fi
 
-CLI_TARGET="$INSTALL_ROOT/current/scripts/family-archive.sh"
-if [[ -L /usr/local/bin/family-archive && $(readlink /usr/local/bin/family-archive) == "$CLI_TARGET" ]]; then
-  pass "Launcher установлен: /usr/local/bin/family-archive"
-else
-  warning "Launcher отсутствует или указывает не на текущую установку."
-fi
-for compatibility_command in update backup rollback status; do
-  compatibility_path="/usr/local/bin/family-archive-$compatibility_command"
-  if [[ -L $compatibility_path && $(readlink "$compatibility_path") == family-archive ]]; then
-    pass "Совместимая команда установлена: $compatibility_path"
-  else
-    warning "Совместимая команда отсутствует: $compatibility_path"
+CLI_BIN_DIR=$(cli_bin_dir)
+while IFS= read -r cli_name; do
+  cli_path="$CLI_BIN_DIR/$cli_name"
+  if [[ ! -e $cli_path && ! -L $cli_path ]]; then
+    failure "CLI launcher отсутствует: $cli_path"
+    continue
   fi
-done
+  if [[ -L $cli_path ]]; then
+    failure "CLI launcher является небезопасным symlink: $cli_path"
+    continue
+  fi
+  if [[ ! -f $cli_path ]]; then
+    failure "CLI launcher не является обычным файлом: $cli_path"
+    continue
+  fi
+  cli_uid=$(stat -c '%u' "$cli_path" 2>/dev/null || printf unknown)
+  cli_gid=$(stat -c '%g' "$cli_path" 2>/dev/null || printf unknown)
+  cli_mode=$(stat -c '%a' "$cli_path" 2>/dev/null || printf unknown)
+  if [[ $cli_uid != "$(cli_expected_uid)" || $cli_gid != "$(cli_expected_gid)" ]]; then
+    failure "CLI launcher имеет неправильного владельца: $cli_path ($cli_uid:$cli_gid)"
+    continue
+  fi
+  if [[ $cli_mode != 755 ]]; then
+    failure "CLI launcher имеет неправильные права: $cli_path (mode $cli_mode)"
+    continue
+  fi
+  if ! cli_launcher_is_valid "$cli_path"; then
+    failure "CLI launcher имеет неправильный target или передачу аргументов: $cli_path"
+    continue
+  fi
+  pass "CLI launcher корректен: $cli_path"
+done < <(cli_launcher_names)
+if cli_launcher_is_valid "$CLI_BIN_DIR/family-archive" &&
+  "$CLI_BIN_DIR/family-archive" version >/dev/null 2>&1; then
+  pass "CLI-команда family-archive version работает."
+else
+  failure "CLI-команда family-archive version не работает."
+fi
 
 printf '\nИтог doctor: PASS=%s WARN=%s FAIL=%s\n' "$PASSED" "$WARNINGS" "$FAILED"
 (( FAILED == 0 ))
