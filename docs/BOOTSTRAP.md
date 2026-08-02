@@ -1,9 +1,9 @@
 # Bootstrap и командный launcher
 
-## Установка одной командой
+## Единая команда
 
-На чистом Raspberry Pi OS или Debian выполните от обычного пользователя с правом
-`sudo`:
+Для чистой системы, release-установки и legacy-установки используется одна и та же
+рекомендуемая команда от обычного пользователя с правом `sudo`:
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/Garbage85/family-archive/main/scripts/bootstrap.sh)
@@ -15,35 +15,94 @@ bash <(curl -fsSL https://raw.githubusercontent.com/Garbage85/family-archive/mai
 curl -fsSL https://raw.githubusercontent.com/Garbage85/family-archive/main/scripts/bootstrap.sh
 ```
 
-Bootstrap выполняет только подготовительные действия:
+Bootstrap остаётся небольшим диспетчером:
 
 1. Проверяет Linux, Bash 4+, `sudo`, `curl` и `git`.
-2. Если `git` отсутствует, устанавливает только его через `apt-get` и `sudo`.
-3. Клонирует ветку `main` официального репозитория во временный каталог.
-4. Через `sudo` запускает штатный `scripts/install-server.sh`, передавая ему аргументы.
-5. Удаляет временный checkout при успехе, ошибке или сигнале.
+2. Проверяет абсолютный install root, владельца, права и отсутствие опасных symlink.
+3. Клонирует выбранные `--repo` и `--branch` в новый временный checkout.
+4. Классифицирует `/opt/family-tree` без попыток исправить его:
+   - отсутствующий или пустой root — `install-server.sh`;
+   - проверенные `current`, `releases`, `shared`, release и repository mirror —
+     `update-server.sh`;
+   - обычные `pocketbase` и `pb_data` без release-маркеров —
+     `migrate-legacy-server.sh`;
+   - смешанное, неполное или небезопасное состояние — диагностика и отказ.
+5. Через `sudo` запускает только штатный скрипт из свежего checkout.
+6. Удаляет временный checkout после успеха, ошибки или сигнала.
 
-Создание release, установка зависимостей приложения, миграции, systemd unit и health
-checks остаются ответственностью `install-server.sh`. Bootstrap не содержит второй
-реализации установки и не обновляет существующую installation in-place.
+Bootstrap не содержит реализации install, update или migrate, не запускает скрипты
+из `current` и не выполняет второй `curl | bash`. Разрешённые для выбранного режима
+аргументы передаются дочернему скрипту отдельным массивом без `eval`; остальные
+отклоняются.
 
-Аргументы после команды передаются installer. Например, чтобы показать инструкцию
-создания первого superuser:
-
-```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/Garbage85/family-archive/main/scripts/bootstrap.sh) \
-  --admin-instructions
-```
-
-Для fork можно передать его штатному installer:
+Для fork или другой ветки:
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/Garbage85/family-archive/main/scripts/bootstrap.sh) \
   --repo https://github.com/OWNER/family-archive.git --branch main
 ```
 
-Сам bootstrap всегда загружается из официальной ветки `main`; `--repo` и `--branch`
-задают источник устанавливаемого release.
+Сам bootstrap в команде выше загружается из официальной ветки `main`; `--repo` и
+`--branch` задают свежий checkout и источник дальнейшего install/update/migrate, но
+не дублируются как дочерние CLI-аргументы.
+
+## Выбор режима и подтверждение
+
+Перед запуском печатается обнаруженный тип и действие. Автоматический режим можно
+подтвердить совместимой forced-опцией:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/Garbage85/family-archive/main/scripts/bootstrap.sh) --install
+bash <(curl -fsSL https://raw.githubusercontent.com/Garbage85/family-archive/main/scripts/bootstrap.sh) --update
+bash <(curl -fsSL https://raw.githubusercontent.com/Garbage85/family-archive/main/scripts/bootstrap.sh) --migrate
+```
+
+Forced-режим не обходит классификацию: например, `--migrate` на release-layout
+завершится ошибкой. Режимы нельзя комбинировать.
+
+`--dry-run` передаётся выбранному штатному скрипту. Для legacy реальная миграция
+всегда предваряется отдельным dry-run. После него bootstrap запрашивает `y`; для
+неинтерактивного подтверждения используется `--yes`:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/Garbage85/family-archive/main/scripts/bootstrap.sh) --dry-run
+bash <(curl -fsSL https://raw.githubusercontent.com/Garbage85/family-archive/main/scripts/bootstrap.sh) --yes
+```
+
+При повреждённом layout bootstrap ничего не запускает, показывает типы ключевых
+путей и предлагает `family-archive doctor` либо ручную проверку.
+
+## Мастер и параметры установки
+
+На чистой системе при TTY и без `--yes` запускается мастер. Enter принимает
+значения по умолчанию: `Family Archive`, порт 8090, системный часовой пояс и
+включённый systemd. Если 8090 занят, предлагается первый свободный порт 8091–8190.
+Перед изменениями выводится полный план и запрашивается подтверждение. Ctrl+C или
+отрицательный ответ завершают работу без изменений.
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/Garbage85/family-archive/main/scripts/bootstrap.sh) \
+  --yes \
+  --port 8095 \
+  --site-name "Архив семьи Сапожниковых" \
+  --timezone Asia/Chita
+```
+
+`--no-systemd` оставляет собранную установку без созданного и запущенного unit.
+`--dry-run` проверяет layout, timezone и доступность предполагаемого порта, печатает
+план и ничего не изменяет. Явный занятый `--port` всегда является ошибкой с
+доступными сведениями о слушателе. Автопоиск никогда не выходит за 8091–8190.
+
+Для release-установки `--port` намеренно отклоняется. Осознанная смена выполняется
+так:
+
+```bash
+sudo family-archive update --change-port 8096
+```
+
+Она создаёт backup, меняет config и unit, перезапускает сервис и выполняет health
+check; при ошибке старые порт и unit восстанавливаются. Legacy migration всегда
+берёт адрес и порт из проверенного старого `ExecStart`.
 
 ## Launcher
 
@@ -69,7 +128,7 @@ family-archive version
 ```
 
 `install` остаётся чистой установкой: на уже установленном сервере штатный installer
-откажется перезаписывать `/opt/family-tree`. Для обновления используйте `update`.
+откажется перезаписывать `/opt/family-tree`. Единый bootstrap сам выберет update.
 
 Аргументы передаются соответствующему серверному скрипту, например:
 
@@ -114,10 +173,12 @@ sudo /opt/family-tree/current/scripts/update-server.sh
 
 ## Ограничения
 
-- Bootstrap рассчитан на Linux с `sudo` и `apt-get`; автоматическая установка `git`
-  на системах без apt не выполняется.
+- Bootstrap рассчитан на Linux и требует заранее установленные `sudo`, `curl`, `git`
+  и базовые GNU coreutils.
 - Для загрузки bootstrap, репозитория, npm-пакетов и PocketBase требуется сеть.
-- Установщик поддерживает только чистую release-based установку. Legacy-layout
-  переносится вручную по [docs/INSTALLATION.md](INSTALLATION.md).
+- Автодетект рассчитан на стандартный root `/opt/family-tree`; нестандартный root
+  обслуживается прямыми штатными скриптами и конфигурацией.
+- Небезопасный владелец, group/world-write, symlink в install root, drop-in или
+  неполный layout требуют ручного разбора.
 - Команда из raw.githubusercontent.com использует опубликованную ветку `main` и не
   видит локальные или ещё не опубликованные изменения.

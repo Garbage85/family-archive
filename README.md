@@ -6,6 +6,34 @@ Family Archive — self-hosted семейный архив на PocketBase с и
 Релиз 0.3 стабилизирует структуру проекта без изменения пользовательского поведения,
 PocketBase API, схемы базы данных и формата `trees.data`.
 
+Единая рекомендуемая команда сервера для install, update и legacy migration:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/Garbage85/family-archive/main/scripts/bootstrap.sh)
+```
+
+Неинтерактивная установка с явными настройками:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/Garbage85/family-archive/main/scripts/bootstrap.sh) \
+  --yes \
+  --port 8095 \
+  --site-name "Архив семьи Сапожниковых" \
+  --timezone Asia/Chita
+```
+
+Проверка плана ничего не меняет:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/Garbage85/family-archive/main/scripts/bootstrap.sh) --dry-run
+```
+
+При чистой интерактивной установке мастер предлагает имя сайта, первый свободный
+порт начиная с 8090, текущий системный часовой пояс и systemd. Эти значения
+сохраняются декларативно как `SITE_NAME`, `LISTEN_HOST`, `PORT`, `TIMEZONE` и
+`ENABLE_SYSTEMD`; конфиг не исполняется shell. Домен, TLS и reverse proxy мастер не
+настраивает.
+
 ## Возможности текущей версии
 
 - собственная карточка человека;
@@ -47,15 +75,17 @@ npm run build
 
 ## Установка и обслуживание сервера
 
-Чистая установка на Raspberry Pi / Debian одной командой:
+Эта же команда безопасно выбирает чистую установку, обновление release-установки или
+миграцию legacy-схемы:
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/Garbage85/family-archive/main/scripts/bootstrap.sh)
 ```
 
-Bootstrap проверяет окружение, при необходимости устанавливает только `git`, клонирует
-репозиторий во временный каталог и передаёт установку штатному `install-server.sh`.
-Подробности и вариант установки из локального checkout: [docs/BOOTSTRAP.md](docs/BOOTSTRAP.md).
+Bootstrap проверяет layout `/opt/family-tree`, клонирует свежий репозиторий во
+временный каталог и запускает из него ровно один штатный workflow: install, update
+либо безопасный legacy dry-run с подтверждаемой миграцией. Неоднозначный layout
+останавливается с диагностикой. Подробности: [docs/BOOTSTRAP.md](docs/BOOTSTRAP.md).
 
 После успешной установки доступен единый launcher:
 
@@ -90,6 +120,7 @@ Production использует неизменяемые releases, атомар�
 - [Архитектура](docs/ARCHITECTURE.md)
 - [База данных](docs/DATABASE.md)
 - [Установка сервера](docs/INSTALLATION.md)
+- [Миграция legacy-установки](docs/LEGACY_MIGRATION.md)
 - [Bootstrap и командный launcher](docs/BOOTSTRAP.md)
 - [Обновление](docs/UPDATING.md)
 - [Backup и rollback](docs/BACKUP_AND_ROLLBACK.md)

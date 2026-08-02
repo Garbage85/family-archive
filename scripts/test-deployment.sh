@@ -2,6 +2,7 @@
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 usage() {
   cat <<'EOF'
@@ -33,7 +34,7 @@ done
 
 if command -v shellcheck >/dev/null 2>&1; then
   printf 'Запускаю shellcheck.\n'
-  shellcheck -x "${SHELL_FILES[@]}"
+  LC_ALL=C.UTF-8 shellcheck -x -P "$PROJECT_ROOT" "${SHELL_FILES[@]}"
 elif (( REQUIRE_SHELLCHECK )); then
   printf 'ОШИБКА: shellcheck не установлен.\n' >&2
   exit 1
@@ -43,3 +44,9 @@ fi
 
 printf 'Запускаю тесты чистых функций и архивов в mktemp.\n'
 "$SCRIPT_DIR/tests/deployment-tests.sh"
+printf 'Запускаю mock-тесты единого bootstrap dispatcher в mktemp.\n'
+"$SCRIPT_DIR/tests/bootstrap-tests.sh"
+printf 'Запускаю тесты выбора порта и мастера в mktemp.\n'
+"$SCRIPT_DIR/tests/setup-tests.sh"
+printf 'Запускаю mock-интеграционные тесты legacy migration в mktemp.\n'
+"$SCRIPT_DIR/tests/legacy-migration-tests.sh"

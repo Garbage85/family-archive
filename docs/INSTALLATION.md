@@ -24,20 +24,44 @@
 - доступ к GitHub и npm registry;
 - минимум 512 MiB свободного места по умолчанию.
 
-Недостающие `git`, `curl`, `unzip`, `rsync`, `jq`, Node.js/npm, systemd, tar,
-coreutils, util-linux и iproute2 устанавливаются через apt. Скрипт принимает Node.js
-18+, но для разработки и CI используется Node.js 22. Если версия из вашего Debian
-старее, сначала установите актуальный Node.js из доверенного репозитория ОС.
+Для единого bootstrap команды `curl`, `git` и `sudo` должны быть установлены заранее.
+Недостающие зависимости штатной установки — `unzip`, `rsync`, `jq`, Node.js/npm,
+systemd, tar, coreutils, util-linux и iproute2 — устанавливаются через apt. Скрипт
+принимает Node.js 18+, но для разработки и CI используется Node.js 22. Если версия из
+вашего Debian старее, сначала установите актуальный Node.js из доверенного репозитория
+ОС.
 
-## Чистая установка
+## Единый bootstrap
 
-Рекомендуемый bootstrap-вариант описан в [BOOTSTRAP.md](BOOTSTRAP.md):
+Первая рекомендуемая команда одинакова для чистой установки, обновления и
+legacy-миграции:
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/Garbage85/family-archive/main/scripts/bootstrap.sh)
 ```
 
-Установка из предварительно клонированного checkout:
+Bootstrap безопасно классифицирует стандартный `/opt/family-tree` и запускает
+`install-server.sh`, `update-server.sh` либо подтверждаемую legacy-миграцию только из
+свежего временного checkout. Повреждённый или смешанный layout не изменяется.
+
+На чистой системе интерактивный мастер спрашивает только имя сайта, HTTP-порт,
+часовой пояс приложения и необходимость systemd. Пароли, токены и email
+администратора не запрашиваются; домен, TLS и Nginx Proxy Manager не настраиваются.
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/Garbage85/family-archive/main/scripts/bootstrap.sh) \
+  --yes --port 8095 \
+  --site-name "Архив семьи Сапожниковых" \
+  --timezone Asia/Chita
+```
+
+Порт должен быть целым числом 1024–65535. Если стандартный 8090 занят, мастер
+предлагает первый свободный 8091–8190, а `--yes` выбирает его автоматически. Явно
+заданный занятый порт не заменяется. Для установки без unit добавьте `--no-systemd`.
+
+## Прямая чистая установка
+
+Установка из предварительно клонированного доверенного checkout:
 
 ```bash
 git clone https://github.com/Garbage85/family-archive.git
@@ -69,6 +93,12 @@ Runtime-конфиг допускает только известные стро
 отклоняются. При запуске от root владельцем файла также обязан быть root. Файл
 `config/deployment.env.example` служит только примером и скриптами не исполняется.
 
+Сетевые настройки хранятся раздельно: `LISTEN_HOST` и `PORT`. Допустимы loopback и
+wildcard адреса (`127.0.0.1`, `0.0.0.0`, `::1`, `::`) либо IP, назначенный локальному
+интерфейсу. `TIMEZONE` проверяется по `timedatectl list-timezones` или базе zoneinfo
+и применяется только к приложению через unit; системный часовой пояс скрипт не
+меняет.
+
 Checksum должен соответствовать точному архиву закреплённой версии PocketBase.
 Скрипт откажется перезаписывать непустой
 `/opt/family-tree`, существующий unit или неизвестную архитектуру. Из-за
@@ -96,10 +126,11 @@ Checksum должен соответствовать точному архиву
    sudo journalctl -u family-tree --no-pager | grep -i installer
    ```
 
-2. Подключитесь через SSH port forwarding и откройте `http://127.0.0.1:8090/_/`:
+2. Подключитесь через SSH port forwarding, подставив фактический `PORT`, и откройте
+   `http://127.0.0.1:PORT/_/`:
 
    ```bash
-   ssh -L 8090:127.0.0.1:8090 USER@SERVER
+   ssh -L PORT:127.0.0.1:PORT USER@SERVER
    ```
 
 3. Создайте superuser в браузере и сохраните пароль в менеджере паролей.
@@ -115,11 +146,15 @@ Unit работает от `familytree`, использует `WorkingDirectory=
 
 ## Существующая legacy-установка
 
-`install-server.sh` — только для чистой установки. Он сознательно не переносит
-старый `/opt/family-tree/pb_data` автоматически. Для перехода со старой плоской
-схемы сначала создайте проверенный offline backup, остановите старый unit, перенесите
-`pb_data` в `shared/pb_data`, установите новую структуру в отдельном каталоге и лишь
-после проверки переключите unit. Автоматическая in-place конвертация не реализована,
-чтобы исключить неявное изменение production-данных.
+Для стандартного root используйте ту же единую команду:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/Garbage85/family-archive/main/scripts/bootstrap.sh)
+```
+
+Bootstrap сам выполняет обязательный legacy dry-run и запрашивает подтверждение;
+`--yes` разрешает неинтерактивное продолжение. Прямой мигратор остаётся доступен для
+нестандартных root. Полная процедура, `--keep-legacy` и rollback описаны в
+[LEGACY_MIGRATION.md](LEGACY_MIGRATION.md).
 
 Скрипты не изменяют Docker, Nextcloud и Nginx Proxy Manager.

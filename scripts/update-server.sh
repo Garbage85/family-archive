@@ -18,12 +18,14 @@ usage() {
   --dry-run           Только показать план и доступный commit
   --skip-backup       Не создавать backup (запрещено при новых миграциях)
   --keep-releases N   Сколько releases сохранять после успеха
+  --change-port PORT  Сменить HTTP-порт с backup и rollback при ошибке
+  --yes               Подтвердить неинтерактивный запуск (update не спрашивает)
   --config FILE       Deployment-конфигурация
   -h, --help          Показать справку
 EOF
 }
 
-BRANCH=""
+BRANCH=${FAMILY_ARCHIVE_BOOTSTRAP_REPOSITORY_BRANCH:-}
 REQUESTED_REF=""
 DRY_RUN=0
 SKIP_BACKUP=0
@@ -39,6 +41,46 @@ CURRENT_SWITCHED=0
 PRODUCTION_PHASE_STARTED=0
 SOURCE_DIR=""
 RELEASE_STAGING=""
+CHANGE_PORT=""
+OLD_PORT=""
+PORT_CHANGE_BACKUP=""
+PORT_CHANGE_HEALTH="не выполнялся"
+CONFIG_REFRESHED=0
+CONFIG_RECOVERY_DIR=""
+
+cutover_refresh_deployment() {
+  local unit_path="/etc/systemd/system/${SERVICE_NAME}.service"
+  make_temp_dir CONFIG_RECOVERY_DIR 'family-archive-update-config.XXXXXX'
+  install -m 0600 "$CONFIG_FILE" "$CONFIG_RECOVERY_DIR/deployment.env"
+  install -m 0600 "$INSTALL_ROOT/shared/deployment.env" "$CONFIG_RECOVERY_DIR/shared-deployment.env"
+  install -m 0644 "$unit_path" "$CONFIG_RECOVERY_DIR/service.unit"
+  CONFIG_REFRESHED=1
+  write_install_config "$CONFIG_FILE"
+  install -m 0600 "$CONFIG_FILE" "$INSTALL_ROOT/shared/deployment.env"
+  write_systemd_unit "$unit_path"
+  systemctl daemon-reload
+}
+
+perform_port_change() {
+  local recovery_dir=$1 unit_path="/etc/systemd/system/${SERVICE_NAME}.service"
+  [[ -n $CHANGE_PORT ]] || return 0
+  validate_port "$CHANGE_PORT"
+  [[ $CHANGE_PORT != "$PORT" ]] || die "Новый порт совпадает с текущим: $PORT"
+  require_available_port "$CHANGE_PORT"
+  if [[ -n $BACKUP_PATH && -f $BACKUP_PATH ]]; then
+    PORT_CHANGE_BACKUP=$BACKUP_PATH
+  else
+    PORT_CHANGE_BACKUP="$("$SCRIPT_DIR"/backup-server.sh --quiet --keep "$KEEP_BACKUPS" --config "$CONFIG_FILE")"
+  fi
+  [[ -f $PORT_CHANGE_BACKUP ]] || die "Backup перед сменой порта не создан."
+  if change_port_transaction "$CHANGE_PORT" "$CONFIG_FILE" \
+    "$INSTALL_ROOT/shared/deployment.env" "$unit_path" "$recovery_dir"; then
+    PORT_CHANGE_HEALTH=ok
+    return 0
+  fi
+  PORT_CHANGE_HEALTH='failed-rolled-back'
+  die "Смена порта отменена и откачена."
+}
 
 cutover_stop_service() {
   log "Останавливаю сервис для финального backup, миграции и переключения."
@@ -85,6 +127,12 @@ update_failure_rollback() {
   warn "Обновление не завершено; возвращаю предыдущее состояние."
   if (( PRODUCTION_PHASE_STARTED )); then
     systemctl stop "$SERVICE_NAME" >/dev/null 2>&1 || true
+    if (( CONFIG_REFRESHED )) && [[ -d $CONFIG_RECOVERY_DIR ]]; then
+      install -m 0600 "$CONFIG_RECOVERY_DIR/deployment.env" "$CONFIG_FILE" || true
+      install -m 0600 "$CONFIG_RECOVERY_DIR/shared-deployment.env" "$INSTALL_ROOT/shared/deployment.env" || true
+      install -m 0644 "$CONFIG_RECOVERY_DIR/service.unit" "/etc/systemd/system/${SERVICE_NAME}.service" || true
+      systemctl daemon-reload >/dev/null 2>&1 || true
+    fi
     if (( CURRENT_SWITCHED )) && [[ -n $OLD_RELEASE && -d $OLD_RELEASE ]]; then
       atomic_symlink "$OLD_RELEASE" "$INSTALL_ROOT/current"
     fi
@@ -112,6 +160,8 @@ update_failure_rollback() {
 exit_if_help_requested usage "$@"
 preparse_config "$@"
 load_config
+[[ -n ${FAMILY_ARCHIVE_BOOTSTRAP_SELECTED_INSTALL_ROOT:-} ]] &&
+  INSTALL_ROOT=$FAMILY_ARCHIVE_BOOTSTRAP_SELECTED_INSTALL_ROOT
 
 while (($#)); do
   case "$1" in
@@ -123,6 +173,10 @@ while (($#)); do
     --skip-backup) SKIP_BACKUP=1; shift ;;
     --keep-releases) [[ $# -ge 2 ]] || die "Для --keep-releases требуется число."; KEEP=$2; shift 2 ;;
     --keep-releases=*) KEEP=${1#*=}; shift ;;
+    --change-port) [[ $# -ge 2 ]] || die "Для --change-port требуется порт."; CHANGE_PORT=$2; shift 2 ;;
+    --change-port=*) CHANGE_PORT=${1#*=}; shift ;;
+    --port|--port=*) die "Для существующей установки используйте --change-port PORT." ;;
+    --yes) shift ;;
     --config) shift 2 ;;
     --config=*) shift ;;
     -h|--help) usage; exit 0 ;;
@@ -131,9 +185,13 @@ while (($#)); do
 done
 
 [[ -n $BRANCH ]] && DEFAULT_BRANCH=$BRANCH
+[[ -n ${FAMILY_ARCHIVE_BOOTSTRAP_REPOSITORY_URL:-} ]] &&
+  REPOSITORY_URL=$FAMILY_ARCHIVE_BOOTSTRAP_REPOSITORY_URL
 [[ -n $KEEP ]] && KEEP_RELEASES=$KEEP
 [[ -z $BRANCH || -z $REQUESTED_REF ]] || die "--branch и --ref нельзя использовать одновременно."
 validate_config
+OLD_PORT=$PORT
+[[ -z $CHANGE_PORT ]] || validate_port "$CHANGE_PORT"
 validate_positive_integer KEEP_RELEASES "$KEEP_RELEASES"
 
 setup_traps
@@ -144,7 +202,7 @@ pocketbase_arch_for "$(uname -m)" >/dev/null
 
 [[ -L $INSTALL_ROOT/current ]] || die "Установка release-based не найдена: $INSTALL_ROOT/current."
 [[ -d $INSTALL_ROOT/shared/pb_data ]] || die "Не найден shared/pb_data."
-acquire_update_lock
+(( DRY_RUN )) || acquire_update_lock
 systemctl is-active --quiet "$SERVICE_NAME" || die "Сервис $SERVICE_NAME не active; сначала выясните причину через status-server.sh."
 check_free_space "$INSTALL_ROOT"
 
@@ -157,11 +215,27 @@ if (( DRY_RUN )); then
   printf 'Dry-run: изменений не выполнено.\nТекущий commit: %s\nЦелевой ref: %s\nЦелевой commit: %s\n' \
     "$OLD_COMMIT" "$TARGET_LABEL" "$TARGET_COMMIT"
   [[ $OLD_COMMIT == "$TARGET_COMMIT" ]] && printf 'Обновление не требуется.\n'
+  if [[ -n $CHANGE_PORT ]]; then
+    require_available_port "$CHANGE_PORT"
+    printf 'Старый порт: %s\nНовый порт: %s\n' "$OLD_PORT" "$CHANGE_PORT"
+  else
+    printf 'Порт будет сохранён: %s\n' "$OLD_PORT"
+  fi
   ROLLBACK_HANDLER=""
   exit 0
 fi
 
 if [[ $OLD_COMMIT == "$TARGET_COMMIT" ]]; then
+  if [[ -n $CHANGE_PORT ]]; then
+    make_temp_dir PORT_CHANGE_TMP 'family-archive-port-change.XXXXXX'
+    perform_port_change "$PORT_CHANGE_TMP/recovery"
+    printf 'Обновление конфигурации завершено.\nСтарый commit: %s\nНовый commit: %s\nСтарый порт: %s\nНовый порт: %s\nBackup: %s\nHealth: %s\n' \
+      "$OLD_COMMIT" "$OLD_COMMIT" "$OLD_PORT" "$PORT" "$PORT_CHANGE_BACKUP" "$PORT_CHANGE_HEALTH"
+  else
+    if health_check_once; then NOOP_HEALTH=ok; else NOOP_HEALTH=failed; fi
+    printf 'Обновление не требуется.\nСтарый commit: %s\nНовый commit: %s\nСтарый порт: %s\nНовый порт: %s\nBackup: не создавался\nHealth: %s\n' \
+      "$OLD_COMMIT" "$OLD_COMMIT" "$OLD_PORT" "$PORT" "$NOOP_HEALTH"
+  fi
   if ! install_cli_launchers; then
     warn "Обновление не требуется, но launcher в /usr/local/bin не установлен."
   fi
@@ -202,6 +276,7 @@ run_update_cutover_steps \
   cutover_create_backup \
   cutover_apply_migrations \
   cutover_switch_current \
+  cutover_refresh_deployment \
   cutover_start_service \
   cutover_health_check
 
@@ -213,5 +288,10 @@ if ! prune_releases "$KEEP_RELEASES"; then
   warn "Новый release работает, но удалить часть старых releases не удалось."
 fi
 END_EPOCH=$(date +%s)
-printf 'Обновление завершено.\nСтарый commit: %s\nНовый commit: %s\nBackup: %s\nВремя: %s секунд\nURL: %s/\n' \
-  "$OLD_COMMIT" "$TARGET_COMMIT" "$BACKUP_PATH" "$((END_EPOCH - START_EPOCH))" "$(local_base_url)"
+if [[ -n $CHANGE_PORT ]]; then
+  make_temp_dir PORT_CHANGE_TMP 'family-archive-port-change.XXXXXX'
+  perform_port_change "$PORT_CHANGE_TMP/recovery"
+fi
+printf 'Обновление завершено.\nСтарый commit: %s\nНовый commit: %s\nСтарый порт: %s\nНовый порт: %s\nBackup: %s\nBackup смены порта: %s\nHealth: %s\nВремя: %s секунд\nURL: %s/\n' \
+  "$OLD_COMMIT" "$TARGET_COMMIT" "$OLD_PORT" "$PORT" "$BACKUP_PATH" "${PORT_CHANGE_BACKUP:-не требовался}" \
+  "$([[ -n $CHANGE_PORT ]] && printf '%s' "$PORT_CHANGE_HEALTH" || printf ok)" "$((END_EPOCH - START_EPOCH))" "$(local_base_url)"

@@ -22,10 +22,15 @@ declare -a CLI_CREATED_PATHS=()
 
 readonly -a DEPLOYMENT_CONFIG_KEYS=(
   APP_NAME
+  SITE_NAME
   INSTALL_ROOT
   SERVICE_USER
   SERVICE_GROUP
   SERVICE_NAME
+  LISTEN_HOST
+  PORT
+  TIMEZONE
+  ENABLE_SYSTEMD
   LISTEN_ADDRESS
   REPOSITORY_URL
   DEFAULT_BRANCH
@@ -192,11 +197,16 @@ load_config() {
 
 set_default_config() {
   APP_NAME=family-tree
+  SITE_NAME='Family Archive'
   INSTALL_ROOT=/opt/family-tree
   SERVICE_USER=familytree
   SERVICE_GROUP=familytree
   SERVICE_NAME=family-tree
-  LISTEN_ADDRESS=127.0.0.1:8090
+  LISTEN_HOST=0.0.0.0
+  PORT=8090
+  TIMEZONE="$(system_timezone)"
+  ENABLE_SYSTEMD=true
+  LISTEN_ADDRESS=""
   REPOSITORY_URL=https://github.com/Garbage85/family-archive.git
   DEFAULT_BRANCH=main
   POCKETBASE_VERSION=0.39.10
@@ -250,9 +260,20 @@ parse_deployment_config() {
     seen[$key]=1
     config_value_has_forbidden_metachar "$value" &&
       die "Значение $key содержит shell-конструкцию или запрещённый метасимвол."
-    [[ $value != *[[:space:]]* ]] || die "Значение $key не должно содержать пробельные символы."
+    if [[ $key != SITE_NAME ]]; then
+      [[ $value != *[[:space:]]* ]] || die "Значение $key не должно содержать пробельные символы."
+    fi
     printf -v "$key" '%s' "$value"
   done < "$file"
+  if [[ -n ${seen[LISTEN_ADDRESS]:-} ]]; then
+    [[ -z ${seen[LISTEN_HOST]:-} && -z ${seen[PORT]:-} ]] ||
+      die "LISTEN_ADDRESS нельзя смешивать с LISTEN_HOST или PORT."
+    [[ $LISTEN_ADDRESS =~ ^([^:]+):([0-9]{1,5})$ ]] ||
+      die "Устаревший LISTEN_ADDRESS имеет некорректный формат."
+    LISTEN_HOST=${BASH_REMATCH[1]}
+    PORT=${BASH_REMATCH[2]}
+    warn "LISTEN_ADDRESS устарел; при следующей записи будет сохранён как LISTEN_HOST и PORT."
+  fi
 }
 
 config_value_has_forbidden_metachar() {
@@ -264,8 +285,9 @@ config_value_has_forbidden_metachar() {
 }
 
 validate_config() {
-  local listen_port_value checksum_name checksum_value
+  local checksum_name checksum_value
   [[ ${APP_NAME:-} =~ ^[a-z][a-z0-9-]*$ ]] || die "Некорректный APP_NAME."
+  validate_site_name "$SITE_NAME"
   [[ ${INSTALL_ROOT:-} =~ ^/[A-Za-z0-9._/-]+$ && $INSTALL_ROOT != / && $INSTALL_ROOT != */ ]] ||
     die "INSTALL_ROOT должен быть абсолютным путём без пробелов, без завершающего / и не может быть /."
   path_entry_is_safe "${INSTALL_ROOT#/}" || die "INSTALL_ROOT содержит небезопасные компоненты пути."
@@ -274,7 +296,10 @@ validate_config() {
   [[ ${SERVICE_NAME:-} =~ ^[A-Za-z0-9_.@-]+$ ]] || die "Некорректный SERVICE_NAME."
   [[ ${SERVICE_USER:-} =~ ^[a-z_][a-z0-9_-]*$ ]] || die "Некорректный SERVICE_USER."
   [[ ${SERVICE_GROUP:-} =~ ^[a-z_][a-z0-9_-]*$ ]] || die "Некорректный SERVICE_GROUP."
-  [[ ${LISTEN_ADDRESS:-} =~ ^([A-Za-z0-9.-]+):[0-9]{1,5}$ ]] || die "LISTEN_ADDRESS должен иметь вид 127.0.0.1:8090."
+  validate_listen_host "$LISTEN_HOST"
+  validate_port "$PORT"
+  validate_timezone "$TIMEZONE"
+  [[ $ENABLE_SYSTEMD == true || $ENABLE_SYSTEMD == false ]] || die "ENABLE_SYSTEMD допускает только true или false."
   [[ ${REPOSITORY_URL:-} =~ ^https://[A-Za-z0-9._~:/@%+=,-]+$ ]] ||
     die "REPOSITORY_URL должен быть HTTPS URL без shell-метасимволов."
   [[ -n ${DEFAULT_BRANCH:-} && $DEFAULT_BRANCH != -* && $DEFAULT_BRANCH != *[[:space:]]* &&
@@ -284,13 +309,78 @@ validate_config() {
     checksum_value=${!checksum_name:-}
     [[ $checksum_value =~ ^[0-9a-fA-F]{64}$ ]] || die "$checksum_name должен содержать SHA-256 из 64 hex-символов."
   done
-  listen_port_value=${LISTEN_ADDRESS##*:}
-  (( 10#$listen_port_value >= 1 && 10#$listen_port_value <= 65535 )) || die "Порт LISTEN_ADDRESS должен быть в диапазоне 1–65535."
   validate_positive_integer KEEP_RELEASES "$KEEP_RELEASES"
   validate_positive_integer KEEP_BACKUPS "$KEEP_BACKUPS"
   validate_positive_integer MIN_FREE_MB "$MIN_FREE_MB"
   validate_positive_integer HEALTH_RETRIES "$HEALTH_RETRIES"
   validate_positive_integer HEALTH_DELAY_SECONDS "$HEALTH_DELAY_SECONDS"
+}
+
+validate_site_name() {
+  local value=$1
+  [[ -n $value && ${#value} -le 120 && $value != *$'\n'* && $value != *$'\r'* ]] ||
+    die "SITE_NAME должен содержать от 1 до 120 символов в одной строке."
+  config_value_has_forbidden_metachar "$value" && die "SITE_NAME содержит запрещённый метасимвол."
+  return 0
+}
+
+validate_port() {
+  local value=$1
+  [[ $value =~ ^[0-9]+$ ]] || die "PORT должен быть целым числом."
+  (( ${#value} <= 5 )) || die "PORT должен быть в диапазоне 1024–65535."
+  (( 10#$value >= 1024 && 10#$value <= 65535 )) || die "PORT должен быть в диапазоне 1024–65535."
+}
+
+ipv4_is_valid() {
+  local value=$1 octet
+  local -a octets
+  [[ $value =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+  IFS=. read -r -a octets <<< "$value"
+  for octet in "${octets[@]}"; do
+    [[ $octet =~ ^[0-9]{1,3}$ ]] && (( 10#$octet <= 255 )) || return 1
+  done
+}
+
+listen_host_is_local_address() {
+  local value=$1
+  command -v ip >/dev/null 2>&1 || return 1
+  ip -o addr show 2>/dev/null | awk -v requested="$value" '{ address=$4; sub(/\/.*/, "", address); if (address == requested) found=1 } END { exit !found }'
+}
+
+validate_listen_host() {
+  local value=$1
+  case "$value" in
+    127.0.0.1|0.0.0.0|::1|::) return 0 ;;
+  esac
+  if ipv4_is_valid "$value" || [[ $value == *:* && $value =~ ^[0-9A-Fa-f:]+$ ]]; then
+    listen_host_is_local_address "$value" || die "LISTEN_HOST не назначен локальному интерфейсу: $value"
+    return 0
+  fi
+  die "LISTEN_HOST должен быть loopback, wildcard или корректным локальным IP."
+}
+
+system_timezone() {
+  local zone=""
+  if command -v timedatectl >/dev/null 2>&1; then
+    zone=$(timedatectl show --property=Timezone --value 2>/dev/null || true)
+  fi
+  if [[ -z $zone && -L /etc/localtime ]]; then
+    zone=$(readlink -f /etc/localtime 2>/dev/null || true)
+    zone=${zone#*/zoneinfo/}
+  fi
+  printf '%s\n' "${zone:-UTC}"
+}
+
+validate_timezone() {
+  local zone=$1
+  [[ -n $zone && $zone != /* && $zone != *..* && $zone != *[[:space:]]* ]] ||
+    die "Некорректный TIMEZONE."
+  if command -v timedatectl >/dev/null 2>&1 &&
+    timedatectl list-timezones 2>/dev/null | grep -Fqx -- "$zone"; then
+    return 0
+  fi
+  [[ -e /usr/share/zoneinfo/$zone ]] ||
+    die "Неизвестный часовой пояс: $zone"
 }
 
 validate_positive_integer() {
@@ -654,35 +744,194 @@ remove_cli_launchers() {
   CLI_CREATED_PATHS=()
 }
 
-listen_host() {
-  printf '%s\n' "${LISTEN_ADDRESS%:*}"
+listen_host() { printf '%s\n' "$LISTEN_HOST"; }
+
+listen_port() { printf '%s\n' "$PORT"; }
+
+format_host_for_url() {
+  [[ $1 == *:* ]] && printf '[%s]' "$1" || printf '%s' "$1"
 }
 
-listen_port() {
-  printf '%s\n' "${LISTEN_ADDRESS##*:}"
+listen_address() {
+  if [[ $LISTEN_HOST == *:* ]]; then
+    printf '[%s]:%s\n' "$LISTEN_HOST" "$PORT"
+  else
+    printf '%s:%s\n' "$LISTEN_HOST" "$PORT"
+  fi
+}
+
+health_host() {
+  case "$LISTEN_HOST" in
+    0.0.0.0) printf '127.0.0.1\n' ;;
+    ::) printf '::1\n' ;;
+    *) printf '%s\n' "$LISTEN_HOST" ;;
+  esac
 }
 
 local_base_url() {
-  printf 'http://%s:%s\n' "$(listen_host)" "$(listen_port)"
+  printf 'http://%s:%s\n' "$(format_host_for_url "$(health_host)")" "$PORT"
 }
 
-port_is_listening() {
-  ss -ltnH "sport = :$(listen_port)" 2>/dev/null | grep -q .
+ip_is_private() {
+  local value=$1
+  [[ $value =~ ^10\. || $value =~ ^192\.168\. || $value =~ ^172\.(1[6-9]|2[0-9]|3[01])\. ||
+    $value =~ ^169\.254\. || $value =~ ^[fF][cCdD] || $value =~ ^[fF][eE][89aAbB] ]]
+}
+
+network_addresses() {
+  local primary="" address
+  command -v ip >/dev/null 2>&1 || return 0
+  primary=$(ip route get 1.1.1.1 2>/dev/null | awk '{ for (i=1; i<=NF; i++) if ($i == "src") { print $(i+1); exit } }')
+  if [[ -n $primary ]] && ip_is_private "$primary"; then
+    printf '%s\n' "$primary"
+    return 0
+  fi
+  while IFS= read -r address; do
+    ip_is_private "$address" && printf '%s\n' "$address"
+  done < <(ip -o addr show scope global 2>/dev/null | awk '{ address=$4; sub(/\/.*/, "", address); print address }' | awk '!seen[$0]++')
+}
+
+print_install_summary() {
+  local commit=$1 version=${2:-unknown} service_state address found=0
+  if [[ $ENABLE_SYSTEMD == true ]]; then
+    service_state=$(systemctl is-active "$SERVICE_NAME" 2>/dev/null || printf inactive)
+  else
+    service_state='не установлен (--no-systemd)'
+  fi
+  printf '\n==================================================\n Family Archive установлен успешно\n==================================================\n\n'
+  printf '%-15s %s\n' \
+    'Версия:' "$version" \
+    'Commit:' "$commit" \
+    'Каталог:' "$INSTALL_ROOT" \
+    'Сервис:' "$service_state" \
+    'Порт:' "$PORT" \
+    'Локальный URL:' "$(local_base_url)"
+  local -a summary_addresses=()
+  case "$LISTEN_HOST" in
+    0.0.0.0|::) mapfile -t summary_addresses < <(network_addresses) ;;
+    127.0.0.1|::1) ;;
+    *) summary_addresses+=("$LISTEN_HOST") ;;
+  esac
+  for address in "${summary_addresses[@]:-}"; do
+    [[ -n $address ]] || continue
+    printf '%-15s http://%s:%s\n' "$([[ $found == 0 ]] && printf 'Сетевой URL:' || printf '')" \
+      "$(format_host_for_url "$address")" "$PORT"
+    ((found += 1))
+  done
+  if (( found )); then
+    address=${summary_addresses[0]}
+    printf '%-15s http://%s:%s/_/\n' 'Админка:' "$(format_host_for_url "$address")" "$PORT"
+  else
+    printf '%-15s %s/_/\n' 'Админка:' "$(local_base_url)"
+  fi
+  printf '%-15s %s/api/health\n\n' 'Health:' "$(local_base_url)"
+  printf 'Команды:\n\nfamily-archive status\nfamily-archive doctor\nfamily-archive backup\nfamily-archive update\n\n==================================================\n'
+}
+
+tcp_port_is_listening() {
+  local requested=${1:-$PORT}
+  if command -v ss >/dev/null 2>&1; then
+    ss -ltnH "sport = :$requested" 2>/dev/null | grep -q .
+    return
+  fi
+  local hex
+  printf -v hex '%04X' "$requested"
+  awk -v suffix=":$hex" '$2 ~ suffix"$" && $4 == "0A" { found=1 } END { exit !found }' \
+    /proc/net/tcp /proc/net/tcp6 2>/dev/null
+}
+
+systemd_socket_uses_port() {
+  local requested=${1:-$PORT}
+  command -v systemctl >/dev/null 2>&1 || return 1
+  systemctl list-sockets --all --no-legend --no-pager 2>/dev/null |
+    awk -v port="$requested" '{ for (i=1; i<=NF; i++) if ($i == port || $i ~ ":" port "$") found=1 } END { exit !found }'
+}
+
+port_is_listening() { tcp_port_is_listening "$PORT"; }
+
+port_is_available() {
+  local requested=${1:-$PORT}
+  ! tcp_port_is_listening "$requested" && ! systemd_socket_uses_port "$requested"
+}
+
+port_listener_details() {
+  local requested=${1:-$PORT} details=""
+  if command -v ss >/dev/null 2>&1; then
+    details=$(ss -ltnpH "sport = :$requested" 2>/dev/null || true)
+  fi
+  if systemd_socket_uses_port "$requested"; then
+    details+="${details:+$'\n'}systemd socket: $(systemctl list-sockets --all --no-legend --no-pager 2>/dev/null | awk -v port="$requested" '{ for (i=1; i<=NF; i++) if ($i == port || $i ~ ":" port "$") { print; next } }')"
+  fi
+  printf '%s\n' "${details:-владелец не определён}"
+}
+
+unit_http_endpoint() {
+  local text
+  command -v systemctl >/dev/null 2>&1 || return 1
+  text=$(systemctl cat "$SERVICE_NAME" 2>/dev/null || true)
+  sed -n 's/^ExecStart=.* serve --http=\([^ ]*\).*/\1/p' <<< "$text" | head -n 1
+}
+
+endpoint_port() {
+  local endpoint=$1
+  [[ $endpoint =~ :([0-9]+)$ ]] || return 1
+  printf '%s\n' "${BASH_REMATCH[1]}"
+}
+
+systemd_main_pid() {
+  systemctl show "$SERVICE_NAME" --property=MainPID --value 2>/dev/null || true
+}
+
+service_listening_ports() {
+  local pid
+  pid=$(systemd_main_pid)
+  [[ $pid =~ ^[1-9][0-9]*$ ]] || return 0
+  ss -ltnpH 2>/dev/null | awk -v marker="pid=$pid," \
+    'index($0, marker) { address=$4; sub(/^.*:/, "", address); if (address ~ /^[0-9]+$/ && !seen[address]++) print address }'
+}
+
+configured_port_owned_by_service() {
+  local pid details
+  pid=$(systemd_main_pid)
+  [[ $pid =~ ^[1-9][0-9]*$ ]] || return 1
+  details=$(ss -ltnpH "sport = :$PORT" 2>/dev/null || true)
+  [[ $details == *"pid=$pid,"* ]]
+}
+
+require_available_port() {
+  local requested=$1
+  validate_port "$requested"
+  if ! port_is_available "$requested"; then
+    printf 'Порт %s занят:\n%s\n' "$requested" "$(port_listener_details "$requested")" >&2
+    die "Выберите другой HTTP-порт."
+  fi
+}
+
+find_first_available_port() {
+  local candidate start=${1:-8090} end=${2:-8190}
+  for ((candidate=start; candidate<=end; candidate++)); do
+    if port_is_available "$candidate"; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
 }
 
 http_status_code() {
   local path=${1:-/}
   curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
-    --connect-timeout 2 --max-time 5 "$(local_base_url)$path" || true
+    --noproxy '*' --connect-timeout 2 --max-time 5 "$(local_base_url)$path" || true
 }
 
 api_health_ok() {
   curl --fail --silent --show-error --connect-timeout 2 --max-time 5 \
+    --noproxy '*' \
     "$(local_base_url)/api/health" >/dev/null
 }
 
 health_check_once() {
-  systemctl is-active --quiet "$SERVICE_NAME" &&
+  { [[ $ENABLE_SYSTEMD == false ]] || systemctl is-active --quiet "$SERVICE_NAME"; } &&
     port_is_listening &&
     [[ $(http_status_code /) == 200 ]] &&
     api_health_ok
@@ -725,7 +974,7 @@ write_install_config() {
   {
     printf '# Создано Family Archive deployment scripts. Не храните здесь секреты.\n'
     local key
-    for key in APP_NAME INSTALL_ROOT SERVICE_USER SERVICE_GROUP SERVICE_NAME LISTEN_ADDRESS \
+    for key in APP_NAME SITE_NAME INSTALL_ROOT SERVICE_USER SERVICE_GROUP SERVICE_NAME LISTEN_HOST PORT TIMEZONE ENABLE_SYSTEMD \
       REPOSITORY_URL DEFAULT_BRANCH POCKETBASE_VERSION POCKETBASE_SHA256_LINUX_ARM64 \
       POCKETBASE_SHA256_LINUX_AMD64 POCKETBASE_SHA256_LINUX_ARMV7 KEEP_RELEASES \
       KEEP_BACKUPS MIN_FREE_MB HEALTH_RETRIES HEALTH_DELAY_SECONDS; do
@@ -753,7 +1002,8 @@ write_systemd_unit() {
       "User=$SERVICE_USER" \
       "Group=$SERVICE_GROUP" \
       "WorkingDirectory=$INSTALL_ROOT/current" \
-      "ExecStart=$INSTALL_ROOT/current/pocketbase serve --http=$LISTEN_ADDRESS --dir=$INSTALL_ROOT/shared/pb_data --publicDir=$INSTALL_ROOT/current/pb_public --migrationsDir=$INSTALL_ROOT/current/pb_migrations --automigrate=false" \
+      "Environment=TZ=$TIMEZONE" \
+      "ExecStart=$INSTALL_ROOT/current/pocketbase serve --http=$(listen_address) --dir=$INSTALL_ROOT/shared/pb_data --publicDir=$INSTALL_ROOT/current/pb_public --migrationsDir=$INSTALL_ROOT/current/pb_migrations --automigrate=false" \
       'Restart=on-failure' \
       'RestartSec=5' \
       'LimitNOFILE=4096' \
@@ -775,6 +1025,36 @@ write_systemd_unit() {
   } > "$temporary"
   chmod 0644 "$temporary"
   mv -f "$temporary" "$destination"
+}
+
+change_port_transaction() {
+  local new_port=$1 config_path=$2 shared_config=$3 unit_path=$4 recovery_dir=$5
+  local old_port=$PORT result=0
+  validate_port "$new_port"
+  [[ $new_port != "$old_port" ]] || die "Новый порт совпадает с текущим: $old_port"
+  require_available_port "$new_port"
+  mkdir -p "$recovery_dir"
+  install -m 0600 "$config_path" "$recovery_dir/deployment.env"
+  install -m 0600 "$shared_config" "$recovery_dir/shared-deployment.env"
+  install -m 0644 "$unit_path" "$recovery_dir/service.unit"
+  PORT=$new_port
+  write_install_config "$config_path"
+  install -m 0600 "$config_path" "$shared_config"
+  write_systemd_unit "$unit_path"
+  systemctl daemon-reload
+  systemctl restart "$SERVICE_NAME" && wait_for_health && return 0
+
+  result=$?
+  warn "Health check на порту $new_port не прошёл; возвращаю прежний порт $old_port."
+  systemctl stop "$SERVICE_NAME" >/dev/null 2>&1 || true
+  install -m 0600 "$recovery_dir/deployment.env" "$config_path"
+  install -m 0600 "$recovery_dir/shared-deployment.env" "$shared_config"
+  install -m 0644 "$recovery_dir/service.unit" "$unit_path"
+  PORT=$old_port
+  systemctl daemon-reload
+  systemctl restart "$SERVICE_NAME" >/dev/null 2>&1 || true
+  wait_for_health || warn "После rollback прежняя конфигурация также не прошла health check."
+  return "${result:-1}"
 }
 
 apply_migrations() {
@@ -867,7 +1147,7 @@ restore_data_from_backup_isolated() (
 
 run_update_cutover_steps() {
   local step
-  [[ $# -eq 6 ]] || die "Для cutover требуется шесть упорядоченных шагов."
+  (( $# > 0 )) || die "Для cutover нужен хотя бы один упорядоченный шаг."
   for step in "$@"; do
     "$step"
   done

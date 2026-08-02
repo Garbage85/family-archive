@@ -254,10 +254,10 @@ assert_success 'unit запрещает runtime-миграции' \
 assert_success 'unit разрешает запись только в shared/pb_data' \
   grep -q "^ReadWritePaths=$INSTALL_ROOT/shared/pb_data$" "$TEST_ROOT/systemd/family-tree.service"
 
-INSTALL_ROOT=/opt/family-tree
-write_systemd_unit "$TEST_ROOT/systemd/default-family-tree.service"
-assert_success 'tracked systemd unit совпадает с генерируемым unit по умолчанию' \
-  cmp "$PROJECT_ROOT/systemd/family-tree.service" "$TEST_ROOT/systemd/default-family-tree.service"
+assert_success 'unit использует раздельные LISTEN_HOST и PORT' \
+  grep -q -- "--http=$(listen_address)" "$TEST_ROOT/systemd/family-tree.service"
+assert_success 'unit передаёт приложению сохранённый TIMEZONE' \
+  grep -Fqx "Environment=TZ=$TIMEZONE" "$TEST_ROOT/systemd/family-tree.service"
 
 write_install_config "$TEST_ROOT/config/deployment.env"
 assert_equal 600 "$(stat -c '%a' "$TEST_ROOT/config/deployment.env")" 'рабочий deployment.env имеет права 0600'
@@ -282,6 +282,12 @@ assert_success 'version показывает справку без production-д
   "$PROJECT_ROOT/scripts/version-server.sh" --help
 assert_success 'logs показывает справку без production-действий' \
   "$PROJECT_ROOT/scripts/logs-server.sh" --help
+assert_success 'installer показывает dry-run/yes справку без production-действий' \
+  "$PROJECT_ROOT/scripts/install-server.sh" --help
+assert_success 'updater показывает dry-run/yes справку без production-действий' \
+  "$PROJECT_ROOT/scripts/update-server.sh" --help
+assert_success 'legacy migrator показывает dry-run/yes справку без production-действий' \
+  "$PROJECT_ROOT/scripts/migrate-legacy-server.sh" --help
 assert_success 'повторная установка CLI-ссылок идемпотентна' install_cli_launchers
 remove_cli_launchers
 printf 'чужая команда\n' > "$FAMILY_ARCHIVE_CLI_BIN_DIR/family-archive"
@@ -289,32 +295,6 @@ assert_failure 'launcher не перезаписывает посторонню�
 assert_equal 'чужая команда' "$(cat "$FAMILY_ARCHIVE_CLI_BIN_DIR/family-archive")" \
   'конфликтующий launcher остаётся без изменений'
 unset FAMILY_ARCHIVE_CLI_BIN_DIR
-
-mkdir -p "$TEST_ROOT/bootstrap-bin" "$TEST_ROOT/bootstrap-tmp"
-# shellcheck disable=SC2016 # Создаваемый mock-скрипт должен раскрыть переменные при своём запуске.
-printf '%s\n' \
-  '#!/usr/bin/env bash' \
-  'set -eu' \
-  'destination=${!#}' \
-  'mkdir -p "$destination/scripts"' \
-  'cp "$BOOTSTRAP_MOCK_INSTALLER" "$destination/scripts/install-server.sh"' \
-  'chmod 0755 "$destination/scripts/install-server.sh"' \
-  > "$TEST_ROOT/bootstrap-bin/git"
-# shellcheck disable=SC2016 # Переменные относятся к запуску mock installer.
-printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\n" "$*" > "$BOOTSTRAP_TEST_RECORD"' \
-  > "$TEST_ROOT/bootstrap-mock-installer"
-printf '%s\n' '#!/usr/bin/env bash' 'exec "$@"' > "$TEST_ROOT/bootstrap-bin/sudo"
-chmod 0755 "$TEST_ROOT/bootstrap-bin/git" "$TEST_ROOT/bootstrap-bin/sudo" \
-  "$TEST_ROOT/bootstrap-mock-installer"
-assert_success 'bootstrap передаёт установку mock install-server без live-действий' \
-  env PATH="$TEST_ROOT/bootstrap-bin:$PATH" TMPDIR="$TEST_ROOT/bootstrap-tmp" \
-  BOOTSTRAP_TEST_RECORD="$TEST_ROOT/bootstrap-arguments" \
-  BOOTSTRAP_MOCK_INSTALLER="$TEST_ROOT/bootstrap-mock-installer" \
-  bash "$PROJECT_ROOT/scripts/bootstrap.sh" --admin-instructions
-assert_equal '--admin-instructions' "$(cat "$TEST_ROOT/bootstrap-arguments")" \
-  'bootstrap передаёт аргументы штатному installer'
-assert_equal '' "$(find "$TEST_ROOT/bootstrap-tmp" -mindepth 1 -print -quit)" \
-  'bootstrap удаляет временный checkout'
 
 printf '1..%s\n' "$((PASSED + FAILED))"
 if (( FAILED )); then

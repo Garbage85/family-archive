@@ -50,9 +50,16 @@ while (($#)); do
 done
 
 setup_traps
-require_root
+if [[ ${FAMILY_ARCHIVE_DOCTOR_TEST_MODE:-0} == 1 ]]; then
+  [[ $INSTALL_ROOT == "${TMPDIR:-/tmp}"/* ]] || die "Doctor test root должен находиться внутри TMPDIR."
+else
+  require_root
+fi
 
-REQUIRED_COMMANDS=(awk basename curl cut df dirname find getent grep head journalctl readlink runuser sed sha256sum sort ss systemctl)
+printf 'SITE_NAME=%s\nLISTEN_HOST=%s\nPORT=%s\nTIMEZONE=%s\nЛокальный URL: %s\n' \
+  "$SITE_NAME" "$LISTEN_HOST" "$PORT" "$TIMEZONE" "$(local_base_url)"
+
+REQUIRED_COMMANDS=(awk basename curl cut df dirname find getent grep head journalctl paste readlink runuser sed sha256sum sort ss systemctl)
 for command_name in "${REQUIRED_COMMANDS[@]}"; do
   if command -v "$command_name" >/dev/null 2>&1; then
     pass "Команда доступна: $command_name"
@@ -92,26 +99,62 @@ else
   failure "Пользователь $SERVICE_USER не может читать или писать pb_data."
 fi
 
-if command -v systemctl >/dev/null 2>&1 && systemctl cat "$SERVICE_NAME" >/dev/null 2>&1; then
+UNIT_ENDPOINT="$(unit_http_endpoint 2>/dev/null || true)"
+UNIT_PORT="$(endpoint_port "$UNIT_ENDPOINT" 2>/dev/null || true)"
+if [[ $ENABLE_SYSTEMD == false ]]; then
+  warning "systemd отключён в deployment-конфигурации."
+elif command -v systemctl >/dev/null 2>&1 && systemctl cat "$SERVICE_NAME" >/dev/null 2>&1; then
   pass "systemd unit существует: $SERVICE_NAME"
 else
   failure "systemd unit не найден: $SERVICE_NAME"
 fi
-if command -v systemctl >/dev/null 2>&1 && systemctl is-enabled --quiet "$SERVICE_NAME"; then
+if [[ $ENABLE_SYSTEMD == false ]]; then
+  :
+elif command -v systemctl >/dev/null 2>&1 && systemctl is-enabled --quiet "$SERVICE_NAME"; then
   pass "systemd unit включён."
 else
   warning "systemd unit не включён."
 fi
-if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet "$SERVICE_NAME"; then
+if [[ $ENABLE_SYSTEMD == false ]]; then
+  :
+elif command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet "$SERVICE_NAME"; then
   pass "systemd service active."
 else
   failure "systemd service не active."
 fi
 
+if [[ $ENABLE_SYSTEMD == true ]]; then
+  if [[ -z $UNIT_PORT ]]; then
+    failure "Не удалось определить --http в systemd unit."
+  elif [[ $UNIT_PORT == "$PORT" ]]; then
+    pass "Порт unit совпадает с deployment-конфигом: $PORT."
+  else
+    failure "Несовпадение config/unit: PORT=$PORT, unit слушает $UNIT_PORT."
+  fi
+  if [[ $PORT != 8090 && $UNIT_ENDPOINT == *:8090 ]]; then
+    failure "Unit содержит устаревший hardcoded 8090."
+  fi
+fi
+
 if command -v ss >/dev/null 2>&1 && port_is_listening; then
   pass "TCP-порт $(listen_port) слушается."
+  printf 'INFO  Слушатель: %s\n' "$(port_listener_details)"
+  if [[ $ENABLE_SYSTEMD == true ]] && ! configured_port_owned_by_service; then
+    failure "Настроенный порт занят процессом, не совпадающим с MainPID сервиса."
+  fi
 else
   failure "TCP-порт $(listen_port) не слушается."
+fi
+SERVICE_PORTS="$(service_listening_ports 2>/dev/null | paste -sd, -)"
+if [[ -n $SERVICE_PORTS && ,$SERVICE_PORTS, != *,$PORT,* ]]; then
+  failure "Сервис слушает другой порт: $SERVICE_PORTS; в config указан $PORT."
+elif [[ -n $SERVICE_PORTS ]]; then
+  pass "Слушающий порт процесса сервиса совпадает с config."
+fi
+if [[ $(local_base_url) == *":$PORT" ]]; then
+  pass "HTTP health check использует фактический PORT=$PORT."
+else
+  failure "HTTP health check сформирован не для PORT=$PORT."
 fi
 HTTP_CODE="$(http_status_code /)"
 if [[ $HTTP_CODE == 200 ]]; then
