@@ -1,13 +1,32 @@
 import { SidebarZoomGuard } from './sidebar-zoom-guard.js';
+import {
+  buildRelativeDraft,
+  getRelativeActionTypes,
+  markDraftFieldExplicit,
+  mergeRelativeDraft,
+  resetDraftFieldSuggestion,
+} from './person-autofill.js';
 import { getInitialMaidenName } from './person-relationship-rules.js';
 
 const RELATION_CONFIG = {
-  father: { label: 'отца', gender: 'M', lockGender: true },
-  mother: { label: 'мать', gender: 'F', lockGender: true },
-  parent: { label: 'другого родителя', gender: '' },
-  spouse: { label: 'супруга', gender: 'M' },
-  child: { label: 'ребёнка', gender: 'M' },
-  sibling: { label: 'брата или сестру', gender: 'M' },
+  father: { action: 'Отец', label: 'отца', lockGender: true },
+  mother: { action: 'Мать', label: 'мать', lockGender: true },
+  son: { action: 'Сын', label: 'сына', lockGender: true },
+  daughter: { action: 'Дочь', label: 'дочь', lockGender: true },
+  brother: { action: 'Брат', label: 'брата', lockGender: true },
+  sister: { action: 'Сестра', label: 'сестру', lockGender: true },
+  husband: { action: 'Супруг', label: 'супруга', lockGender: true },
+  wife: { action: 'Супруга', label: 'супругу', lockGender: true },
+  spouse: { action: 'Супруг(а)', label: 'супруга/супругу' },
+  parent: { action: 'Другой родитель', label: 'другого родителя' },
+};
+
+const AUTOFILL_FIELD_NAMES = {
+  first_name: 'first_name',
+  last_name: 'last_name',
+  middle_name: 'patronymic',
+  gender: 'gender',
+  maiden_name: 'maiden_name',
 };
 
 const FORM_CONTROL_SELECTOR =
@@ -24,6 +43,10 @@ export class PersonSidebar {
     this.editable = false;
     this.mode = 'view';
     this.busy = false;
+    this.people = [];
+    this.getPeople = null;
+    this.relativeDraft = null;
+    this.relativeContext = null;
     this.eventCleanups = [];
     this.viewportCleanups = [];
     this.maidenNameFormStates = new WeakMap();
@@ -71,13 +94,7 @@ export class PersonSidebar {
             </div>
             <section class="person-sidebar-edit-actions">
               <h3>Добавить родственника</h3>
-              <div class="person-sidebar-relation-actions">
-                <button type="button" class="ghost" data-sidebar-relation="father">Отца</button>
-                <button type="button" class="ghost" data-sidebar-relation="mother">Мать</button>
-                <button type="button" class="ghost" data-sidebar-relation="spouse">Супруга</button>
-                <button type="button" class="ghost" data-sidebar-relation="child">Ребёнка</button>
-                <button type="button" class="ghost" data-sidebar-relation="sibling">Брата/сестру</button>
-              </div>
+              <div class="person-sidebar-relation-actions" data-sidebar-relation-actions></div>
               <details class="person-sidebar-more-actions">
                 <summary>Дополнительные действия</summary>
                 <button type="button" class="ghost wide" data-sidebar-relation="parent">Другой родитель</button>
@@ -91,13 +108,31 @@ export class PersonSidebar {
             <h2 tabindex="-1" data-sidebar-relative-title>Добавить родственника</h2>
             <input name="relative_type" type="hidden" />
             <div class="person-sidebar-form-grid">
-              <label>Фамилия<input name="last_name" /></label>
-              <label class="hidden" data-maiden-name-field>Девичья фамилия<input name="maiden_name" /></label>
-              <label>Имя<input name="first_name" required /></label>
-              <label>Отчество<input name="middle_name" /></label>
-              <fieldset class="person-sidebar-gender"><legend>Пол</legend><label><input type="radio" name="gender" value="M" checked /> Мужчина</label><label><input type="radio" name="gender" value="F" /> Женщина</label><label><input type="radio" name="gender" value="" /> Не указан</label></fieldset>
+              <div class="person-sidebar-autofill-field" data-autofill-control="last_name">
+                <label>Фамилия<input name="last_name" /></label>
+                <div class="person-sidebar-autofill-meta"><span data-autofill-badge>Предложено автоматически</span><button type="button" data-autofill-reset="last_name">Сбросить подсказку</button></div>
+              </div>
+              <div class="person-sidebar-autofill-field hidden" data-maiden-name-field data-autofill-control="maiden_name">
+                <label>Девичья фамилия<input name="maiden_name" /></label>
+                <div class="person-sidebar-autofill-meta"><span data-autofill-badge>Предложено автоматически</span><button type="button" data-autofill-reset="maiden_name">Сбросить подсказку</button></div>
+              </div>
+              <div class="person-sidebar-autofill-field" data-autofill-control="first_name">
+                <label>Имя<input name="first_name" required /></label>
+                <div class="person-sidebar-autofill-meta"><span data-autofill-badge>Предложено автоматически</span><button type="button" data-autofill-reset="first_name">Сбросить подсказку</button></div>
+              </div>
+              <div class="person-sidebar-autofill-field" data-autofill-control="patronymic">
+                <label>Отчество<input name="middle_name" /></label>
+                <div class="person-sidebar-autofill-meta"><span data-autofill-badge>Предложено автоматически</span><button type="button" data-autofill-reset="patronymic">Сбросить подсказку</button></div>
+              </div>
+              <fieldset class="person-sidebar-gender"><legend>Пол</legend><label><input type="radio" name="gender" value="M" /> Мужчина</label><label><input type="radio" name="gender" value="F" /> Женщина</label><label><input type="radio" name="gender" value="" /> Не указан</label></fieldset>
               <label class="full">Дата рождения<input name="birth_date" type="date" /></label>
             </div>
+            <p class="person-sidebar-required-link" data-sidebar-required-link></p>
+            <section class="person-sidebar-suggestions hidden" data-sidebar-suggestions>
+              <h3>Предлагаемые связи</h3>
+              <div data-sidebar-suggestion-list></div>
+            </section>
+            <ul class="person-sidebar-warnings hidden" data-sidebar-warnings></ul>
           </form>
 
           <form id="person-sidebar-photo-form" class="hidden" data-sidebar-panel="photo">
@@ -150,6 +185,9 @@ export class PersonSidebar {
       if (button.matches('[data-sidebar-relation]')) {
         this.showRelativeMode(button.dataset.sidebarRelation);
       }
+      if (button.matches('[data-autofill-reset]')) {
+        this.resetRelativeSuggestion(button.dataset.autofillReset);
+      }
       if (button.matches('[data-sidebar-photo]')) this.showMode('photo');
       if (button.matches('[data-sidebar-delete]')) this.showMode('delete');
       if (button.matches('[data-sidebar-confirm-delete]')) this.runAction('onDelete');
@@ -161,10 +199,16 @@ export class PersonSidebar {
     });
     listen(this.relativeForm, 'submit', (event) => {
       event.preventDefault();
-      const values = Object.fromEntries(new FormData(this.relativeForm));
+      const formData = new FormData(this.relativeForm);
+      const values = Object.fromEntries(formData);
       const relation = values.relative_type;
       delete values.relative_type;
-      this.runAction('onAddRelative', relation, values);
+      delete values.suggested_link;
+      const selectedLinkIds = new Set(formData.getAll('suggested_link').map(String));
+      const links = (this.relativeDraft?.suggestedLinks || [])
+        .filter((item) => selectedLinkIds.has(item.id))
+        .map(({ personId, relation: linkRelation }) => ({ personId, relation: linkRelation }));
+      this.runAction('onAddRelative', relation, values, links);
     });
     listen(this.photoForm, 'submit', (event) => {
       event.preventDefault();
@@ -184,17 +228,37 @@ export class PersonSidebar {
       this.requestFrame(() => this.scrollControlIntoView(event.target));
     });
 
-    for (const form of [this.editForm, this.relativeForm]) {
-      this.maidenNameFormStates.set(form, { initialised: false });
-      listen(form.elements.maiden_name, 'input', () => {
-        this.maidenNameFormStates.get(form).initialised = true;
-      });
-      listen(form, 'change', (event) => {
-        if (!event.target.matches('[name="gender"]')) return;
-        this.updateMaidenNameField(form, { genderChanged: true });
-      });
-      this.updateMaidenNameField(form);
-    }
+    this.maidenNameFormStates.set(this.editForm, { initialised: false });
+    listen(this.editForm.elements.maiden_name, 'input', () => {
+      this.maidenNameFormStates.get(this.editForm).initialised = true;
+    });
+    listen(this.editForm, 'change', (event) => {
+      if (!event.target.matches('[name="gender"]')) return;
+      this.updateMaidenNameField(this.editForm, { genderChanged: true });
+    });
+    this.updateMaidenNameField(this.editForm);
+
+    listen(this.relativeForm, 'input', (event) => {
+      const field = AUTOFILL_FIELD_NAMES[event.target.name];
+      if (!field || field === 'gender' || !this.relativeDraft) return;
+      this.relativeDraft = markDraftFieldExplicit(this.relativeDraft, field, event.target.value);
+      this.renderAutofillFieldState(field);
+    });
+    listen(this.relativeForm, 'change', (event) => {
+      if (event.target.matches('[name="suggested_link"]')) {
+        this.updateSuggestedLinkSelection(event.target.value, event.target.checked);
+      }
+      if (event.target.matches('[name="gender"]') && this.relativeDraft) {
+        this.relativeDraft = markDraftFieldExplicit(
+          this.relativeDraft,
+          'gender',
+          event.target.value,
+        );
+        this.relativeContext = { ...this.relativeContext, genderOverride: event.target.value };
+        this.relativeDraft = mergeRelativeDraft(this.relativeDraft, this.buildFreshRelativeDraft());
+        this.applyRelativeDraft();
+      }
+    });
   }
 
   open(viewModel, options = {}) {
@@ -204,6 +268,8 @@ export class PersonSidebar {
     this.viewModel = viewModel;
     this.editable = Boolean(options.editable);
     this.handlers = options.handlers || this.handlers;
+    this.people = Array.isArray(options.people) ? options.people : this.people;
+    this.getPeople = typeof options.getPeople === 'function' ? options.getPeople : this.getPeople;
     this.render(viewModel);
     this.showMode('view', { focus: false });
     this.host.classList.add('open');
@@ -238,17 +304,151 @@ export class PersonSidebar {
   showRelativeMode(relation) {
     const config = RELATION_CONFIG[relation];
     if (!config) return;
+    const selectedPerson = this.getSelectedPerson();
+    if (!selectedPerson) return;
     this.relativeForm.reset();
-    for (const input of this.relativeForm.querySelectorAll('[name="gender"]')) {
-      input.checked = input.value === config.gender;
-    }
     this.relativeForm.querySelector('.person-sidebar-gender').disabled = Boolean(config.lockGender);
-    this.maidenNameFormStates.set(this.relativeForm, { initialised: false });
-    this.updateMaidenNameField(this.relativeForm);
     this.relativeForm.elements.relative_type.value = relation;
+    this.relativeContext = {
+      selectedPerson,
+      relationType: relation,
+      people: this.currentPeople(),
+    };
+    this.relativeDraft = buildRelativeDraft(this.relativeContext);
+    this.applyRelativeDraft();
     this.relativeForm.querySelector('[data-sidebar-relative-title]').textContent =
       `Добавить ${config.label}`;
     this.showMode('relative');
+  }
+
+  getSelectedPerson() {
+    const selected = this.currentPeople().find(
+      (person) => String(person?.id) === String(this.viewModel?.id),
+    );
+    if (selected) return selected;
+    if (!this.viewModel) return null;
+    return {
+      id: this.viewModel.id,
+      data: this.viewModel.values || {},
+      rels: { parents: [], spouses: [], children: [] },
+    };
+  }
+
+  currentPeople() {
+    const people = this.getPeople?.();
+    return Array.isArray(people) ? people : this.people;
+  }
+
+  buildFreshRelativeDraft() {
+    if (!this.relativeContext) return null;
+    const selectedSecondParents = (this.relativeDraft?.suggestedLinks || []).filter(
+      (item) => item.kind === 'second-parent' && item.checked,
+    );
+    return buildRelativeDraft({
+      ...this.relativeContext,
+      secondParentId:
+        selectedSecondParents.length === 1 ? selectedSecondParents[0].personId : undefined,
+    });
+  }
+
+  applyRelativeDraft() {
+    if (!this.relativeDraft) return;
+    const values = {
+      first_name: this.relativeDraft.person.first_name,
+      last_name: this.relativeDraft.person.last_name,
+      middle_name: this.relativeDraft.person.patronymic,
+      maiden_name: this.relativeDraft.person.maiden_name,
+    };
+    for (const [name, value] of Object.entries(values)) {
+      this.relativeForm.elements[name].value = value;
+    }
+    for (const input of this.relativeForm.querySelectorAll('[name="gender"]')) {
+      input.checked = input.value === this.relativeDraft.person.gender;
+    }
+    for (const field of Object.values(AUTOFILL_FIELD_NAMES)) this.renderAutofillFieldState(field);
+    this.updateRelativeMaidenVisibility();
+    this.renderRelativeLinks();
+    this.renderRelativeWarnings();
+  }
+
+  renderAutofillFieldState(field) {
+    const container = this.relativeForm.querySelector(`[data-autofill-control="${field}"]`);
+    if (!container || !this.relativeDraft) return;
+    const source = this.relativeDraft.fieldSources[field];
+    const badge = container.querySelector('[data-autofill-badge]');
+    const reset = container.querySelector('[data-autofill-reset]');
+    badge?.classList.toggle('hidden', source !== 'suggested');
+    const freshDraft = this.buildFreshRelativeDraft();
+    reset?.classList.toggle('hidden', freshDraft?.fieldSources?.[field] !== 'suggested');
+    container.classList.toggle('is-suggested', source === 'suggested');
+  }
+
+  resetRelativeSuggestion(field) {
+    if (!this.relativeDraft) return;
+    const freshDraft = this.buildFreshRelativeDraft();
+    if (!freshDraft) return;
+    this.relativeDraft = resetDraftFieldSuggestion(this.relativeDraft, freshDraft, field);
+    this.applyRelativeDraft();
+    const inputName = field === 'patronymic' ? 'middle_name' : field;
+    this.relativeForm.elements[inputName]?.focus();
+  }
+
+  updateSuggestedLinkSelection(linkId, checked) {
+    const selectedLink = this.relativeDraft?.suggestedLinks.find((item) => item.id === linkId);
+    if (!selectedLink) return;
+    selectedLink.checked = checked;
+    if (selectedLink.kind !== 'second-parent') return;
+    const freshDraft = this.buildFreshRelativeDraft();
+    this.relativeDraft = mergeRelativeDraft(this.relativeDraft, freshDraft);
+    this.applyRelativeDraft();
+  }
+
+  updateRelativeMaidenVisibility() {
+    const field = this.relativeForm.querySelector('[data-maiden-name-field]');
+    field.classList.toggle('hidden', this.relativeForm.elements.gender.value !== 'F');
+  }
+
+  renderRelativeLinks() {
+    const required = this.relativeForm.querySelector('[data-sidebar-required-link]');
+    required.textContent = this.relativeDraft.requiredLinks[0]?.label || '';
+
+    const section = this.relativeForm.querySelector('[data-sidebar-suggestions]');
+    const list = this.relativeForm.querySelector('[data-sidebar-suggestion-list]');
+    list.replaceChildren();
+    const links = this.relativeDraft.suggestedLinks;
+    section.classList.toggle('hidden', links.length === 0);
+    if (!links.length) return;
+
+    if (links.some((item) => item.kind === 'shared-parent')) {
+      const intro = document.createElement('p');
+      intro.className = 'person-sidebar-suggestion-intro';
+      intro.textContent = 'Использовать тех же родителей:';
+      list.append(intro);
+    }
+    for (const item of links) {
+      const label = document.createElement('label');
+      label.className = 'person-sidebar-suggestion';
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.name = 'suggested_link';
+      input.value = item.id;
+      input.checked = item.checked;
+      const text = document.createElement('span');
+      text.textContent = item.label;
+      label.append(input, text);
+      list.append(label);
+    }
+  }
+
+  renderRelativeWarnings() {
+    const list = this.relativeForm.querySelector('[data-sidebar-warnings]');
+    list.replaceChildren();
+    list.classList.toggle('hidden', this.relativeDraft.warnings.length === 0);
+    for (const warning of this.relativeDraft.warnings) {
+      const item = document.createElement('li');
+      item.textContent = warning;
+      list.append(item);
+    }
   }
 
   requestFrame(callback) {
@@ -366,7 +566,8 @@ export class PersonSidebar {
         '<button class="primary" type="submit" form="person-sidebar-photo-form">Загрузить</button>',
       delete: '<button class="danger" type="button" data-sidebar-confirm-delete>Удалить</button>',
     };
-    this.footer.innerHTML = `<button class="ghost" type="button" data-sidebar-cancel>Назад</button>${submitButtons[this.mode]}`;
+    const cancelLabel = this.mode === 'relative' ? 'Отмена' : 'Назад';
+    this.footer.innerHTML = `<button class="ghost" type="button" data-sidebar-cancel>${cancelLabel}</button>${submitButtons[this.mode]}`;
   }
 
   populateEditForm() {
@@ -425,6 +626,22 @@ export class PersonSidebar {
       .classList.toggle('hidden', !this.viewModel.photoUrl);
   }
 
+  renderRelationActions() {
+    const container = this.host.querySelector('[data-sidebar-relation-actions]');
+    container.replaceChildren();
+    const types = getRelativeActionTypes(this.getSelectedPerson()).filter(
+      (type) => type !== 'parent',
+    );
+    for (const type of types) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'ghost';
+      button.dataset.sidebarRelation = type;
+      button.textContent = RELATION_CONFIG[type].action;
+      container.append(button);
+    }
+  }
+
   async runAction(handlerName, ...args) {
     if (!this.editable || this.busy || typeof this.handlers[handlerName] !== 'function') return;
     this.busy = true;
@@ -448,6 +665,7 @@ export class PersonSidebar {
 
   render(viewModel) {
     this.title.textContent = viewModel.fullName;
+    this.renderRelationActions();
 
     if (viewModel.photoUrl) {
       this.avatar.src = viewModel.photoUrl;

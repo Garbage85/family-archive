@@ -674,6 +674,36 @@ button {
   font-size: 0.88rem;
   font-weight: 750;
 }
+.person-sidebar-autofill-field {
+  display: grid;
+  align-content: start;
+  min-width: 0;
+}
+.person-sidebar-autofill-field.is-suggested input {
+  border-color: #87ad9f;
+  background: #f4faf7;
+}
+.person-sidebar-autofill-meta {
+  min-height: 1.4rem;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.45rem;
+  padding-top: 0.28rem;
+  color: var(--forest-2);
+  font-size: 0.7rem;
+  font-weight: 750;
+  line-height: 1.25;
+}
+.person-sidebar-autofill-meta button {
+  flex: 0 0 auto;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: inherit;
+  text-decoration: underline;
+}
 .person-sidebar-form-grid .full,
 .person-sidebar-gender {
   grid-column: 1 / -1;
@@ -729,6 +759,65 @@ button {
 }
 .person-sidebar-more-actions .wide {
   margin-top: 0.7rem;
+}
+.person-sidebar-required-link {
+  margin: 1rem 0 0;
+  padding: 0.75rem 0.85rem;
+  border-radius: 12px;
+  background: #edf5f1;
+  color: var(--forest);
+  font-size: 0.82rem;
+  font-weight: 750;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.person-sidebar-suggestions {
+  min-width: 0;
+  margin-top: 1rem;
+  padding: 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+.person-sidebar-suggestions h3 {
+  margin: 0 0 0.75rem;
+  font-size: 1rem;
+}
+.person-sidebar-suggestion-intro {
+  margin: 0 0 0.55rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 750;
+}
+[data-sidebar-suggestion-list] {
+  display: grid;
+  min-width: 0;
+  gap: 0.65rem;
+}
+.person-sidebar-suggestion {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 0.6rem;
+  min-width: 0;
+  font-size: 0.86rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.person-sidebar-suggestion input {
+  width: auto;
+  margin-top: 0.15rem;
+}
+.person-sidebar-warnings {
+  display: grid;
+  gap: 0.45rem;
+  margin: 0.9rem 0 0;
+  padding: 0.75rem 0.75rem 0.75rem 1.8rem;
+  border-radius: 12px;
+  background: #fff7e9;
+  color: #765015;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 .person-sidebar-photo-preview {
   min-height: 132px;

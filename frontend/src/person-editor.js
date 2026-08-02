@@ -1,4 +1,10 @@
-import { addRelative, cloneTree, deletePerson, updatePerson } from './tree-utils.js';
+import {
+  addRelative,
+  addRelativeWithLinks,
+  cloneTree,
+  deletePerson,
+  updatePerson,
+} from './tree-utils.js';
 
 export function canEditPeople(role, previewMode = false) {
   return !previewMode && ['admin', 'member'].includes(role);
@@ -18,11 +24,19 @@ export function applyPersonAction(state, action) {
     const presets = {
       father: { relation: 'parent', gender: 'M' },
       mother: { relation: 'parent', gender: 'F' },
+      son: { relation: 'child', gender: 'M' },
+      daughter: { relation: 'child', gender: 'F' },
+      brother: { relation: 'sibling', gender: 'M' },
+      sister: { relation: 'sibling', gender: 'F' },
+      husband: { relation: 'spouse', gender: 'M' },
+      wife: { relation: 'spouse', gender: 'F' },
     };
     const preset = presets[action.relation];
     const relation = preset?.relation || action.relation;
     const values = preset ? { ...action.values, gender: preset.gender } : action.values;
-    const result = addRelative(state.data, action.personId, relation, values);
+    const result = Object.prototype.hasOwnProperty.call(action, 'links')
+      ? addRelativeWithLinks(state.data, action.personId, relation, values, action.links)
+      : addRelative(state.data, action.personId, relation, values);
     data = result.data;
     createdPersonId = result.person.id;
   } else if (action.type === 'delete') {
