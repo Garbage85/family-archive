@@ -38,7 +38,14 @@ while (($#)); do
 done
 
 setup_traps
-require_root
+if [[ ${FAMILY_ARCHIVE_STATUS_TEST_MODE:-0} == 1 ]]; then
+  [[ $INSTALL_ROOT == "${TMPDIR:-/tmp}"/* ]] || die "Status test root должен находиться внутри TMPDIR."
+  FAMILY_ARCHIVE_CLI_TEST_MODE=1
+  export FAMILY_ARCHIVE_CLI_TEST_MODE
+  validate_cli_test_sandbox || die "Status test CLI path должен находиться внутри TMPDIR."
+else
+  require_root
+fi
 require_commands git curl jq node systemctl tar df du find sort sed head journalctl ss grep awk
 
 if [[ $ENABLE_SYSTEMD == false ]]; then
@@ -62,6 +69,8 @@ if api_health_ok; then API_HEALTH=ok; else API_HEALTH=failed; fi
 if port_is_listening; then PORT_STATE=listening; else PORT_STATE=closed; fi
 PORT_PROCESS="$(port_listener_details)"
 LOCAL_URL="$(local_base_url)"
+CLI_PATH="$(cli_bin_dir)/family-archive"
+CLI_STATE="$(cli_installation_state)"
 PB_DATA_SIZE="$(du -sh "$INSTALL_ROOT/shared/pb_data" 2>/dev/null | awk '{print $1}' || printf unavailable)"
 LAST_BACKUP="$(find "$INSTALL_ROOT/backups" -maxdepth 1 -type f -name 'family-archive-*.tar.gz' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -n 1 | cut -d' ' -f2-)"
 FREE_SPACE="$(df -hP "$INSTALL_ROOT" 2>/dev/null | awk 'NR == 2 {print $4}' || printf unavailable)"
@@ -101,8 +110,10 @@ if (( JSON_OUTPUT )); then
     --arg free_space "$FREE_SPACE" \
     --arg update "$UPDATE_STATE" \
     --arg remote_commit "$REMOTE_COMMIT" \
+    --arg cli "$CLI_STATE" \
+    --arg cli_path "$CLI_PATH" \
     --arg logs "$LOGS" \
-    '{site_name:$site_name,listen_host:$listen_host,port:($port_number|tonumber),timezone:$timezone,local_url:$local_url,port_state:$port,port_process:$port_process,service:$service,release:$release,commit:$commit,source_ref:$source_ref,pocketbase_version:$pocketbase_version,node_version:$node_version,http_code:$http_code,api_health:$api_health,pb_data_size:$pb_data_size,last_backup:$last_backup,free_space:$free_space,update:$update,remote_commit:$remote_commit,logs:$logs}'
+    '{site_name:$site_name,listen_host:$listen_host,port:($port_number|tonumber),timezone:$timezone,local_url:$local_url,port_state:$port,port_process:$port_process,service:$service,release:$release,commit:$commit,source_ref:$source_ref,pocketbase_version:$pocketbase_version,node_version:$node_version,http_code:$http_code,api_health:$api_health,pb_data_size:$pb_data_size,last_backup:$last_backup,free_space:$free_space,update:$update,remote_commit:$remote_commit,cli:$cli,cli_path:$cli_path,logs:$logs}'
 else
   printf '%-24s %s\n' \
     'SITE_NAME:' "$SITE_NAME" \
@@ -120,6 +131,8 @@ else
     'Процесс порта:' "$PORT_PROCESS" \
     'HTTP /:' "${HTTP_CODE:-ошибка}" \
     'API health:' "$API_HEALTH" \
+    'CLI:' "$CLI_STATE" \
+    'CLI path:' "$CLI_PATH" \
     'Размер pb_data:' "$PB_DATA_SIZE" \
     'Последний backup:' "${LAST_BACKUP:-нет}" \
     'Свободное место:' "$FREE_SPACE" \

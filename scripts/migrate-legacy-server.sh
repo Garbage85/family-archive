@@ -552,6 +552,10 @@ migration_failure_rollback() {
   set +e
   ROLLBACK_HANDLER=""
   warn "Миграция прервана на этапе '$STAGE' (код $exit_code); начинаю rollback."
+  restore_cli_launchers || {
+    warn "Не удалось полностью восстановить прежние CLI launchers."
+    rollback_ok=0
+  }
   if (( FINAL_PHASE_STARTED )); then
     systemctl stop "$SERVICE_NAME" >/dev/null 2>&1 || rollback_ok=0
   fi
@@ -799,6 +803,7 @@ STAGE=unit-and-current
 UNIT_REPLACED=1
 write_systemd_unit "$UNIT_FILE_PATH"
 atomic_symlink "$NEW_RELEASE" "$INSTALL_ROOT/current"
+install_cli_launchers || die "Не удалось установить CLI-команды в $(cli_bin_dir)."
 systemctl daemon-reload
 ENABLE_STATE_CHANGED=1
 systemctl enable "$SERVICE_NAME"
@@ -819,6 +824,7 @@ for backup in "$INITIAL_BACKUP" "$FINAL_BACKUP"; do
   cp -p "$backup" "$backup.sha256" "$INSTALL_ROOT/backups/"
   verify_backup_checksum "$INSTALL_ROOT/backups/$(basename "$backup")"
 done
+commit_cli_transaction
 ROLLBACK_HANDLER=""
 printf 'Legacy-миграция завершена.\nСтарый commit: legacy/неизвестен\nНовый commit: %s\nСтарый порт: %s\nНовый порт: %s\nLegacy сохранён: %s\n' \
   "$COMMIT" "$PORT" "$PORT" "$LEGACY_ARCHIVE"

@@ -164,6 +164,10 @@ run_migration() {
   env PATH="$root/mock-bin:$PATH" \
     TMPDIR="$root" \
     FAMILY_ARCHIVE_MIGRATION_TEST_MODE=1 \
+    FAMILY_ARCHIVE_CLI_TEST_MODE=1 \
+    FAMILY_ARCHIVE_CLI_BIN_DIR="$root/cli-bin" \
+    FAMILY_ARCHIVE_CLI_EXPECTED_UID="$(id -u)" \
+    FAMILY_ARCHIVE_CLI_EXPECTED_GID="$(id -g)" \
     FAMILY_ARCHIVE_MIGRATION_TEST_FAIL="$failpoint" \
     FAMILY_ARCHIVE_MIGRATION_TEST_POCKETBASE_SHA256="$checksum" \
     FAMILY_ARCHIVE_SYSTEMD_DIR="$systemd_dir" \
@@ -329,12 +333,25 @@ assert_success 'rollback миграции возвращает старый unit
     "$case_root/systemd/family-tree.service"
 
 new_case case_root health-error
+mkdir -p "$case_root/cli-bin"
+chmod 0755 "$case_root/cli-bin"
+printf 'прежний launcher\n' > "$case_root/cli-bin/family-archive"
+chmod 0711 "$case_root/cli-bin/family-archive"
 assert_failure 'ошибка health check запускает rollback' run_migration "$case_root" health
 assert_file_value before "$case_root/legacy/pb_data/data.db" 'rollback health failure отменяет применённую миграцию'
 assert_file_value active "$case_root/service-state" 'health rollback возвращает active legacy unit'
 # shellcheck disable=SC2016 # $1 раскрывается внутри отдельного bash -c.
 assert_success 'неудачная новая установка сохранена для расследования' \
   bash -c 'compgen -G "$1/legacy.failed-migration-*" >/dev/null' _ "$case_root"
+assert_file_value 'прежний launcher' "$case_root/cli-bin/family-archive" \
+  'rollback миграции восстанавливает прежний CLI launcher'
+# shellcheck disable=SC2016 # Positional parameters belong to child bash.
+assert_success 'rollback миграции удаляет новые CLI launchers' \
+  bash -c 'for name in update backup rollback status; do [[ ! -e "$1/family-archive-$name" ]]; done' _ \
+    "$case_root/cli-bin"
+# shellcheck disable=SC2016 # Positional parameter belongs to child bash.
+assert_success 'rollback миграции восстанавливает прежний mode launcher' \
+  bash -c '[[ $(stat -c %a "$1") == 711 ]]' _ "$case_root/cli-bin/family-archive"
 
 new_case case_root active-unit
 assert_success 'активный legacy unit мигрирует с двумя offline окнами' run_migration "$case_root"
@@ -354,6 +371,47 @@ assert_success 'deployment.env после миграции имеет mode 0600'
 # shellcheck disable=SC2016 # $1 раскрывается внутри отдельного bash -c.
 assert_success 'успешная миграция создаёт current внутри releases' \
   bash -c '[[ -L $1/current && $(readlink -f "$1/current") == "$1/releases/"* ]]' _ "$case_root/legacy"
+# shellcheck disable=SC2016 # Positional parameters belong to child bash.
+assert_success 'успешная migration создаёт все CLI launchers' \
+  bash -c 'for name in family-archive family-archive-update family-archive-backup family-archive-rollback family-archive-status; do [[ -f "$1/$name" && ! -L "$1/$name" && $(stat -c %a "$1/$name") == 755 ]]; done' _ \
+    "$case_root/cli-bin"
+
+bootstrap_mock="$case_root/bootstrap-mock"
+mkdir -p "$bootstrap_mock"
+# shellcheck disable=SC2016 # Mock делегирует только проверку bare repository.
+printf '%s\n' '#!/usr/bin/env bash' 'set -eu' \
+  'if [[ ${1:-} == --git-dir=* ]]; then exec /usr/bin/git "$@"; fi' \
+  'destination=${!#}' 'mkdir -p "$destination/scripts"' \
+  'cp "$BOOTSTRAP_UPDATE_STUB" "$destination/scripts/update-server.sh"' \
+  'chmod 0755 "$destination/scripts/update-server.sh"' > "$bootstrap_mock/git"
+# shellcheck disable=SC2016 # Arguments are intentionally expanded by the generated mock.
+printf '%s\n' '#!/usr/bin/env bash' '[[ ${1:-} == -- ]] && shift' 'exec "$@"' > "$bootstrap_mock/sudo"
+# shellcheck disable=SC2016 # Mock executes test -r/-w as the current sandbox user.
+printf '%s\n' '#!/usr/bin/env bash' \
+  'while (($#)); do [[ $1 == -- ]] && { shift; break; }; shift; done' \
+  'exec "$@"' > "$bootstrap_mock/runuser"
+# shellcheck disable=SC2016 # Stub фиксирует выбранное bootstrap действие.
+printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\n" "$*" > "$BOOTSTRAP_AFTER_MIGRATION_RECORD"' \
+  > "$case_root/update-stub"
+chmod 0755 "$bootstrap_mock/git" "$bootstrap_mock/sudo" "$bootstrap_mock/runuser" \
+  "$case_root/update-stub"
+if bootstrap_output=$(env PATH="$bootstrap_mock:$case_root/mock-bin:$PATH" TMPDIR="$case_root" \
+  FAMILY_ARCHIVE_BOOTSTRAP_TEST_MODE=1 \
+  FAMILY_ARCHIVE_BOOTSTRAP_INSTALL_ROOT="$case_root/legacy" \
+  FAMILY_ARCHIVE_BOOTSTRAP_EXPECTED_OWNER_UID="$(id -u)" \
+  FAMILY_ARCHIVE_BOOTSTRAP_EXPECTED_OWNER_GID="$(id -g)" \
+  BOOTSTRAP_UPDATE_STUB="$case_root/update-stub" \
+  BOOTSTRAP_AFTER_MIGRATION_RECORD="$case_root/bootstrap-after-migration.record" \
+  bash "$PROJECT_ROOT/scripts/bootstrap.sh" --dry-run 2>&1); then
+  if [[ $bootstrap_output == *'Обнаружена release-установка.'* &&
+    $bootstrap_output == *'Действие: обновление.'* ]]; then
+    pass 'после успешной mock migration bootstrap выбирает update'
+  else
+    fail 'bootstrap после migration не сообщил release update'
+  fi
+else
+  fail 'bootstrap не принял layout успешной mock migration'
+fi
 archive=$(find "$case_root" -maxdepth 1 -type d -name 'legacy.legacy-*' -print -quit)
 assert_success 'старая плоская установка сохранена под timestamp-именем' test -x "$archive/pocketbase"
 assert_success 'по умолчанию legacy pb_data указывает на единственную рабочую базу' test -L "$archive/pb_data"

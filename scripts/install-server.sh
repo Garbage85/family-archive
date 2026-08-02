@@ -292,7 +292,7 @@ log "Применяю проверенные миграции к shared/pb_data.
 apply_migrations "$NEW_RELEASE"
 atomic_symlink "$NEW_RELEASE" "$INSTALL_ROOT/current"
 CURRENT_SWITCHED=1
-install_cli_launchers || die "Не удалось установить команды в /usr/local/bin."
+install_cli_launchers || die "Не удалось установить CLI-команды в $(cli_bin_dir)."
 
 if [[ $ENABLE_SYSTEMD == true ]]; then
   systemctl daemon-reload
@@ -305,6 +305,7 @@ if [[ $ENABLE_SYSTEMD == true ]]; then
   fi
 fi
 
+commit_cli_transaction
 ROLLBACK_HANDLER=""
 log "Установка завершена: $NEW_RELEASE"
 APP_VERSION=$(read_release_value "$NEW_RELEASE" APP_VERSION 2>/dev/null || printf unknown)

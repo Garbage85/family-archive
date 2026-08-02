@@ -50,12 +50,27 @@ mkdir -p "$MOCK_BIN"
 printf '%s\n' \
   '#!/usr/bin/env bash' \
   'set -eu' \
+  'if [[ ${1:-} == --git-dir=* && ${2:-} == rev-parse && ${3:-} == --is-bare-repository ]]; then exec /usr/bin/git "$@"; fi' \
   'printf "%s\n" "$*" >> "$BOOTSTRAP_GIT_RECORD"' \
   'destination=${!#}' \
   'mkdir -p "$destination/scripts"' \
   'for script in install-server.sh update-server.sh migrate-legacy-server.sh; do cp "$BOOTSTRAP_MOCK_CHILD" "$destination/scripts/$script"; chmod 0755 "$destination/scripts/$script"; done' \
   > "$MOCK_BIN/git"
 printf '%s\n' '#!/usr/bin/env bash' 'exec "$@"' > "$MOCK_BIN/sudo"
+# shellcheck disable=SC2016 # Аргументы раскрываются при запуске mock runuser.
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'set -eu' \
+  'printf "%s\n" "$*" >> "$BOOTSTRAP_RUNUSER_RECORD"' \
+  'operation=' \
+  'while (($#)); do' \
+  '  [[ $1 == -- ]] && { shift; break; }' \
+  '  shift' \
+  'done' \
+  '[[ ${1:-} == test ]] && operation=${2:-}' \
+  '[[ $operation != -r || ! -f $BOOTSTRAP_MOCK_CASE_ROOT/deny-pb-data-read ]] || exit 1' \
+  '[[ $operation != -w || ! -f $BOOTSTRAP_MOCK_CASE_ROOT/deny-pb-data-write ]] || exit 1' \
+  'exec "$@"' > "$MOCK_BIN/runuser"
 # shellcheck disable=SC2016 # Переменные раскрываются при запуске mock systemctl.
 printf '%s\n' \
   '#!/usr/bin/env bash' \
@@ -91,7 +106,10 @@ printf '%s\n' \
   'if [[ ${1:-} == -c && ${2:-} == %u ]]; then' \
   '  if [[ $target == "$BOOTSTRAP_MOCK_INSTALL_ROOT" ]]; then rule=root-owner;' \
   '  elif [[ $target == "$BOOTSTRAP_MOCK_INSTALL_ROOT/pocketbase" ]]; then rule=pocketbase-owner;' \
+  '  elif [[ $target == "$BOOTSTRAP_MOCK_INSTALL_ROOT/shared/pb_data" ]]; then rule=release-data-owner;' \
   '  elif [[ $target == "$BOOTSTRAP_MOCK_INSTALL_ROOT/pb_data" || $target == "$BOOTSTRAP_MOCK_INSTALL_ROOT/pb_data/"* ]]; then rule=pb-data-owner; fi' \
+  'elif [[ ${1:-} == -c && ${2:-} == %g && $target == "$BOOTSTRAP_MOCK_INSTALL_ROOT/shared/pb_data" ]]; then' \
+  '  rule=release-data-group' \
   'fi' \
   'if [[ -n $rule && -f $BOOTSTRAP_MOCK_CASE_ROOT/$rule ]]; then cat "$BOOTSTRAP_MOCK_CASE_ROOT/$rule"; exit 0; fi' \
   'exec /usr/bin/stat "$@"' > "$MOCK_BIN/stat"
@@ -104,7 +122,7 @@ printf '%s\n' \
   'if [[ ${BOOTSTRAP_FAIL_CHILD:-} == "$name" ]]; then exit "${BOOTSTRAP_FAIL_CODE:-1}"; fi' \
   'exit 0' > "$MOCK_CHILD"
 chmod 0755 "$MOCK_BIN/git" "$MOCK_BIN/sudo" "$MOCK_BIN/systemctl" \
-  "$MOCK_BIN/getent" "$MOCK_BIN/stat" "$MOCK_CHILD"
+  "$MOCK_BIN/getent" "$MOCK_BIN/stat" "$MOCK_BIN/runuser" "$MOCK_CHILD"
 
 new_case() {
   local destination_var=$1 name=$2 root
@@ -113,6 +131,7 @@ new_case() {
   chmod 0755 "$root"
   : > "$root/child-record"
   : > "$root/git-record"
+  : > "$root/runuser-record"
   printf -v "$destination_var" '%s' "$root"
 }
 
@@ -133,17 +152,25 @@ make_legacy() {
 }
 
 make_release() {
-  local install_root=$1 release
+  local install_root=$1 link_style=${2:-absolute} release
   release="$install_root/releases/release-one"
   mkdir -p "$release/pb_public" "$release/pb_migrations" \
-    "$install_root/shared/pb_data" "$install_root/app/repository.git" "$install_root/backups"
+    "$install_root/shared/pb_data" "$install_root/app"
+  /usr/bin/git init --bare -q "$install_root/app/repository.git"
   chmod 0755 "$install_root"
   printf '#!/usr/bin/env bash\nexit 0\n' > "$release/pocketbase"
   chmod 0755 "$release/pocketbase"
-  printf 'COMMIT=test\n' > "$release/release.env"
-  printf 'INSTALL_ROOT=%s\n' "$install_root" > "$install_root/shared/deployment.env"
+  printf 'INSTALL_ROOT=%s\nSERVICE_USER=%s\nSERVICE_GROUP=%s\n' \
+    "$install_root" "$(id -un)" "$(id -gn)" \
+    > "$install_root/shared/deployment.env"
   chmod 0600 "$install_root/shared/deployment.env"
-  ln -s "$release" "$install_root/current"
+  chmod 0750 "$install_root/shared/pb_data"
+  ln -s "$install_root/shared/pb_data" "$release/pb_data"
+  if [[ $link_style == relative ]]; then
+    ln -s releases/release-one "$install_root/current"
+  else
+    ln -s "$release" "$install_root/current"
+  fi
 }
 
 run_bootstrap() {
@@ -164,6 +191,7 @@ run_bootstrap() {
     BOOTSTRAP_MOCK_CHILD="$MOCK_CHILD" \
     BOOTSTRAP_CHILD_RECORD="$root/child-record" \
     BOOTSTRAP_GIT_RECORD="$root/git-record" \
+    BOOTSTRAP_RUNUSER_RECORD="$root/runuser-record" \
     BOOTSTRAP_FAIL_CHILD="${BOOTSTRAP_CASE_FAIL_CHILD:-}" \
     BOOTSTRAP_FAIL_CODE="${BOOTSTRAP_CASE_FAIL_CODE:-1}" \
     bash "$BOOTSTRAP" "$@"
@@ -186,6 +214,52 @@ new_case case_root auto-update
 make_release "$case_root/install"
 assert_success 'release-layout автоматически выбирает update' run_bootstrap "$case_root"
 assert_equal update-server.sh "$(recorded_modes "$case_root")" 'auto update запускает только updater'
+# shellcheck disable=SC2016 # Positional parameter belongs to child bash.
+assert_success 'release-layout не требует корневые pocketbase и pb_data' \
+  bash -c '[[ ! -e $1/install/pocketbase && ! -e $1/install/pb_data ]]' _ "$case_root"
+assert_equal 750 "$(stat -c '%a' "$case_root/install/shared/pb_data")" \
+  'release-layout принимает service-owned shared/pb_data mode 0750'
+assert_success 'release validation проверяет чтение shared/pb_data от SERVICE_USER' \
+  grep -Fq -- "-u $(id -un) -- test -r $case_root/install/shared/pb_data" "$case_root/runuser-record"
+assert_success 'release validation проверяет запись shared/pb_data от SERVICE_USER' \
+  grep -Fq -- "-u $(id -un) -- test -w $case_root/install/shared/pb_data" "$case_root/runuser-record"
+
+new_case case_root release-data-owner
+make_release "$case_root/install"
+printf 4242 > "$case_root/release-data-owner"
+assert_failure 'shared/pb_data с владельцем не SERVICE_USER отклоняется' run_bootstrap "$case_root"
+
+new_case case_root release-data-group
+make_release "$case_root/install"
+printf 4242 > "$case_root/release-data-group"
+assert_failure 'shared/pb_data с группой не SERVICE_GROUP отклоняется' run_bootstrap "$case_root"
+
+new_case case_root release-data-world-write
+make_release "$case_root/install"
+chmod 0752 "$case_root/install/shared/pb_data"
+assert_failure 'world-writable shared/pb_data отклоняется' run_bootstrap "$case_root"
+
+new_case case_root release-data-symlink
+make_release "$case_root/install"
+mkdir "$case_root/outside-data"
+rm -rf -- "$case_root/install/shared/pb_data"
+ln -s "$case_root/outside-data" "$case_root/install/shared/pb_data"
+assert_failure 'shared/pb_data symlink отклоняется отдельно от test -d' run_bootstrap "$case_root"
+
+new_case case_root release-data-no-read
+make_release "$case_root/install"
+touch "$case_root/deny-pb-data-read"
+assert_failure 'release отклоняется, если SERVICE_USER не может читать pb_data' run_bootstrap "$case_root"
+
+new_case case_root release-data-no-write
+make_release "$case_root/install"
+touch "$case_root/deny-pb-data-write"
+assert_failure 'release отклоняется, если SERVICE_USER не может писать в pb_data' run_bootstrap "$case_root"
+
+new_case case_root relative-current
+make_release "$case_root/install" relative
+assert_success 'relative current symlink внутри releases выбирает update' run_bootstrap "$case_root"
+assert_equal update-server.sh "$(recorded_modes "$case_root")" 'relative current запускает updater'
 
 new_case case_root auto-migrate
 make_legacy "$case_root/install"
@@ -210,6 +284,13 @@ printf legacy > "$case_root/install/pocketbase"
 assert_failure 'смешанный layout отклоняется без запуска child' run_bootstrap "$case_root"
 assert_equal '' "$(recorded_modes "$case_root")" 'mixed layout ничего не запускает'
 
+new_case case_root mixed-legacy-partial-release
+make_legacy "$case_root/install"
+mkdir "$case_root/install/app"
+assert_failure 'legacy с частичным release app определяется как mixed-layout' \
+  run_bootstrap "$case_root" --yes
+assert_equal '' "$(recorded_modes "$case_root")" 'частичный mixed-layout ничего не запускает'
+
 new_case case_root current-file
 mkdir -p "$case_root/install"
 chmod 0755 "$case_root/install"
@@ -222,6 +303,42 @@ mkdir -p "$case_root/install/releases" "$case_root/outside-release"
 chmod 0755 "$case_root/install"
 ln -s "$case_root/outside-release" "$case_root/install/current"
 assert_failure 'current symlink вне install root отклоняется' run_bootstrap "$case_root"
+
+new_case case_root missing-current-target
+make_release "$case_root/install"
+rm -rf -- "$case_root/install/releases/release-one"
+assert_failure 'отсутствующий current target отклоняется' run_bootstrap "$case_root"
+
+new_case case_root missing-release-pocketbase
+make_release "$case_root/install"
+rm -f -- "$case_root/install/releases/release-one/pocketbase"
+assert_failure 'отсутствующий current/pocketbase отклоняется' run_bootstrap "$case_root"
+
+new_case case_root missing-shared-data
+make_release "$case_root/install"
+rmdir "$case_root/install/shared/pb_data"
+assert_failure 'отсутствующий shared/pb_data отклоняется' run_bootstrap "$case_root"
+
+new_case case_root missing-deployment-env
+make_release "$case_root/install"
+rm -f -- "$case_root/install/shared/deployment.env"
+assert_failure 'отсутствующий shared/deployment.env отклоняется' run_bootstrap "$case_root"
+
+new_case case_root missing-repository
+make_release "$case_root/install"
+rm -rf -- "$case_root/install/app/repository.git"
+assert_failure 'отсутствующий app/repository.git отклоняется' run_bootstrap "$case_root"
+
+new_case case_root non-bare-repository
+make_release "$case_root/install"
+rm -rf -- "$case_root/install/app/repository.git"
+mkdir "$case_root/install/app/repository.git"
+assert_failure 'обычный каталог вместо bare repository отклоняется' run_bootstrap "$case_root"
+
+new_case case_root unsafe-release-symlink
+make_release "$case_root/install"
+ln -s /etc/passwd "$case_root/install/releases/release-one/pb_public/outside"
+assert_failure 'release symlink с target вне release отклоняется' run_bootstrap "$case_root"
 
 new_case case_root damaged-release
 mkdir -p "$case_root/install/releases/release-one" "$case_root/install/shared"

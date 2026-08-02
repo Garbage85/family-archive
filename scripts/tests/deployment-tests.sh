@@ -2,10 +2,17 @@
 set -Eeuo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/family-archive-deployment-tests.XXXXXX")
+printf 'INSTALL_ROOT=%s/default-install\n' "$TEST_ROOT" > "$TEST_ROOT/deployment.env"
+chmod 0600 "$TEST_ROOT/deployment.env"
+DEPLOYMENT_CONFIG="$TEST_ROOT/deployment.env"
+export DEPLOYMENT_CONFIG
 # shellcheck source=scripts/lib/common.sh
 source "$TEST_DIR/../lib/common.sh"
 load_config
 setup_traps
+# shellcheck disable=SC2031 # The shared cleanup array is intentionally extended here.
+TEMP_DIRS+=("$TEST_ROOT")
 
 PASSED=0
 FAILED=0
@@ -36,8 +43,6 @@ assert_failure() {
   shift
   if "$@" >/dev/null 2>&1; then fail "$name"; else pass "$name"; fi
 }
-
-make_temp_dir TEST_ROOT 'family-archive-deployment-tests.XXXXXX'
 
 assert_equal linux_arm64 "$(pocketbase_arch_for aarch64)" 'aarch64 преобразуется в linux_arm64'
 assert_equal linux_arm64 "$(pocketbase_arch_for arm64)" 'arm64 преобразуется в linux_arm64'
@@ -264,16 +269,86 @@ assert_equal 600 "$(stat -c '%a' "$TEST_ROOT/config/deployment.env")" 'рабо�
 
 INSTALL_ROOT="$TEST_ROOT/cli-root"
 FAMILY_ARCHIVE_CLI_BIN_DIR="$TEST_ROOT/cli-bin"
-mkdir -p "$INSTALL_ROOT/current/scripts"
-install -m 0755 "$PROJECT_ROOT/scripts/family-archive.sh" \
-  "$INSTALL_ROOT/current/scripts/family-archive.sh"
+FAMILY_ARCHIVE_CLI_TEST_MODE=1
+FAMILY_ARCHIVE_CLI_EXPECTED_UID=$(id -u)
+FAMILY_ARCHIVE_CLI_EXPECTED_GID=$(id -g)
+TMPDIR=$TEST_ROOT
+export FAMILY_ARCHIVE_CLI_BIN_DIR FAMILY_ARCHIVE_CLI_TEST_MODE
+export FAMILY_ARCHIVE_CLI_EXPECTED_UID FAMILY_ARCHIVE_CLI_EXPECTED_GID TMPDIR
+mkdir -p "$INSTALL_ROOT/releases/one/scripts" "$INSTALL_ROOT/releases/two/scripts"
+# shellcheck disable=SC2016 # Аргументы записываются только при запуске тестового launcher target.
+printf '%s\n' '#!/usr/bin/env bash' 'printf "one\n" > "$CLI_RELEASE_RECORD"' \
+  'printf "%s\n" "$@" > "$CLI_ARGUMENT_RECORD"' \
+  > "$INSTALL_ROOT/releases/one/scripts/family-archive.sh"
+# shellcheck disable=SC2016 # Аргументы записываются только при запуске тестового launcher target.
+printf '%s\n' '#!/usr/bin/env bash' 'printf "two\n" > "$CLI_RELEASE_RECORD"' \
+  'printf "%s\n" "$@" > "$CLI_ARGUMENT_RECORD"' \
+  > "$INSTALL_ROOT/releases/two/scripts/family-archive.sh"
+chmod 0755 "$INSTALL_ROOT/releases/"{one,two}/scripts/family-archive.sh
+atomic_symlink "$INSTALL_ROOT/releases/one" "$INSTALL_ROOT/current"
+CLI_RELEASE_RECORD="$TEST_ROOT/cli-release-record"
+CLI_ARGUMENT_RECORD="$TEST_ROOT/cli-argument-record"
+export CLI_RELEASE_RECORD CLI_ARGUMENT_RECORD
+
 install_cli_launchers
-assert_equal "$INSTALL_ROOT/current/scripts/family-archive.sh" \
-  "$(readlink "$FAMILY_ARCHIVE_CLI_BIN_DIR/family-archive")" \
-  'основной launcher указывает на current release'
-assert_equal family-archive \
-  "$(readlink "$FAMILY_ARCHIVE_CLI_BIN_DIR/family-archive-update")" \
-  'совместимая update-команда указывает на launcher'
+assert_equal installed "$(cli_installation_state)" 'install создаёт все пять CLI launchers'
+# shellcheck disable=SC2016 # Positional parameter belongs to child bash.
+assert_success 'основной launcher является обычным файлом mode 0755' \
+  bash -c '[[ -f $1 && ! -L $1 && $(stat -c %a "$1") == 755 ]]' _ \
+    "$FAMILY_ARCHIVE_CLI_BIN_DIR/family-archive"
+# shellcheck disable=SC2016 # Positional parameter belongs to child bash.
+assert_success 'launchers не содержат eval и не зависят от release-id' \
+  bash -c '! grep -R -E "(^|[[:space:]])eval([[:space:]]|$)|releases/(one|two)" "$1"' _ \
+    "$FAMILY_ARCHIVE_CLI_BIN_DIR"
+commit_cli_transaction
+
+# shellcheck disable=SC2016 # Literal payload verifies that launchers do not evaluate arguments.
+"$FAMILY_ARCHIVE_CLI_BIN_DIR/family-archive" alpha 'два слова' '--literal=$()'
+assert_equal $'alpha\nдва слова\n--literal=$()' "$(cat "$CLI_ARGUMENT_RECORD")" \
+  'главный launcher передаёт аргументы без изменений'
+"$FAMILY_ARCHIVE_CLI_BIN_DIR/family-archive-backup" '--keep=3' 'два слова'
+assert_equal $'backup\n--keep=3\nдва слова' "$(cat "$CLI_ARGUMENT_RECORD")" \
+  'совместимый launcher добавляет subcommand и сохраняет аргументы'
+
+atomic_symlink "$INSTALL_ROOT/releases/two" "$INSTALL_ROOT/current"
+"$FAMILY_ARCHIVE_CLI_BIN_DIR/family-archive" version
+assert_equal two "$(cat "$CLI_RELEASE_RECORD")" 'launchers работают после переключения current'
+
+touch -t 200001010000 "$FAMILY_ARCHIVE_CLI_BIN_DIR/family-archive"
+launcher_mtime=$(stat -c '%Y' "$FAMILY_ARCHIVE_CLI_BIN_DIR/family-archive")
+install_cli_launchers
+assert_equal "$launcher_mtime" "$(stat -c '%Y' "$FAMILY_ARCHIVE_CLI_BIN_DIR/family-archive")" \
+  'корректный launcher не переписывается'
+commit_cli_transaction
+
+rm -f -- "$FAMILY_ARCHIVE_CLI_BIN_DIR/family-archive-status"
+assert_equal invalid "$(cli_installation_state)" 'частичный набор CLI распознаётся как invalid'
+install_cli_launchers
+assert_equal installed "$(cli_installation_state)" 'update восстанавливает отсутствующий launcher'
+commit_cli_transaction
+
+printf 'damaged\n' > "$FAMILY_ARCHIVE_CLI_BIN_DIR/family-archive-update"
+chmod 0700 "$FAMILY_ARCHIVE_CLI_BIN_DIR/family-archive-update"
+install_cli_launchers
+assert_success 'повреждённый launcher заменяется корректным' \
+  cli_launcher_is_valid "$FAMILY_ARCHIVE_CLI_BIN_DIR/family-archive-update"
+commit_cli_transaction
+
+remove_cli_launchers
+printf 'старый launcher\n' > "$FAMILY_ARCHIVE_CLI_BIN_DIR/family-archive"
+chmod 0711 "$FAMILY_ARCHIVE_CLI_BIN_DIR/family-archive"
+install_cli_launchers
+restore_cli_launchers
+assert_equal 'старый launcher' "$(cat "$FAMILY_ARCHIVE_CLI_BIN_DIR/family-archive")" \
+  'rollback восстанавливает прежний launcher'
+assert_equal 711 "$(stat -c '%a' "$FAMILY_ARCHIVE_CLI_BIN_DIR/family-archive")" \
+  'rollback восстанавливает прежние права launcher'
+# shellcheck disable=SC2016 # Positional parameters belong to child bash.
+assert_success 'rollback удаляет launchers, которых раньше не было' \
+  bash -c 'for name in update backup rollback status; do [[ ! -e "$1/family-archive-$name" ]]; done' _ \
+    "$FAMILY_ARCHIVE_CLI_BIN_DIR"
+rm -f -- "$FAMILY_ARCHIVE_CLI_BIN_DIR/family-archive"
+
 assert_success 'launcher показывает справку без production-действий' \
   "$PROJECT_ROOT/scripts/family-archive.sh" --help
 assert_success 'doctor показывает справку без production-действий' \
@@ -288,13 +363,8 @@ assert_success 'updater показывает dry-run/yes справку без p
   "$PROJECT_ROOT/scripts/update-server.sh" --help
 assert_success 'legacy migrator показывает dry-run/yes справку без production-действий' \
   "$PROJECT_ROOT/scripts/migrate-legacy-server.sh" --help
-assert_success 'повторная установка CLI-ссылок идемпотентна' install_cli_launchers
-remove_cli_launchers
-printf 'чужая команда\n' > "$FAMILY_ARCHIVE_CLI_BIN_DIR/family-archive"
-assert_failure 'launcher не перезаписывает постороннюю команду' install_cli_launchers
-assert_equal 'чужая команда' "$(cat "$FAMILY_ARCHIVE_CLI_BIN_DIR/family-archive")" \
-  'конфликтующий launcher остаётся без изменений'
-unset FAMILY_ARCHIVE_CLI_BIN_DIR
+unset FAMILY_ARCHIVE_CLI_BIN_DIR FAMILY_ARCHIVE_CLI_TEST_MODE
+unset FAMILY_ARCHIVE_CLI_EXPECTED_UID FAMILY_ARCHIVE_CLI_EXPECTED_GID
 
 printf '1..%s\n' "$((PASSED + FAILED))"
 if (( FAILED )); then

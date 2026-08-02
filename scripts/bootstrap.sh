@@ -393,13 +393,250 @@ regular_directory() {
   [[ -d $1 && ! -L $1 ]]
 }
 
+path_exists_or_is_symlink() {
+  [[ -e $1 || -L $1 ]]
+}
+
+legacy_layout_markers_present() {
+  path_exists_or_is_symlink "$INSTALL_ROOT/pocketbase" ||
+    path_exists_or_is_symlink "$INSTALL_ROOT/pb_data"
+}
+
+release_layout_markers_present() {
+  path_exists_or_is_symlink "$INSTALL_ROOT/current" ||
+    path_exists_or_is_symlink "$INSTALL_ROOT/releases" ||
+    path_exists_or_is_symlink "$INSTALL_ROOT/shared" ||
+    path_exists_or_is_symlink "$INSTALL_ROOT/app" ||
+    path_exists_or_is_symlink "$INSTALL_ROOT/app/repository.git"
+}
+
+validate_legacy_layout() {
+  if [[ ! -f $INSTALL_ROOT/pocketbase || -L $INSTALL_ROOT/pocketbase ||
+    ! -x $INSTALL_ROOT/pocketbase ]]; then
+    DETECTION_REASON="legacy pocketbase отсутствует, не является обычным исполняемым файлом или является symlink: $INSTALL_ROOT/pocketbase"
+    return 1
+  fi
+  if ! regular_directory "$INSTALL_ROOT/pb_data"; then
+    DETECTION_REASON="legacy pb_data отсутствует или не является обычным каталогом: $INSTALL_ROOT/pb_data"
+    return 1
+  fi
+  check_legacy_ownership
+}
+
+check_release_directory_permissions() {
+  local path mode permissions owner group service_user=familytree service_group=familytree
+  local passwd_entry group_entry service_uid service_gid data_path data_owner data_group
+  for path in "$INSTALL_ROOT/shared" "$INSTALL_ROOT/shared/pb_data"; do
+    mode=$(stat -c '%a' "$path") || {
+      DETECTION_REASON="не удалось проверить права release-каталога: $path"
+      return 1
+    }
+    [[ $mode =~ ^[0-7]{3,4}$ ]] || {
+      DETECTION_REASON="некорректные права release-каталога: $path"
+      return 1
+    }
+    permissions=$((8#$mode))
+    if (( (permissions & 0002) != 0 )); then
+      DETECTION_REASON="release-каталог доступен на запись остальным: $path (mode $mode)"
+      return 1
+    fi
+  done
+  owner=$(stat -c '%u' "$INSTALL_ROOT/shared") || {
+    DETECTION_REASON="не удалось проверить владельца shared: $INSTALL_ROOT/shared"
+    return 1
+  }
+  if (( owner != EXPECTED_OWNER_UID )); then
+    DETECTION_REASON="небезопасный владелец shared: uid=$owner, ожидается $EXPECTED_OWNER_UID"
+    return 1
+  fi
+  service_user=$(sed -n 's/^SERVICE_USER=//p' "$INSTALL_ROOT/shared/deployment.env")
+  service_user=${service_user:-familytree}
+  service_group=$(sed -n 's/^SERVICE_GROUP=//p' "$INSTALL_ROOT/shared/deployment.env")
+  service_group=${service_group:-familytree}
+  [[ $service_user =~ ^[a-z_][a-z0-9_-]*$ ]] || {
+    DETECTION_REASON="deployment.env содержит небезопасный SERVICE_USER"
+    return 1
+  }
+  [[ $service_group =~ ^[a-z_][a-z0-9_-]*$ ]] || {
+    DETECTION_REASON="deployment.env содержит небезопасный SERVICE_GROUP"
+    return 1
+  }
+  passwd_entry=$(getent passwd "$service_user" 2>/dev/null || true)
+  [[ -n $passwd_entry && $passwd_entry != *$'\n'* ]] || {
+    DETECTION_REASON="SERVICE_USER=$service_user из deployment.env отсутствует"
+    return 1
+  }
+  IFS=: read -r _ _ service_uid _ <<< "$passwd_entry"
+  [[ $service_uid =~ ^[0-9]+$ ]] || {
+    DETECTION_REASON="не удалось определить uid SERVICE_USER=$service_user"
+    return 1
+  }
+  group_entry=$(getent group "$service_group" 2>/dev/null || true)
+  [[ -n $group_entry && $group_entry != *$'\n'* ]] || {
+    DETECTION_REASON="SERVICE_GROUP=$service_group из deployment.env отсутствует"
+    return 1
+  }
+  IFS=: read -r _ _ service_gid _ <<< "$group_entry"
+  [[ $service_gid =~ ^[0-9]+$ ]] || {
+    DETECTION_REASON="не удалось определить gid SERVICE_GROUP=$service_group"
+    return 1
+  }
+  group=$(stat -c '%g' "$INSTALL_ROOT/shared") || {
+    DETECTION_REASON="не удалось проверить группу shared"
+    return 1
+  }
+  if (( group != service_gid )); then
+    DETECTION_REASON="shared принадлежит небезопасной группе gid=$group, ожидается $service_gid"
+    return 1
+  fi
+  data_path="$INSTALL_ROOT/shared/pb_data"
+  data_owner=$(stat -c '%u' "$data_path") || {
+    DETECTION_REASON="не удалось проверить владельца shared/pb_data"
+    return 1
+  }
+  data_group=$(stat -c '%g' "$data_path") || {
+    DETECTION_REASON="не удалось проверить группу shared/pb_data"
+    return 1
+  }
+  if (( data_owner != service_uid )); then
+    DETECTION_REASON="shared/pb_data принадлежит uid=$data_owner, ожидается SERVICE_USER=$service_user (uid=$service_uid)"
+    return 1
+  fi
+  if (( data_group != service_gid )); then
+    DETECTION_REASON="shared/pb_data принадлежит gid=$data_group, ожидается SERVICE_GROUP=$service_group (gid=$service_gid)"
+    return 1
+  fi
+  if ! sudo -- runuser -u "$service_user" -- test -r "$data_path"; then
+    DETECTION_REASON="SERVICE_USER=$service_user не может читать shared/pb_data"
+    return 1
+  fi
+  if ! sudo -- runuser -u "$service_user" -- test -w "$data_path"; then
+    DETECTION_REASON="SERVICE_USER=$service_user не может писать в shared/pb_data"
+    return 1
+  fi
+}
+
+check_release_symlink_targets() {
+  local base path target
+  for base in "$1" "$INSTALL_ROOT/app/repository.git"; do
+    sudo -- find "$base" -xdev -type l -print0 >/dev/null || {
+      DETECTION_REASON="не удалось проверить symlink targets release-структуры: $base"
+      return 1
+    }
+    while IFS= read -r -d '' path; do
+      target=$(readlink -f -- "$path" 2>/dev/null || true)
+      if [[ $base == "$1" && $path == "$base/pb_data" &&
+        $target == "$INSTALL_ROOT/shared/pb_data" ]]; then
+        continue
+      fi
+      if [[ -z $target || $target != "$base/"* ]]; then
+        DETECTION_REASON="release-структура содержит symlink с небезопасным target: $path -> ${target:-dangling}"
+        return 1
+      fi
+    done < <(sudo -- find "$base" -xdev -type l -print0)
+  done
+}
+
+validate_bare_repository() {
+  local repository="$INSTALL_ROOT/app/repository.git" bare
+  if ! regular_directory "$repository"; then
+    DETECTION_REASON="bare Git-репозиторий отсутствует или имеет небезопасный тип: $repository"
+    return 1
+  fi
+  bare=$(git --git-dir="$repository" rev-parse --is-bare-repository 2>/dev/null || true)
+  if [[ $bare != true ]]; then
+    DETECTION_REASON="путь не является bare Git-репозиторием: $repository"
+    return 1
+  fi
+}
+
+validate_release_layout() {
+  local current="$INSTALL_ROOT/current" releases="$INSTALL_ROOT/releases"
+  local current_target releases_target pocketbase_mode pocketbase_permissions
+
+  [[ -L $current ]] || {
+    DETECTION_REASON="release current отсутствует или не является symlink: $current"
+    return 1
+  }
+  regular_directory "$releases" || {
+    DETECTION_REASON="releases отсутствует или не является обычным каталогом: $releases"
+    return 1
+  }
+  releases_target=$(readlink -f -- "$releases" 2>/dev/null || true)
+  current_target=$(readlink -f -- "$current" 2>/dev/null || true)
+  if [[ -z $current_target ]]; then
+    DETECTION_REASON="current указывает на отсутствующий target: $(readlink "$current" 2>/dev/null || printf unreadable)"
+    return 1
+  fi
+  if [[ $current_target != "$releases_target/"* ]]; then
+    DETECTION_REASON="канонический target current находится вне releases: $current_target"
+    return 1
+  fi
+  regular_directory "$current_target" || {
+    DETECTION_REASON="target current не является обычным каталогом: $current_target"
+    return 1
+  }
+  if [[ ! -f $current_target/pocketbase || -L $current_target/pocketbase ||
+    ! -x $current_target/pocketbase ]]; then
+    DETECTION_REASON="release pocketbase отсутствует, не является обычным исполняемым файлом или является symlink: $current_target/pocketbase"
+    return 1
+  fi
+  pocketbase_mode=$(stat -c '%a' "$current_target/pocketbase") || {
+    DETECTION_REASON="не удалось проверить права release pocketbase"
+    return 1
+  }
+  [[ $pocketbase_mode =~ ^[0-7]{3,4}$ ]] || {
+    DETECTION_REASON="некорректные права release pocketbase"
+    return 1
+  }
+  pocketbase_permissions=$((8#$pocketbase_mode))
+  if (( (pocketbase_permissions & 0022) != 0 )); then
+    DETECTION_REASON="release pocketbase доступен на запись группе или остальным (mode $pocketbase_mode)"
+    return 1
+  fi
+  regular_directory "$current_target/pb_public" || {
+    DETECTION_REASON="release pb_public отсутствует или не является обычным каталогом: $current_target/pb_public"
+    return 1
+  }
+  regular_directory "$current_target/pb_migrations" || {
+    DETECTION_REASON="release pb_migrations отсутствует или не является обычным каталогом: $current_target/pb_migrations"
+    return 1
+  }
+  regular_directory "$INSTALL_ROOT/shared" || {
+    DETECTION_REASON="shared отсутствует или не является обычным каталогом: $INSTALL_ROOT/shared"
+    return 1
+  }
+  [[ -d $INSTALL_ROOT/shared/pb_data ]] || {
+    DETECTION_REASON="shared/pb_data отсутствует или не является каталогом: $INSTALL_ROOT/shared/pb_data"
+    return 1
+  }
+  [[ ! -L $INSTALL_ROOT/shared/pb_data ]] || {
+    DETECTION_REASON="shared/pb_data не должен быть symlink: $INSTALL_ROOT/shared/pb_data"
+    return 1
+  }
+  if [[ ! -f $INSTALL_ROOT/shared/deployment.env || -L $INSTALL_ROOT/shared/deployment.env ]]; then
+    DETECTION_REASON="deployment.env отсутствует или не является обычным файлом: $INSTALL_ROOT/shared/deployment.env"
+    return 1
+  fi
+  regular_directory "$INSTALL_ROOT/app" || {
+    DETECTION_REASON="app отсутствует или не является обычным каталогом: $INSTALL_ROOT/app"
+    return 1
+  }
+  validate_bare_repository || return 1
+  check_release_config_security || return 1
+  check_release_directory_permissions || return 1
+  check_release_symlink_targets "$current_target" || return 1
+  check_release_tree_ownership || return 1
+  check_strict_owner "$INSTALL_ROOT" || return 1
+  DETECTION_REASON="current -> $current_target"
+}
+
 set_detection_error() {
   DETECTED_MODE=error
   DETECTION_REASON=$1
 }
 
 detect_installation() {
-  local current="$INSTALL_ROOT/current" current_target=""
   local has_legacy=0 has_release=0
 
   if [[ ! -e $INSTALL_ROOT && ! -L $INSTALL_ROOT ]]; then
@@ -413,75 +650,28 @@ detect_installation() {
     return
   fi
 
-  [[ -e $INSTALL_ROOT/pocketbase || -L $INSTALL_ROOT/pocketbase ||
-    -e $INSTALL_ROOT/pb_data || -L $INSTALL_ROOT/pb_data ]] && has_legacy=1
-  [[ -e $current || -L $current || -e $INSTALL_ROOT/releases || -L $INSTALL_ROOT/releases ||
-    -e $INSTALL_ROOT/shared || -L $INSTALL_ROOT/shared ]] && has_release=1
+  legacy_layout_markers_present && has_legacy=1
+  release_layout_markers_present && has_release=1
 
   if (( has_legacy && has_release )); then
     set_detection_error 'одновременно присутствуют legacy- и release-маркеры'
     return
   fi
   if (( has_legacy )); then
-    if [[ ! -f $INSTALL_ROOT/pocketbase || -L $INSTALL_ROOT/pocketbase ||
-      ! -x $INSTALL_ROOT/pocketbase || ! -d $INSTALL_ROOT/pb_data || -L $INSTALL_ROOT/pb_data ]]; then
-      set_detection_error 'legacy-маркеры неполны или имеют небезопасный тип'
-      return
-    fi
-    if ! check_legacy_ownership; then
+    if ! validate_legacy_layout; then
       set_detection_error "$DETECTION_REASON"
       return
     fi
-  elif ! check_strict_owner "$INSTALL_ROOT"; then
-    set_detection_error "$DETECTION_REASON"
+    DETECTED_MODE=migrate
+    DETECTION_REASON='найдены обычные pocketbase и pb_data, release-маркеры отсутствуют'
     return
   fi
-  if [[ -e $current && ! -L $current ]]; then
-    set_detection_error 'current существует, но не является symlink'
-    return
-  fi
-  if [[ -L $current ]]; then
-    current_target=$(readlink -f -- "$current" 2>/dev/null || true)
-    if [[ -z $current_target || $current_target != "$INSTALL_ROOT/releases/"* ||
-      $(dirname "$current_target") != "$INSTALL_ROOT/releases" ]]; then
-      set_detection_error "current указывает вне install root или является dangling symlink: ${current_target:-не разрешён}"
-      return
-    fi
-    if ! regular_directory "$INSTALL_ROOT/releases" ||
-      ! regular_directory "$INSTALL_ROOT/shared" ||
-      ! regular_directory "$INSTALL_ROOT/shared/pb_data" ||
-      ! regular_directory "$INSTALL_ROOT/app" ||
-      ! regular_directory "$INSTALL_ROOT/app/repository.git" ||
-      ! regular_directory "$INSTALL_ROOT/backups" ||
-      ! regular_directory "$current_target" ||
-      [[ ! -f $current_target/pocketbase || -L $current_target/pocketbase || ! -x $current_target/pocketbase ]] ||
-      ! regular_directory "$current_target/pb_public" ||
-      ! regular_directory "$current_target/pb_migrations" ||
-      [[ ! -f $current_target/release.env || -L $current_target/release.env ]] ||
-      [[ ! -f $INSTALL_ROOT/shared/deployment.env || -L $INSTALL_ROOT/shared/deployment.env ]]; then
-      set_detection_error 'release-layout неполон или содержит небезопасный тип пути'
-      return
-    fi
-    if ! check_release_config_security; then
-      set_detection_error "$DETECTION_REASON"
-      return
-    fi
-    if ! check_release_tree_ownership; then
+  if (( has_release )); then
+    if ! validate_release_layout; then
       set_detection_error "$DETECTION_REASON"
       return
     fi
     DETECTED_MODE=update
-    DETECTION_REASON="current -> $current_target"
-    return
-  fi
-  if (( has_legacy )); then
-    if [[ -f $INSTALL_ROOT/pocketbase && ! -L $INSTALL_ROOT/pocketbase && -x $INSTALL_ROOT/pocketbase &&
-      -d $INSTALL_ROOT/pb_data && ! -L $INSTALL_ROOT/pb_data ]]; then
-      DETECTED_MODE=migrate
-      DETECTION_REASON='найдены обычные pocketbase и pb_data, current отсутствует'
-    else
-      set_detection_error 'legacy-маркеры неполны или имеют небезопасный тип'
-    fi
     return
   fi
   if [[ -z $(find "$INSTALL_ROOT" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null) ]]; then
@@ -498,7 +688,7 @@ print_diagnostics() {
   [[ -e $INSTALL_ROOT/current && ! -L $INSTALL_ROOT/current ]] && current_value="обычный файл/каталог"
   printf 'Диагностика bootstrap:\n' >&2
   printf '  install-root: %s\n  current: %s\n' "$INSTALL_ROOT" "$current_value" >&2
-  printf '  pocketbase: %s\n  pb_data: %s\n  releases: %s\n  shared: %s\n' \
+  printf '  legacy pocketbase marker: %s\n  legacy pb_data marker: %s\n  releases: %s\n  shared: %s\n' \
     "$([[ -e $INSTALL_ROOT/pocketbase || -L $INSTALL_ROOT/pocketbase ]] && printf present || printf absent)" \
     "$([[ -e $INSTALL_ROOT/pb_data || -L $INSTALL_ROOT/pb_data ]] && printf present || printf absent)" \
     "$([[ -e $INSTALL_ROOT/releases || -L $INSTALL_ROOT/releases ]] && printf present || printf absent)" \
@@ -569,7 +759,7 @@ confirm_migration() {
 [[ $(uname -s) == Linux ]] || die "Bootstrap поддерживает только Linux."
 [[ -n ${BASH_VERSION:-} ]] || die "Bootstrap необходимо запускать через bash."
 (( BASH_VERSINFO[0] >= 4 )) || die "Нужен Bash 4 или новее; установлен $BASH_VERSION."
-for required_command in curl git sudo realpath stat find readlink dirname env mktemp rm systemctl getent awk id; do
+for required_command in curl git sudo realpath stat find readlink dirname env mktemp rm systemctl getent awk id runuser; do
   command -v "$required_command" >/dev/null 2>&1 || die "Не найдена обязательная команда: $required_command"
 done
 validate_absolute_install_root

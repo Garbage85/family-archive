@@ -44,7 +44,14 @@ printf '%s\n' \
   '  show) if [[ $* == *MainPID* ]]; then printf "42\\n"; else printf "0\\n"; fi ;;' \
   '  *) exit 0 ;;' \
   'esac' > "$MOCK_BIN/systemctl"
-chmod 0755 "$MOCK_BIN/ss" "$MOCK_BIN/systemctl"
+# shellcheck disable=SC2016 # Владелец одного launcher моделируется без root/chown.
+printf '%s\n' '#!/usr/bin/env bash' 'set -eu' 'target=${!#}' \
+  'if [[ -n ${MOCK_BAD_CLI_OWNER:-} && $target == "$MOCK_BAD_CLI_OWNER" && ${1:-} == -c && ${2:-} == %u ]]; then printf "4242\n"; exit 0; fi' \
+  'exec /usr/bin/stat "$@"' > "$MOCK_BIN/stat"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$MOCK_BIN/git"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 22' > "$MOCK_BIN/curl"
+chmod 0755 "$MOCK_BIN/ss" "$MOCK_BIN/systemctl" "$MOCK_BIN/stat" \
+  "$MOCK_BIN/git" "$MOCK_BIN/curl"
 
 new_case() {
   local destination_var=$1 name=$2 root config
@@ -183,15 +190,35 @@ assert_success 'update-style чтение и запись сохраняет с�
   grep -Fqx 'PORT=8123' "$preserve_root/rewritten.env"
 
 doctor_root="$SUITE_ROOT/doctor"
-mkdir -p "$doctor_root/install/shared/pb_data" "$doctor_root/install/backups"
+mkdir -p "$doctor_root/install/shared/pb_data" "$doctor_root/install/backups" \
+  "$doctor_root/install/current/scripts" "$doctor_root/cli-bin"
+chmod 0755 "$doctor_root/cli-bin"
 printf 'INSTALL_ROOT=%s/install\nPORT=8095\n' "$doctor_root" > "$doctor_root/deployment.env"
 chmod 0600 "$doctor_root/deployment.env"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 0' \
+  > "$doctor_root/install/current/scripts/family-archive.sh"
+chmod 0755 "$doctor_root/install/current/scripts/family-archive.sh"
+install_doctor_cli() {
+  # shellcheck disable=SC2016 # Positional parameter belongs to child bash.
+  env TMPDIR="$doctor_root" DEPLOYMENT_CONFIG="$doctor_root/deployment.env" \
+    FAMILY_ARCHIVE_CLI_TEST_MODE=1 FAMILY_ARCHIVE_CLI_BIN_DIR="$doctor_root/cli-bin" \
+    bash -c '
+      set -Eeuo pipefail
+      source "$1/scripts/lib/common.sh"
+      load_config
+      setup_traps
+      install_cli_launchers
+      commit_cli_transaction
+    ' _ "$TEST_PROJECT_ROOT"
+}
+assert_success 'doctor fixture создаёт корректные CLI launchers' install_doctor_cli
 printf '%s\n' '[Service]' \
   "ExecStart=$doctor_root/install/current/pocketbase serve --http=0.0.0.0:8090" \
   > "$doctor_root/family-tree.service"
 set +e
 doctor_output=$(env PATH="$MOCK_BIN:$PATH" TMPDIR="$doctor_root" MOCK_BUSY_PORTS=8090 \
   MOCK_UNIT_PATH="$doctor_root/family-tree.service" FAMILY_ARCHIVE_DOCTOR_TEST_MODE=1 \
+  FAMILY_ARCHIVE_CLI_BIN_DIR="$doctor_root/cli-bin" \
   DEPLOYMENT_CONFIG="$doctor_root/deployment.env" \
   bash "$TEST_PROJECT_ROOT/scripts/doctor-server.sh" 2>&1)
 set -e
@@ -199,6 +226,68 @@ assert_contains 'Несовпадение config/unit: PORT=8095, unit слуш�
   'doctor обнаруживает несовпадение config и unit'
 assert_contains 'Сервис слушает другой порт: 8090; в config указан 8095' "$doctor_output" \
   'doctor обнаруживает несовпадение config и listener'
+
+set +e
+doctor_owner_output=$(env PATH="$MOCK_BIN:$PATH" TMPDIR="$doctor_root" MOCK_BUSY_PORTS=8090 \
+  MOCK_UNIT_PATH="$doctor_root/family-tree.service" FAMILY_ARCHIVE_DOCTOR_TEST_MODE=1 \
+  FAMILY_ARCHIVE_CLI_BIN_DIR="$doctor_root/cli-bin" \
+  MOCK_BAD_CLI_OWNER="$doctor_root/cli-bin/family-archive" \
+  DEPLOYMENT_CONFIG="$doctor_root/deployment.env" \
+  bash "$TEST_PROJECT_ROOT/scripts/doctor-server.sh" 2>&1)
+set -e
+assert_contains 'CLI launcher имеет неправильного владельца' "$doctor_owner_output" \
+  'doctor обнаруживает неправильного владельца launcher'
+
+chmod 0700 "$doctor_root/cli-bin/family-archive-backup"
+set +e
+doctor_mode_output=$(env PATH="$MOCK_BIN:$PATH" TMPDIR="$doctor_root" MOCK_BUSY_PORTS=8090 \
+  MOCK_UNIT_PATH="$doctor_root/family-tree.service" FAMILY_ARCHIVE_DOCTOR_TEST_MODE=1 \
+  FAMILY_ARCHIVE_CLI_BIN_DIR="$doctor_root/cli-bin" \
+  DEPLOYMENT_CONFIG="$doctor_root/deployment.env" \
+  bash "$TEST_PROJECT_ROOT/scripts/doctor-server.sh" 2>&1)
+set -e
+assert_contains 'CLI launcher имеет неправильные права' "$doctor_mode_output" \
+  'doctor обнаруживает неправильные права launcher'
+chmod 0755 "$doctor_root/cli-bin/family-archive-backup"
+
+printf '%s\n' '#!/usr/bin/env bash' 'exec /bin/false "$@"' \
+  > "$doctor_root/cli-bin/family-archive-status"
+chmod 0755 "$doctor_root/cli-bin/family-archive-status"
+set +e
+doctor_target_output=$(env PATH="$MOCK_BIN:$PATH" TMPDIR="$doctor_root" MOCK_BUSY_PORTS=8090 \
+  MOCK_UNIT_PATH="$doctor_root/family-tree.service" FAMILY_ARCHIVE_DOCTOR_TEST_MODE=1 \
+  FAMILY_ARCHIVE_CLI_BIN_DIR="$doctor_root/cli-bin" \
+  DEPLOYMENT_CONFIG="$doctor_root/deployment.env" \
+  bash "$TEST_PROJECT_ROOT/scripts/doctor-server.sh" 2>&1)
+set -e
+assert_contains 'CLI launcher имеет неправильный target или передачу аргументов' "$doctor_target_output" \
+  'doctor обнаруживает неправильный target launcher'
+assert_success 'повреждённый doctor launcher восстанавливается для status' install_doctor_cli
+
+rm -f -- "$doctor_root/cli-bin/family-archive-rollback"
+ln -s /bin/false "$doctor_root/cli-bin/family-archive-rollback"
+set +e
+doctor_symlink_output=$(env PATH="$MOCK_BIN:$PATH" TMPDIR="$doctor_root" MOCK_BUSY_PORTS=8090 \
+  MOCK_UNIT_PATH="$doctor_root/family-tree.service" FAMILY_ARCHIVE_DOCTOR_TEST_MODE=1 \
+  FAMILY_ARCHIVE_CLI_BIN_DIR="$doctor_root/cli-bin" \
+  DEPLOYMENT_CONFIG="$doctor_root/deployment.env" \
+  bash "$TEST_PROJECT_ROOT/scripts/doctor-server.sh" 2>&1)
+set -e
+assert_contains 'CLI launcher является небезопасным symlink' "$doctor_symlink_output" \
+  'doctor обнаруживает небезопасный symlink launcher'
+assert_success 'symlink doctor launcher восстанавливается для status' install_doctor_cli
+
+set +e
+status_output=$(env PATH="$MOCK_BIN:$PATH" TMPDIR="$doctor_root" MOCK_BUSY_PORTS=8090 \
+  MOCK_UNIT_PATH="$doctor_root/family-tree.service" FAMILY_ARCHIVE_STATUS_TEST_MODE=1 \
+  FAMILY_ARCHIVE_CLI_BIN_DIR="$doctor_root/cli-bin" \
+  DEPLOYMENT_CONFIG="$doctor_root/deployment.env" \
+  bash "$TEST_PROJECT_ROOT/scripts/status-server.sh" --no-logs 2>&1)
+set -e
+assert_contains 'CLI:                     installed' "$status_output" \
+  'status показывает CLI installed'
+assert_contains "CLI path:                $doctor_root/cli-bin/family-archive" "$status_output" \
+  'status показывает путь главной CLI-команды'
 
 printf 'Setup tests: %s passed, %s failed.\n' "$PASSED" "$FAILED"
 (( FAILED == 0 ))
