@@ -28,6 +28,7 @@ export function renderShell(root) {
           <div class="user-row"><span id="user-name"></span><span id="user-role" class="role-badge"></span><button id="logout-button" class="ghost">Выйти</button></div>
         </header>
         <nav class="toolbar app-ui-chrome" data-ui-chrome>
+          <button id="center-person-button" class="center-person-button ghost" type="button" aria-label="Выбрать центрального человека"><span class="center-person-prefix">Центр:</span> <span id="center-person-name">—</span></button>
           <div id="search-host" class="search-host"></div>
           <div class="toolbar-menu-shell">
             <button id="toolbar-menu-button" class="ghost toolbar-icon-button" type="button" aria-label="Открыть меню инструментов" aria-haspopup="menu" aria-expanded="false" aria-controls="toolbar-menu">⋮</button>
@@ -48,7 +49,13 @@ export function renderShell(root) {
 
     <dialog id="comment-dialog" class="dialog-card app-ui-chrome" data-ui-chrome><form id="comment-form"><h2>Предложить изменение</h2><label>Комментарий<textarea id="proposal-comment" rows="4" maxlength="500"></textarea></label><div class="dialog-actions"><button type="button" data-close-dialog="comment-dialog" class="ghost">Отмена</button><button class="primary">Отправить</button></div></form></dialog>
     <dialog id="proposals-dialog" class="dialog-card proposals-dialog app-ui-chrome" data-ui-chrome><form method="dialog"><div class="dialog-heading"><div><p class="eyebrow">Модерация</p><h2>Предложения родственников</h2></div><button type="button" data-close-dialog="proposals-dialog" class="ghost">Закрыть</button></div><div id="proposals-list" class="proposal-list"></div></form></dialog>
+    <dialog id="kinship-dialog" class="dialog-card kinship-dialog app-ui-chrome" data-ui-chrome aria-labelledby="kinship-dialog-title"><div class="dialog-heading"><div><p class="eyebrow">Родство</p><h2 id="kinship-dialog-title">Как мы связаны</h2></div><button type="button" data-kinship-close class="ghost">Закрыть</button></div><div class="kinship-dialog-scroll"><div data-kinship-content></div><button type="button" class="ghost hidden" data-kinship-toggle aria-expanded="false"></button><div class="kinship-alternatives hidden" data-kinship-alternatives></div></div></dialog>
   `;
+}
+
+export function setCenterPersonLabel(label) {
+  const element = document.querySelector('#center-person-name');
+  if (element) element.textContent = label || '—';
 }
 
 export function showLogin() {
