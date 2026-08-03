@@ -347,3 +347,59 @@ test('empty draft fields never have a suggested source', () => {
     if (!value) assert.notEqual(draft.fieldSources[field], 'suggested');
   }
 });
+
+test('mother of a woman receives the daughter maiden name as suggested last_name', () => {
+  const daughter = person('daughter', {
+    gender: 'F',
+    last_name: 'Сапожникова',
+    maiden_name: 'Хусаинова',
+  });
+  const draft = buildRelativeDraft({
+    selectedPerson: daughter,
+    relationType: 'mother',
+    people: [daughter],
+  });
+
+  assert.equal(draft.person.last_name, 'Хусаинова');
+  assert.notEqual(draft.person.last_name, 'Сапожникова');
+  assert.equal(draft.person.maiden_name, '');
+  assert.equal(draft.fieldSources.last_name, 'suggested');
+  assert.equal(draft.fieldSources.maiden_name, 'empty');
+});
+
+test('mother surname suggestion recalculates but an explicit surname is preserved', () => {
+  const daughter = person('daughter', {
+    gender: 'F',
+    last_name: 'Сапожникова',
+    maiden_name: 'Хусаинова',
+  });
+  const first = buildRelativeDraft({
+    selectedPerson: daughter,
+    relationType: 'mother',
+    people: [daughter],
+  });
+  const changedDaughter = { ...daughter, data: { ...daughter.data, maiden_name: 'Петрова' } };
+  const recalculated = buildRelativeDraft({
+    selectedPerson: changedDaughter,
+    relationType: 'mother',
+    people: [changedDaughter],
+  });
+  assert.equal(mergeRelativeDraft(first, recalculated).person.last_name, 'Петрова');
+
+  const explicit = markDraftFieldExplicit(first, 'last_name', 'Выбранная');
+  const preserved = mergeRelativeDraft(explicit, recalculated);
+  assert.equal(preserved.person.last_name, 'Выбранная');
+  assert.equal(preserved.fieldSources.last_name, 'explicit');
+});
+
+test('an unreliable fallback for a woman without maiden_name stays empty with a warning', () => {
+  const daughter = person('daughter', { gender: 'F', last_name: 'Необычная' });
+  const draft = buildRelativeDraft({
+    selectedPerson: daughter,
+    relationType: 'mother',
+    people: [daughter],
+  });
+  assert.equal(draft.person.last_name, '');
+  assert.equal(draft.fieldSources.last_name, 'empty');
+  assert.ok(draft.warnings.some((warning) => warning.includes('нельзя надёжно вывести')));
+});

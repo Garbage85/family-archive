@@ -70,7 +70,8 @@ test('female surname labels and autofill controls remain mobile-safe', async () 
   ]);
 
   assert.match(sidebar, /Девичья фамилия[\s\S]*?data-last-name-label>Фамилия/);
-  assert.match(sidebar, /Текущая фамилия, если менялась/);
+  assert.doesNotMatch(sidebar, /если менялась/);
+  assert.match(sidebar, /placeholder="Добавьте заметку о человеке"/);
   assert.match(sidebar, /class="hidden" data-autofill-badge>Предложено автоматически/);
   assert.match(sidebar, /data-sidebar-cancel>\$\{cancelLabel\}/);
   assert.match(sidebar, />Создать<\/button>/);

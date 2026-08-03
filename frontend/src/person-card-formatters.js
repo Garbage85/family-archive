@@ -42,6 +42,16 @@ export function formatPersonNameLines(personData) {
   ].filter(Boolean);
 }
 
+export function formatPersonCardLines(person) {
+  const data = personData(person);
+  const firstName = cleanNamePart(data.first_name);
+  const middleName = cleanNamePart(data.middle_name ?? data.patronymic);
+  return {
+    surname: formatPersonSurname(data),
+    givenName: [firstName, middleName].filter(Boolean).join(' '),
+  };
+}
+
 export function formatPersonName(person) {
   return formatPersonNameLines(person).join(' ') || 'Без имени';
 }

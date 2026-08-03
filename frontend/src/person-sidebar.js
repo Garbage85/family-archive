@@ -95,7 +95,7 @@ export class PersonSidebar {
               <label>Дата смерти<input name="death_date" type="date" /></label>
               <label class="full">Место рождения<input name="birth_place" /></label>
               <label class="full">Профессия или занятие<input name="occupation" /></label>
-              <label class="full">Заметки<textarea name="notes" rows="4"></textarea></label>
+              <label class="full">Заметки<textarea name="notes" rows="4" placeholder="Добавьте заметку о человеке"></textarea></label>
             </div>
             <section class="person-sidebar-edit-actions">
               <h3>Добавить родственника</h3>
@@ -599,7 +599,7 @@ export class PersonSidebar {
     const isFemale = form.elements.gender.value === 'F';
     maidenNameField.classList.toggle('hidden', !isFemale);
     const label = form.querySelector('[data-last-name-label]');
-    if (label) label.textContent = isFemale ? 'Текущая фамилия, если менялась' : 'Фамилия';
+    if (label) label.textContent = 'Фамилия';
   }
 
   populatePhotoForm() {

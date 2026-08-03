@@ -6,6 +6,14 @@ export const ROLE_LABELS = {
   admin: 'Администратор',
 };
 
+export const LEGACY_EMPTY_NOTES =
+  'Нажмите на карточку, чтобы изменить данные и добавить родственников.';
+
+export function normalisePersonNotes(value) {
+  const notes = String(value || '');
+  return notes === LEGACY_EMPTY_NOTES ? '' : notes;
+}
+
 export function cloneTree(data) {
   return typeof structuredClone === 'function'
     ? structuredClone(data)
@@ -43,7 +51,7 @@ export function normaliseTree(input) {
         death_date: String(personData.death_date || ''),
         birth_place: String(personData.birth_place || ''),
         occupation: String(personData.occupation || ''),
-        notes: String(personData.notes || ''),
+        notes: normalisePersonNotes(personData.notes),
         avatar: String(personData.avatar || ''),
       },
       rels: {
@@ -140,7 +148,7 @@ export function createPerson(values = {}) {
         death_date: values.death_date || '',
         birth_place: values.birth_place || '',
         occupation: values.occupation || '',
-        notes: values.notes || '',
+        notes: normalisePersonNotes(values.notes),
         avatar: values.avatar || '',
       },
       rels: { parents: [], spouses: [], children: [] },
@@ -252,6 +260,7 @@ export function updatePerson(tree, personId, values) {
     ...values,
     gender: values.gender === undefined ? person.data.gender : normaliseGender(values.gender),
   };
+  person.data.notes = normalisePersonNotes(person.data.notes);
   if (!hadMaidenName && !String(values.maiden_name || '').trim()) {
     delete person.data.maiden_name;
   }

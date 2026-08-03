@@ -1,21 +1,9 @@
 import * as f3 from 'family-chart';
 import 'family-chart/styles/family-chart.css';
-import {
-  formatPersonCardBirthDate,
-  formatPersonCardName,
-  formatPersonName,
-} from '../person-card-formatters.js';
+import { createFamilyChartCardHtml } from '../family-chart-card.js';
+import { formatPersonName } from '../person-card-formatters.js';
 import { cloneTree, normaliseTree } from '../tree-utils.js';
 import { prepareFamilyChartData } from './family-chart-data.js';
-
-function escapeCardText(value = '') {
-  return String(value)
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#039;');
-}
 
 export class FamilyTreeChart {
   constructor(containerSelector) {
@@ -66,13 +54,13 @@ export class FamilyTreeChart {
     const adapter = this;
     this.card = this.chart
       .setCardHtml()
-      .setStyle('imageCircleRect')
       .setCardImageField('avatar')
-      .setCardDisplay([
-        formatPersonCardName,
-        formatPersonCardBirthDate,
-        (person) => escapeCardText(this.kinships.get(String(person.id))?.shortLabel || ''),
-      ])
+      .setCardInnerHtmlCreator((treeDatum) =>
+        createFamilyChartCardHtml(
+          treeDatum.data,
+          this.kinships.get(String(treeDatum.data?.id || '')),
+        ),
+      )
       .setOnCardClick((_event, treeDatum) => {
         const person = this.extractPerson(treeDatum);
         if (!person) return;
@@ -83,16 +71,11 @@ export class FamilyTreeChart {
         const relationship = adapter.kinships.get(personId);
         const card = this.querySelector('.card');
         const inner = this.querySelector('.card-inner');
-        const label = this.querySelector(
-          '.card-label > div:last-child, .card-rect > div:last-child',
-        );
+        const label = this.querySelector('[data-kinship-card-label]');
         const isCenter = personId === adapter.rootPersonId;
         card?.classList.toggle('kinship-center-card', isCenter);
         inner?.classList.toggle('kinship-center-card-inner', isCenter);
         if (!relationship || !label) return;
-        label.classList.add('kinship-card-label');
-        label.title = relationship.label;
-        label.setAttribute('aria-label', `Родство: ${relationship.label}`);
         label.setAttribute('role', 'button');
         label.tabIndex = 0;
         const open = (event) => {

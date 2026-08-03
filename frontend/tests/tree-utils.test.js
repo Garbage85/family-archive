@@ -1,6 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { diffTrees, normaliseTree, updatePerson, validateTree } from '../src/tree-utils.js';
+import {
+  createPerson,
+  diffTrees,
+  normaliseTree,
+  updatePerson,
+  validateTree,
+} from '../src/tree-utils.js';
 
 test('normaliseTree creates required arrays', () => {
   const result = normaliseTree([{ id: '1', data: { gender: 'M' }, rels: {} }]);
@@ -68,6 +74,23 @@ test('saving a legacy woman with only last_name does not invent maiden_name', ()
 
   assert.equal(result[0].data.last_name, 'Иванова');
   assert.equal(Object.hasOwn(result[0].data, 'maiden_name'), false);
+});
+
+test('new people have empty notes and the exact legacy instruction normalises to empty', () => {
+  assert.equal(createPerson({ first_name: 'Новый' }).data.notes, '');
+  const legacy = 'Нажмите на карточку, чтобы изменить данные и добавить родственников.';
+  const normalised = normaliseTree([
+    { id: 'legacy', data: { first_name: 'Анна', notes: legacy }, rels: {} },
+  ]);
+  assert.equal(normalised[0].data.notes, '');
+  assert.equal(updatePerson(normalised, 'legacy', { first_name: 'Анна' })[0].data.notes, '');
+});
+
+test('notes placeholder is not data and arbitrary user notes survive normalisation', () => {
+  const person = createPerson({ first_name: 'Анна', notes: 'Настоящая заметка' });
+  assert.equal(person.data.notes, 'Настоящая заметка');
+  assert.notEqual(person.data.notes, 'Добавьте заметку о человеке');
+  assert.equal(normaliseTree([person])[0].data.notes, 'Настоящая заметка');
 });
 
 test('validateTree catches missing relation targets', () => {
