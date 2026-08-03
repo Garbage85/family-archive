@@ -12,7 +12,17 @@ import {
   uploadPhoto,
 } from './api.js';
 import { FamilyTreeChart } from './adapters/family-chart-adapter.js';
+import { KinshipDialog } from './kinship-dialog.js';
+import {
+  KinshipCalculator,
+  ensureCenterPersonId,
+  persistCenterPersonId,
+  readStoredCenterPersonId,
+  resolveCenterPersonId,
+  selectCenterPersonId,
+} from './kinship-state.js';
 import { applyPersonAction, canEditPeople, persistTreeChanges } from './person-editor.js';
+import { formatPersonName } from './person-card-formatters.js';
 import { preparePersonSidebarData } from './person-sidebar-model.js';
 import { PersonSidebar } from './person-sidebar.js';
 import { SidebarZoomGuard } from './sidebar-zoom-guard.js';
@@ -20,6 +30,7 @@ import { cloneTree, diffTrees, downloadJson, validateTree } from './tree-utils.j
 import {
   renderProposals,
   renderShell,
+  setCenterPersonLabel,
   setSaveState,
   setStatus,
   setupToolbarMenu,
@@ -32,6 +43,8 @@ renderShell(root);
 setupToolbarMenu(document);
 const chart = new FamilyTreeChart('#FamilyChart');
 const personSidebar = new PersonSidebar(document.querySelector('#person-sidebar-host'));
+const kinshipDialog = new KinshipDialog(document.querySelector('#kinship-dialog'));
+const kinshipCalculator = new KinshipCalculator();
 const chromeZoomGuards = [...document.querySelectorAll('[data-ui-chrome]')].map(
   (element) => new SidebarZoomGuard(element),
 );
@@ -43,6 +56,34 @@ let dirty = false,
   pendingProposals = [],
   previewMode = false,
   saveOutcome = 'idle';
+let centerPersonId = '';
+let selectedPersonId = '';
+let kinships = new Map();
+
+function recalculateKinships({ currentPersonId = selectedPersonId } = {}) {
+  centerPersonId = ensureCenterPersonId(workingData, centerPersonId, { currentPersonId });
+  const result = kinshipCalculator.compute(workingData, centerPersonId, tree?.revision ?? null);
+  kinships = result.kinships;
+  const center = workingData.find((person) => String(person.id) === centerPersonId);
+  setCenterPersonLabel(center ? formatPersonName(center) : '—');
+  return result;
+}
+
+function showKinship(personId) {
+  const relationship = kinships.get(String(personId));
+  if (relationship) kinshipDialog.open(workingData, relationship);
+}
+
+function setCenterPerson(personId) {
+  const nextCenterId = selectCenterPersonId(workingData, personId);
+  if (!nextCenterId) return false;
+  centerPersonId = nextCenterId;
+  kinshipCalculator.invalidate();
+  recalculateKinships();
+  chart.setRootPerson(centerPersonId, { fit: true, kinships });
+  if (selectedPersonId) openSidebar(selectedPersonId);
+  return true;
+}
 
 function setChromeZoomGuardActive(active) {
   for (const guard of chromeZoomGuards) {
@@ -87,7 +128,18 @@ function applySidebarAction(action, options = {}) {
     action,
   );
   workingData = result.data;
-  chart.updateData(workingData, options);
+  if (!workingData.some((person) => String(person.id) === selectedPersonId)) selectedPersonId = '';
+  kinshipCalculator.invalidate();
+  recalculateKinships();
+  chart.updateData(workingData, {
+    ...options,
+    rootPersonId: centerPersonId,
+    kinships,
+  });
+  personSidebar.setKinshipContext(
+    kinships.get(String(action.personId)),
+    String(action.personId) === centerPersonId,
+  );
   setDirty(result.dirty);
   updateMeta();
   return getSidebarView(action.personId);
@@ -109,22 +161,38 @@ const sidebarHandlers = {
     return applySidebarAction({ type: 'set-photo', personId, photoUrl });
   },
   onRemovePhoto: (personId) => applySidebarAction({ type: 'set-photo', personId, photoUrl: '' }),
+  onSetCenter: (personId) => setCenterPerson(personId),
+  onShowKinship: (personId) => showKinship(personId),
 };
 
 function openSidebar(personId) {
+  selectedPersonId = String(personId);
   personSidebar.open(getSidebarView(personId), {
     editable: canEditPeople(user?.role, previewMode),
     handlers: sidebarHandlers,
     people: workingData,
     getPeople: () => workingData,
+    relationship: kinships.get(String(personId)),
+    isCenter: String(personId) === centerPersonId,
   });
 }
 
 function mountTree(data = workingData, { fit = true } = {}) {
   personSidebar.close();
   workingData = cloneTree(data);
+  centerPersonId = resolveCenterPersonId(workingData, {
+    savedCenterId: centerPersonId || readStoredCenterPersonId(),
+    currentPersonId: selectedPersonId,
+  });
+  persistCenterPersonId(centerPersonId);
+  kinshipCalculator.invalidate();
+  recalculateKinships();
   chart.mount(workingData, {
     onSelect: openSidebar,
+    onRootSelect: setCenterPerson,
+    onKinshipClick: showKinship,
+    rootPersonId: centerPersonId,
+    kinships,
   });
   if (fit) chart.fit();
   updateMeta();
@@ -148,6 +216,8 @@ async function enterApplication(authUser) {
   dirty = false;
   previewMode = false;
   saveOutcome = 'idle';
+  selectedPersonId = '';
+  centerPersonId = readStoredCenterPersonId();
   await applyKnownProfile();
   showApp(user, tree);
   setChromeZoomGuardActive(true);
@@ -295,12 +365,18 @@ document.querySelector('#logout-button').addEventListener('click', () => {
   personSidebar.close();
   setChromeZoomGuardActive(false);
   user = tree = null;
+  centerPersonId = selectedPersonId = '';
+  kinships = new Map();
+  kinshipCalculator.invalidate();
   previewMode = false;
   saveOutcome = 'idle';
   showLogin();
 });
 document.querySelector('#save-button').addEventListener('click', handleSave);
 document.querySelector('#fit-button').addEventListener('click', () => chart.fit());
+document
+  .querySelector('#center-person-button')
+  .addEventListener('click', () => chart.openPersonSearch());
 document.querySelector('#orientation-button').addEventListener('click', (e) => {
   const o = chart.toggleOrientation();
   e.currentTarget.textContent = o === 'vertical' ? 'Горизонтально' : 'Вертикально';

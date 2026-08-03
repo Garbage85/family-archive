@@ -17,6 +17,10 @@
   <body>
     <header class="topbar app-ui-chrome" data-ui-chrome>Панель приложения</header>
     <nav class="toolbar app-ui-chrome" data-ui-chrome>
+      <button id="center-person-button" class="center-person-button ghost" type="button">
+        <span class="center-person-prefix">Центр:</span>
+        Очень Длинная Фамилия Центрального Человека Алексея Сергеевича
+      </button>
       <div id="search-host" class="search-host">
         <input type="search" placeholder="Найти человека" />
       </div>
@@ -48,11 +52,42 @@
         ><span class="save-button-label">Сохранить</span>
       </button>
     </nav>
-    <div id="FamilyChart" class="f3 chart-surface" data-tree-canvas></div>
+    <div id="FamilyChart" class="f3 chart-surface" data-tree-canvas>
+      <div class="card-inner">
+        <div class="kinship-card-label">
+          Десятиюродный родственник на несколько поколений старше
+        </div>
+      </div>
+    </div>
     <div id="person-sidebar-host"></div>
+    <dialog id="kinship-dialog" class="dialog-card kinship-dialog app-ui-chrome" data-ui-chrome>
+      <div class="dialog-heading">
+        <h2>Как мы связаны</h2>
+        <button type="button" data-kinship-close>Закрыть</button>
+      </div>
+      <div class="kinship-dialog-scroll">
+        <div data-kinship-content></div>
+        <button type="button" data-kinship-toggle></button>
+        <div data-kinship-alternatives></div>
+      </div>
+    </dialog>
+    <div
+      id="KinshipChart"
+      class="f3"
+      style="
+        position: absolute;
+        inset: 0 auto auto 0;
+        width: 390px;
+        height: 240px;
+        visibility: hidden;
+      "
+    ></div>
     <pre id="scenario-result">RUNNING</pre>
     <script type="module">
       import { applyPersonAction } from '/src/person-editor.js';
+      import { FamilyTreeChart } from '/src/adapters/family-chart-adapter.js';
+      import { KinshipDialog } from '/src/kinship-dialog.js';
+      import { computeAllKinships } from '/src/kinship-engine.js';
       import { PersonSidebar } from '/src/person-sidebar.js';
       import { SidebarZoomGuard } from '/src/sidebar-zoom-guard.js';
       import { setupToolbarMenu } from '/src/ui.js';
@@ -64,11 +99,18 @@
         const toolbarMenu = setupToolbarMenu(document);
 
         const toolbar = document.querySelector('.toolbar');
+        const centerButton = document.querySelector('#center-person-button');
         const searchInput = document.querySelector('#search-host input');
         check(
           'mobile toolbar has no horizontal overflow',
           toolbar.scrollWidth <= toolbar.clientWidth && document.body.scrollWidth <= innerWidth,
           `${toolbar.scrollWidth}/${toolbar.clientWidth}; body ${document.body.scrollWidth}/${innerWidth}`,
+        );
+        check(
+          'long center control stays inside viewport',
+          centerButton.scrollWidth >= centerButton.clientWidth &&
+            centerButton.getBoundingClientRect().right <= innerWidth,
+          `${centerButton.scrollWidth}/${centerButton.clientWidth}`,
         );
         check(
           'mobile search remains readable',
@@ -198,6 +240,104 @@
           new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: -120 }),
         );
         check('tree canvas still receives zoom input', canvasScale > 1, `1 -> ${canvasScale}`);
+        const longKinshipLabel = document.querySelector('.kinship-card-label');
+        check(
+          'long kinship label is limited to two lines without horizontal overflow',
+          longKinshipLabel.scrollWidth <= longKinshipLabel.clientWidth &&
+            longKinshipLabel.clientHeight <=
+              parseFloat(getComputedStyle(longKinshipLabel).lineHeight) * 2.1,
+        );
+
+        const kinshipDialog = new KinshipDialog(document.querySelector('#kinship-dialog'));
+        const modalPeople = [
+          { id: 'center', data: { first_name: 'Алексей', gender: 'M' } },
+          {
+            id: 'target',
+            data: { first_name: 'Очень Длинное Имя Выбранного Человека', gender: 'F' },
+          },
+        ];
+        kinshipDialog.open(modalPeople, {
+          centerId: 'center',
+          targetId: 'target',
+          label: 'супруга',
+          kind: 'spouse',
+          commonAncestorIds: [],
+          primaryPath: {
+            personIds: ['center', 'target'],
+            steps: [{ fromId: 'center', toId: 'target', type: 'spouse' }],
+          },
+          alternativePaths: [],
+          additionalRelations: [],
+        });
+        await frame();
+        const kinshipRect = document.querySelector('#kinship-dialog').getBoundingClientRect();
+        check(
+          'kinship bottom sheet is vertical, closable and above browser safe area',
+          document.querySelector('#kinship-dialog').open &&
+            kinshipRect.right <= innerWidth &&
+            document.querySelector('.kinship-chain').scrollWidth <=
+              document.querySelector('.kinship-chain').clientWidth,
+        );
+        document.querySelector('[data-kinship-close]').click();
+        check('kinship bottom sheet closes', !document.querySelector('#kinship-dialog').open);
+
+        const chartPeople = [
+          {
+            id: 'center',
+            data: { first_name: 'Центр', gender: 'F' },
+            rels: { parents: ['father'], children: ['child'], spouses: [] },
+          },
+          {
+            id: 'father',
+            data: { first_name: 'Отец', gender: 'M' },
+            rels: { parents: [], children: [], spouses: [] },
+          },
+          {
+            id: 'child',
+            data: { first_name: 'Сын', gender: 'M' },
+            rels: { parents: [], children: [], spouses: [] },
+          },
+        ];
+        let selectedCardId = '';
+        const familyChart = new FamilyTreeChart('#KinshipChart');
+        const centerKinships = computeAllKinships({
+          people: chartPeople,
+          centerId: 'center',
+        }).kinships;
+        familyChart.mount(chartPeople, {
+          rootPersonId: 'center',
+          kinships: centerKinships,
+          onSelect: (id) => {
+            selectedCardId = id;
+          },
+        });
+        await frame();
+        check(
+          'real Family Chart cards receive center class and computed labels',
+          document.querySelector('#KinshipChart .kinship-center-card-inner') &&
+            [...document.querySelectorAll('#KinshipChart .kinship-card-label')].some(
+              (label) => label.textContent.trim() === 'отец',
+            ),
+        );
+        document.querySelector('#KinshipChart .card[data-id="father"]').click();
+        check(
+          'ordinary real card click does not change center',
+          selectedCardId === 'father' && familyChart.rootPersonId === 'center',
+        );
+        const childKinships = computeAllKinships({
+          people: chartPeople,
+          centerId: 'child',
+        }).kinships;
+        familyChart.setRootPerson('child', { kinships: childKinships });
+        await frame();
+        check(
+          'explicit center action rebuilds Family Chart around new root',
+          familyChart.rootPersonId === 'child' &&
+            document
+              .querySelector('#KinshipChart .card[data-id="child"] .card-inner')
+              .classList.contains('kinship-center-card-inner'),
+        );
+        familyChart.destroy();
 
         const baseState = {
           role: 'admin',

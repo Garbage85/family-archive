@@ -69,6 +69,13 @@ export class PersonSidebar {
               <div class="person-sidebar-placeholder" aria-hidden="true"><span></span></div>
               <h2 id="person-sidebar-title" tabindex="-1">Без имени</h2>
             </div>
+            <section class="person-sidebar-kinship" aria-label="Родство с центром дерева">
+              <p class="person-sidebar-kinship-label" data-sidebar-kinship-label></p>
+              <div class="person-sidebar-kinship-actions">
+                <button type="button" class="ghost" data-sidebar-show-kinship>Как мы связаны</button>
+                <button type="button" class="ghost" data-sidebar-set-center>Сделать центром дерева</button>
+              </div>
+            </section>
             <dl class="person-sidebar-facts"></dl>
             <section class="person-sidebar-relations" aria-labelledby="person-sidebar-relations-title">
               <h3 id="person-sidebar-relations-title">Родственники</h3>
@@ -190,6 +197,12 @@ export class PersonSidebar {
       if (button.matches('[data-sidebar-delete]')) this.showMode('delete');
       if (button.matches('[data-sidebar-confirm-delete]')) this.runAction('onDelete');
       if (button.matches('[data-sidebar-remove-photo]')) this.runAction('onRemovePhoto');
+      if (button.matches('[data-sidebar-show-kinship]')) {
+        this.handlers.onShowKinship?.(this.viewModel.id);
+      }
+      if (button.matches('[data-sidebar-set-center]') && !button.disabled) {
+        this.handlers.onSetCenter?.(this.viewModel.id);
+      }
     });
     listen(this.editForm, 'submit', (event) => {
       event.preventDefault();
@@ -264,6 +277,8 @@ export class PersonSidebar {
     this.handlers = options.handlers || this.handlers;
     this.people = Array.isArray(options.people) ? options.people : this.people;
     this.getPeople = typeof options.getPeople === 'function' ? options.getPeople : this.getPeople;
+    this.relationship = options.relationship || null;
+    this.isCenter = Boolean(options.isCenter);
     this.render(viewModel);
     this.showMode('view', { focus: false });
     this.host.classList.add('open');
@@ -271,6 +286,11 @@ export class PersonSidebar {
     this.zoomGuard.activate();
     this.activateViewportHandling();
     this.closeButton.focus();
+  }
+
+  setKinshipContext(relationship, isCenter = false) {
+    this.relationship = relationship || null;
+    this.isCenter = Boolean(isCenter);
   }
 
   close() {
@@ -638,12 +658,14 @@ export class PersonSidebar {
     } finally {
       this.busy = false;
       for (const button of this.host.querySelectorAll('button')) button.disabled = false;
+      if (this.viewModel) this.renderKinship();
     }
   }
 
   render(viewModel) {
     this.title.textContent = viewModel.fullName;
     this.renderRelationActions();
+    this.renderKinship();
 
     if (viewModel.photoUrl) {
       this.avatar.src = viewModel.photoUrl;
@@ -716,5 +738,14 @@ export class PersonSidebar {
 
       this.relationGroups.append(section);
     }
+  }
+
+  renderKinship() {
+    const relationshipLabel = this.host.querySelector('[data-sidebar-kinship-label]');
+    relationshipLabel.textContent = this.relationship?.label || 'Родство не найдено';
+    relationshipLabel.title = relationshipLabel.textContent;
+    const setCenterButton = this.host.querySelector('[data-sidebar-set-center]');
+    setCenterButton.disabled = this.isCenter;
+    setCenterButton.textContent = this.isCenter ? 'Центр дерева' : 'Сделать центром дерева';
   }
 }

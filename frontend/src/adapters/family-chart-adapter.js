@@ -6,6 +6,16 @@ import {
   formatPersonName,
 } from '../person-card-formatters.js';
 import { cloneTree, normaliseTree } from '../tree-utils.js';
+import { prepareFamilyChartData } from './family-chart-data.js';
+
+function escapeCardText(value = '') {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
 
 export class FamilyTreeChart {
   constructor(containerSelector) {
@@ -13,15 +23,28 @@ export class FamilyTreeChart {
     this.chart = null;
     this.card = null;
     this.data = [];
+    this.chartData = [];
     this.selectedPersonId = null;
+    this.rootPersonId = null;
+    this.kinships = new Map();
     this.orientation = 'vertical';
     this.onSelect = () => {};
+    this.onRootSelect = () => {};
+    this.onKinshipClick = () => {};
   }
 
-  mount(rawData, { onSelect } = {}) {
+  mount(
+    rawData,
+    { onSelect, onRootSelect, onKinshipClick, rootPersonId = null, kinships = new Map() } = {},
+  ) {
     this.destroy();
     this.data = normaliseTree(rawData);
+    this.chartData = prepareFamilyChartData(this.data);
     this.onSelect = onSelect || (() => {});
+    this.onRootSelect = onRootSelect || (() => {});
+    this.onKinshipClick = onKinshipClick || (() => {});
+    this.kinships = kinships instanceof Map ? kinships : new Map();
+    this.rootPersonId = this.resolvePersonId(rootPersonId);
 
     const host = document.querySelector(this.containerSelector);
     const searchHost = document.querySelector('#search-host');
@@ -29,36 +52,75 @@ export class FamilyTreeChart {
     if (searchHost) searchHost.innerHTML = '';
 
     this.chart = f3
-      .createChart(this.containerSelector, cloneTree(this.data))
+      .createChart(this.containerSelector, cloneTree(this.chartData))
       .setTransitionTime(300)
       .setAncestryDepth(8)
       .setProgenyDepth(8)
       .setShowSiblingsOfMain(true)
       .setSingleParentEmptyCard(false);
 
+    this.chart.updateMainId(this.rootPersonId);
+
     if (this.orientation === 'horizontal') this.chart.setOrientationHorizontal();
 
+    const adapter = this;
     this.card = this.chart
       .setCardHtml()
       .setStyle('imageCircleRect')
       .setCardImageField('avatar')
-      .setCardDisplay([formatPersonCardName, formatPersonCardBirthDate])
+      .setCardDisplay([
+        formatPersonCardName,
+        formatPersonCardBirthDate,
+        (person) => escapeCardText(this.kinships.get(String(person.id))?.shortLabel || ''),
+      ])
       .setOnCardClick((_event, treeDatum) => {
         const person = this.extractPerson(treeDatum);
         if (!person) return;
         this.select(person.id);
+      })
+      .setOnCardUpdate(function setKinshipCardState(treeDatum) {
+        const personId = String(treeDatum?.data?.id || '');
+        const relationship = adapter.kinships.get(personId);
+        const card = this.querySelector('.card');
+        const inner = this.querySelector('.card-inner');
+        const label = this.querySelector(
+          '.card-label > div:last-child, .card-rect > div:last-child',
+        );
+        const isCenter = personId === adapter.rootPersonId;
+        card?.classList.toggle('kinship-center-card', isCenter);
+        inner?.classList.toggle('kinship-center-card-inner', isCenter);
+        if (!relationship || !label) return;
+        label.classList.add('kinship-card-label');
+        label.title = relationship.label;
+        label.setAttribute('aria-label', `Родство: ${relationship.label}`);
+        label.setAttribute('role', 'button');
+        label.tabIndex = 0;
+        const open = (event) => {
+          event.stopPropagation();
+          adapter.onKinshipClick(personId);
+        };
+        label.addEventListener('click', open);
+        label.addEventListener('keydown', (event) => {
+          if (event.key !== 'Enter' && event.key !== ' ') return;
+          event.preventDefault();
+          open(event);
+        });
       });
 
     this.chart.setPersonDropdown((datum) => formatPersonName(datum), {
       cont: searchHost,
       placeholder: 'Найти человека',
       onSelect: (id) => {
-        this.select(id);
-        this.chart.updateMainId(id).updateTree({ tree_position: 'main_to_middle' });
+        this.onRootSelect(String(id));
       },
     });
 
     this.chart.updateTree({ initial: true, tree_position: 'fit' });
+  }
+
+  resolvePersonId(personId) {
+    const requested = String(personId ?? '');
+    return this.data.some((person) => person.id === requested) ? requested : this.data[0]?.id || '';
   }
 
   extractPerson(treeDatum) {
@@ -76,16 +138,41 @@ export class FamilyTreeChart {
     return cloneTree(this.data);
   }
 
-  updateData(rawData, { fit = false, focusId = null } = {}) {
+  updateData(rawData, { fit = false, focusId = null, rootPersonId, kinships } = {}) {
     this.data = normaliseTree(rawData);
-    this.chart.updateData(cloneTree(this.data));
-    if (focusId) this.chart.updateMainId(focusId);
+    this.chartData = prepareFamilyChartData(this.data);
+    if (kinships instanceof Map) this.kinships = kinships;
+    this.rootPersonId = this.resolvePersonId(rootPersonId ?? this.rootPersonId);
+    this.chart.updateData(cloneTree(this.chartData));
+    this.chart.updateMainId(this.rootPersonId);
     this.chart.updateTree({ tree_position: fit ? 'fit' : 'inherit' });
+    if (focusId) this.selectedPersonId = String(focusId);
   }
 
   focus(id) {
     if (!this.chart || !id) return;
-    this.chart.updateMainId(id).updateTree({ tree_position: 'main_to_middle' });
+    this.selectedPersonId = String(id);
+  }
+
+  setRootPerson(personId, { fit = true, kinships } = {}) {
+    if (!this.chart) return false;
+    const nextId = this.resolvePersonId(personId);
+    if (!nextId) return false;
+    if (kinships instanceof Map) this.kinships = kinships;
+    this.rootPersonId = nextId;
+    this.chart.updateMainId(nextId).updateTree({ tree_position: fit ? 'fit' : 'main_to_middle' });
+    return true;
+  }
+
+  setKinships(kinships, { fit = false } = {}) {
+    this.kinships = kinships instanceof Map ? kinships : new Map();
+    this.chart?.updateTree({ tree_position: fit ? 'fit' : 'inherit' });
+  }
+
+  openPersonSearch() {
+    const input = document.querySelector('#search-host input');
+    input?.focus();
+    input?.click();
   }
 
   fit() {
@@ -106,6 +193,11 @@ export class FamilyTreeChart {
   }
 
   destroy() {
+    if (this.chart?.personSearch) this.chart.unSetPersonSearch();
+    const host = document.querySelector(this.containerSelector);
+    const searchHost = document.querySelector('#search-host');
+    if (host) host.innerHTML = '';
+    if (searchHost) searchHost.innerHTML = '';
     this.chart = null;
     this.card = null;
     this.selectedPersonId = null;
