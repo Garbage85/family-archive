@@ -54,7 +54,7 @@ test('name and date are siblings of the avatar instead of avatar overlays', () =
 test('current and maiden surnames share one surname group while given names use another', () => {
   const html = createFamilyChartCardHtml(woman(), relationship);
   assert.match(html, /class="family-archive-card-surname"[^>]*>Сапожникова \(Печёркина\)<\/div>/);
-  assert.match(html, /class="family-archive-card-given-name">Елена Юрьевна<\/div>/);
+  assert.match(html, /class="family-archive-card-given-name"[^>]*>Елена Юрьевна<\/div>/);
   assert.equal((html.match(/family-archive-card-surname/g) || []).length, 1);
 });
 
@@ -79,11 +79,39 @@ test('full name and kinship remain available through title and aria-label', () =
 
 test('long surnames are clamped inside a fixed-width card without horizontal overflow', async () => {
   const css = await source('src/styles.css');
-  assert.match(css, /\.family-archive-card\s*\{[\s\S]*?max-width: 148px;[\s\S]*?overflow: hidden;/);
+  assert.match(
+    css,
+    /\.family-archive-card\s*\{[\s\S]*?width: 184px;[\s\S]*?min-width: 184px;[\s\S]*?max-width: 184px;[\s\S]*?height: 170px;[\s\S]*?overflow: hidden;/,
+  );
   assert.match(css, /\.family-archive-card-surname\s*\{[\s\S]*?-webkit-line-clamp: 2;/);
+  assert.match(css, /\.family-archive-card-given-name\s*\{[\s\S]*?-webkit-line-clamp: 2;/);
   assert.match(
     css,
     /\.family-archive-card-surname,[\s\S]*?max-width: 100%;[\s\S]*?overflow: hidden;/,
+  );
+});
+
+test('photo and placeholder share a 60px avatar geometry', async () => {
+  const css = await source('src/styles.css');
+  const withPhoto = createFamilyChartCardHtml(woman(), relationship);
+  const withoutPhoto = createFamilyChartCardHtml(woman({ avatar: '' }), relationship);
+  assert.match(css, /\.family-archive-card-avatar\s*\{[\s\S]*?width: 60px;[\s\S]*?height: 60px;/);
+  assert.match(withPhoto, /<img class="family-archive-card-avatar"/);
+  assert.match(withoutPhoto, /family-archive-card-avatar person-icon/);
+});
+
+test('relationship and date retain their requested positions around the name groups', async () => {
+  const css = await source('src/styles.css');
+  assert.match(css, /\.family-archive-card \.kinship-card-label\s*\{[\s\S]*?order: 1;/);
+  assert.match(css, /\.family-archive-card-avatar\s*\{[\s\S]*?order: 2;/);
+  assert.match(css, /\.family-archive-card-birth-date\s*\{[\s\S]*?order: 5;/);
+});
+
+test('family links are visible but subdued on a light background', async () => {
+  const css = await source('src/styles.css');
+  assert.match(
+    css,
+    /\.links_view \.link\s*\{[\s\S]*?stroke: #668079;[\s\S]*?stroke-width: 1\.75px;[\s\S]*?opacity: 0\.58/,
   );
 });
 

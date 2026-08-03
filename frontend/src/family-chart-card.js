@@ -44,7 +44,7 @@ export function createFamilyChartCardHtml(person, relationship) {
     ${kinship ? `<div class="kinship-card-label" data-kinship-card-label title="${escapeCardText(fullKinship)}" aria-label="Родство: ${escapeCardText(fullKinship)}">${escapeCardText(kinship)}</div>` : ''}
     ${image}
     ${surname ? `<div class="family-archive-card-surname" title="${escapeCardText(surname)}" aria-label="${escapeCardText(surname)}">${escapeCardText(surname)}</div>` : ''}
-    ${givenName ? `<div class="family-archive-card-given-name">${escapeCardText(givenName)}</div>` : ''}
+    ${givenName ? `<div class="family-archive-card-given-name" title="${escapeCardText(givenName)}" aria-label="${escapeCardText(givenName)}">${escapeCardText(givenName)}</div>` : ''}
     ${birthDate ? `<div class="family-archive-card-birth-date">${escapeCardText(birthDate)}</div>` : ''}
   </div>`;
 }
