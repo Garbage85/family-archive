@@ -334,6 +334,7 @@ test('computeAllKinships returns documented map and reuses one index', () => {
     'kind',
     'label',
     'shortLabel',
+    'description',
     'gender',
     'degree',
     'generationDelta',

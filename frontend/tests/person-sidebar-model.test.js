@@ -123,7 +123,7 @@ test('preparePersonSidebarData shows maiden name only for a woman', () => {
     woman.fields.slice(0, 2).map((field) => [field.key, field.label]),
     [
       ['maiden_name', 'Девичья фамилия'],
-      ['last_name', 'Текущая фамилия, если менялась'],
+      ['last_name', 'Фамилия'],
     ],
   );
   assert.equal(woman.fullName, 'Иванова (Петрова)');
@@ -253,4 +253,26 @@ test('single husband has no repeated role while parents retain father and mother
 test('preparePersonSidebarData returns null for an unknown selection', () => {
   assert.equal(preparePersonSidebarData(tree, 'missing'), null);
   assert.equal(preparePersonSidebarData(null, 'person-1'), null);
+});
+
+test('empty and exact legacy notes are hidden while a real note is preserved', () => {
+  const legacy = 'Нажмите на карточку, чтобы изменить данные и добавить родственников.';
+  for (const notes of ['', legacy]) {
+    const result = preparePersonSidebarData(
+      [{ id: 'person', data: { first_name: 'Анна', notes }, rels: {} }],
+      'person',
+    );
+    assert.equal(
+      result.fields.some((field) => field.key === 'notes'),
+      false,
+    );
+    assert.equal(result.values.notes, '');
+  }
+
+  const result = preparePersonSidebarData(
+    [{ id: 'person', data: { first_name: 'Анна', notes: 'Настоящая заметка' }, rels: {} }],
+    'person',
+  );
+  assert.equal(result.fields.find((field) => field.key === 'notes').value, 'Настоящая заметка');
+  assert.equal(result.values.notes, 'Настоящая заметка');
 });

@@ -1,4 +1,8 @@
-import { formatKinshipLabel, formatKinshipShortLabel } from './kinship-formatter-ru.js';
+import {
+  formatAffinalDescription,
+  formatKinshipLabel,
+  formatKinshipShortLabel,
+} from './kinship-formatter-ru.js';
 
 const RELATION_KEYS = ['parents', 'children', 'spouses'];
 const DEFAULT_MAX_ALTERNATIVE_PATHS = 3;
@@ -15,6 +19,7 @@ const MAX_ROUTES_PER_ANCESTOR = 4;
  * @property {KinshipKind} kind
  * @property {string} label
  * @property {string} shortLabel
+ * @property {string} description Plain-language explanation for an affinal term.
  * @property {'M'|'F'|''} gender
  * @property {number|null} degree Cousin degree, or direct generation distance.
  * @property {number|null} generationDelta Positive means the target is in an older generation.
@@ -191,6 +196,7 @@ function resultBase(index, centerId, targetId, kind, warnings = []) {
     kind,
     label: '',
     shortLabel: '',
+    description: '',
     gender,
     degree: null,
     generationDelta: null,
@@ -207,7 +213,115 @@ function resultBase(index, centerId, targetId, kind, warnings = []) {
 function applyLabels(result, descriptor) {
   result.label = formatKinshipLabel(descriptor);
   result.shortLabel = formatKinshipShortLabel(descriptor);
+  result.description =
+    descriptor.kind === 'affinal' ? formatAffinalDescription(descriptor.relationType) : '';
   return result;
+}
+
+function sortedIds(values) {
+  return [...(values || [])].sort((left, right) => left.localeCompare(right));
+}
+
+function uniquePath(personIds, types) {
+  if (new Set(personIds).size !== personIds.length) return null;
+  return {
+    personIds,
+    steps: types.map((type, index) => ({
+      fromId: personIds[index],
+      toId: personIds[index + 1],
+      type,
+    })),
+    commonAncestorId: null,
+  };
+}
+
+function affinalCandidate(index, centerId, targetId) {
+  const centerGender = normaliseGender(index.peopleById.get(centerId)?.data?.gender);
+  const targetGender = normaliseGender(index.peopleById.get(targetId)?.data?.gender);
+
+  for (const spouseId of sortedIds(index.spouses.get(centerId))) {
+    if (!index.parents.get(spouseId)?.has(targetId)) continue;
+    const spouseGender = normaliseGender(index.peopleById.get(spouseId)?.data?.gender);
+    let relationType = '';
+    if (centerGender === 'F' && spouseGender === 'M') {
+      relationType =
+        targetGender === 'M'
+          ? 'father_of_husband'
+          : targetGender === 'F'
+            ? 'mother_of_husband'
+            : '';
+    } else if (centerGender === 'M' && spouseGender === 'F') {
+      relationType =
+        targetGender === 'M' ? 'father_of_wife' : targetGender === 'F' ? 'mother_of_wife' : '';
+    }
+    const path = uniquePath([centerId, spouseId, targetId], ['spouse', 'parent']);
+    if (relationType && path) return { relationType, path };
+  }
+
+  for (const childId of sortedIds(index.children.get(centerId))) {
+    if (!index.spouses.get(childId)?.has(targetId)) continue;
+    const childGender = normaliseGender(index.peopleById.get(childId)?.data?.gender);
+    const relationType =
+      targetGender === 'M'
+        ? childGender === 'M'
+          ? 'husband_of_son'
+          : 'husband_of_daughter'
+        : targetGender === 'F'
+          ? childGender === 'F'
+            ? 'wife_of_daughter'
+            : 'wife_of_son'
+          : '';
+    const path = uniquePath([centerId, childId, targetId], ['child', 'spouse']);
+    if (relationType && path) return { relationType, path };
+  }
+
+  for (const parentId of sortedIds(index.parents.get(centerId))) {
+    if (index.parents.get(centerId)?.has(targetId) || !index.spouses.get(parentId)?.has(targetId)) {
+      continue;
+    }
+    const parentGender = normaliseGender(index.peopleById.get(parentId)?.data?.gender);
+    const relationType =
+      parentGender === 'F' && targetGender === 'M'
+        ? 'stepfather'
+        : parentGender === 'M' && targetGender === 'F'
+          ? 'stepmother'
+          : '';
+    const path = uniquePath([centerId, parentId, targetId], ['parent', 'spouse']);
+    if (relationType && path) return { relationType, path };
+  }
+
+  for (const parentId of sortedIds(index.parents.get(centerId))) {
+    for (const siblingId of sortedIds(index.children.get(parentId))) {
+      if (siblingId === centerId || !index.spouses.get(siblingId)?.has(targetId)) continue;
+      const siblingGender = normaliseGender(index.peopleById.get(siblingId)?.data?.gender);
+      const relationType =
+        siblingGender === 'F' && targetGender === 'M'
+          ? 'husband_of_sister'
+          : siblingGender === 'M' && targetGender === 'F'
+            ? 'wife_of_brother'
+            : '';
+      const path = uniquePath(
+        [centerId, parentId, siblingId, targetId],
+        ['parent', 'child', 'spouse'],
+      );
+      if (relationType && path) return { relationType, path };
+    }
+  }
+  return null;
+}
+
+function affinalResult(index, centerId, targetId) {
+  const candidate = affinalCandidate(index, centerId, targetId);
+  if (!candidate) return null;
+  const result = resultBase(index, centerId, targetId, 'affinal');
+  result.degree = candidate.path.steps.length;
+  result.distanceFromCenter = candidate.path.steps.length;
+  result.primaryPath = candidate.path;
+  return applyLabels(result, {
+    kind: 'affinal',
+    relationType: candidate.relationType,
+    gender: result.gender,
+  });
 }
 
 function addSpouseSupplement(index, result) {
@@ -383,6 +497,9 @@ export function computeKinship({
     result.primaryPath = spousePath(centerId, targetId);
     return applyLabels(result, { kind: 'spouse', gender: result.gender });
   }
+
+  const affinal = affinalResult(index, centerId, targetId);
+  if (affinal) return affinal;
 
   const result = resultBase(index, centerId, targetId, 'unrelated');
   return applyLabels(result, { kind: 'unrelated', gender: result.gender });

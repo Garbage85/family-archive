@@ -1,5 +1,6 @@
 import { getParentRoleLabel, getSpouseSectionLabel } from './person-relationship-rules.js';
 import { cleanNamePart, formatPersonName, formatPersonSurname } from './person-card-formatters.js';
+import { normalisePersonNotes } from './tree-utils.js';
 
 const DETAILS_FIELD_DEFINITIONS = [
   ['gender', 'Пол', formatGender],
@@ -40,7 +41,7 @@ function fieldDefinitions(person) {
   const nameFields = female
     ? [
         ['maiden_name', 'Девичья фамилия'],
-        ['last_name', 'Текущая фамилия, если менялась'],
+        ['last_name', 'Фамилия'],
         ['first_name', 'Имя'],
         ['middle_name', 'Отчество'],
       ]
@@ -89,7 +90,7 @@ export function preparePersonSidebarData(treeData, personId) {
     .map(([key, label, formatter = cleanText]) => ({
       key,
       label,
-      value: formatter(data[key]),
+      value: formatter(key === 'notes' ? normalisePersonNotes(data[key]) : data[key]),
     }))
     .filter((field) => field.value);
 
@@ -119,7 +120,12 @@ export function preparePersonSidebarData(treeData, personId) {
     fullName: formatPersonName(person),
     initials: personInitials(person),
     photoUrl: cleanText(data.avatar),
-    values: Object.fromEntries(VALUE_FIELDS.map((key) => [key, cleanText(data[key])])),
+    values: Object.fromEntries(
+      VALUE_FIELDS.map((key) => [
+        key,
+        cleanText(key === 'notes' ? normalisePersonNotes(data[key]) : data[key]),
+      ]),
+    ),
     fields,
     relationGroups,
   };

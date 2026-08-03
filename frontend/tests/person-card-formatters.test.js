@@ -2,9 +2,23 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   formatBirthDate,
+  formatPersonCardLines,
   formatPersonName,
   formatPersonNameLines,
 } from '../src/person-card-formatters.js';
+
+test('card formatter keeps surname and given-name groups separate', () => {
+  assert.deepEqual(
+    formatPersonCardLines({
+      gender: 'F',
+      last_name: 'Сапожникова',
+      maiden_name: 'Печёркина',
+      first_name: 'Елена',
+      middle_name: 'Юрьевна',
+    }),
+    { surname: 'Сапожникова (Печёркина)', givenName: 'Елена Юрьевна' },
+  );
+});
 
 test('woman with only maiden_name uses it as the displayed surname', () => {
   assert.equal(

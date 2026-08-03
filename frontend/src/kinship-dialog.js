@@ -16,6 +16,11 @@ function personLabel(person, { dates = false } = {}) {
   return lifespan ? `${name}, ${lifespan}` : name;
 }
 
+function displayLabel(value) {
+  const label = String(value || '').trim();
+  return label ? label[0].toLocaleUpperCase('ru-RU') + label.slice(1) : '';
+}
+
 function pathModel(path, peopleById) {
   if (!path) return null;
   return {
@@ -45,7 +50,12 @@ export function buildKinshipDialogModel(people, relationship) {
   return {
     center: personLabel(peopleById.get(String(relationship.centerId))),
     target: personLabel(peopleById.get(String(relationship.targetId))),
-    label: relationship.label,
+    label: [
+      displayLabel(relationship.label),
+      relationship.description ? `(${relationship.description})` : '',
+    ]
+      .filter(Boolean)
+      .join(' '),
     kindLabel: formatKinshipKind(relationship.kind),
     commonAncestor: commonAncestor ? personLabel(commonAncestor, { dates: true }) : '',
     primaryPath: pathModel(relationship.primaryPath, peopleById),

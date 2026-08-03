@@ -118,6 +118,20 @@ function youngerLateralLabel(a, generationDelta, gender) {
 export function formatKinshipLabel({ kind, relationType, gender, a = 0, b = 0 }) {
   if (kind === 'self') return 'Центр дерева';
   if (kind === 'spouse') return gendered(gender, 'супруг', 'супруга', 'супруг(а)');
+  if (kind === 'affinal') {
+    if (['father_of_husband'].includes(relationType)) return 'свёкор';
+    if (['mother_of_husband'].includes(relationType)) return 'свекровь';
+    if (['father_of_wife'].includes(relationType)) return 'тесть';
+    if (['mother_of_wife'].includes(relationType)) return 'тёща';
+    if (['husband_of_daughter', 'husband_of_son', 'husband_of_sister'].includes(relationType)) {
+      return 'зять';
+    }
+    if (['wife_of_son', 'wife_of_daughter', 'wife_of_brother'].includes(relationType)) {
+      return 'невестка';
+    }
+    if (relationType === 'stepfather') return 'отчим';
+    if (relationType === 'stepmother') return 'мачеха';
+  }
   if (kind === 'unrelated') return 'Родство не найдено';
   if (kind !== 'blood') return 'Родство не найдено';
 
@@ -134,6 +148,24 @@ export function formatKinshipShortLabel(descriptor) {
   return formatKinshipLabel(descriptor);
 }
 
+export function formatAffinalDescription(relationType) {
+  const descriptions = {
+    father_of_husband: 'отец супруга',
+    mother_of_husband: 'мать супруга',
+    father_of_wife: 'отец супруги',
+    mother_of_wife: 'мать супруги',
+    husband_of_daughter: 'супруг дочери',
+    husband_of_son: 'супруг сына',
+    wife_of_son: 'супруга сына',
+    wife_of_daughter: 'супруга дочери',
+    stepfather: 'супруг матери',
+    stepmother: 'супруга отца',
+    husband_of_sister: 'супруг сестры',
+    wife_of_brother: 'супруга брата',
+  };
+  return descriptions[relationType] || '';
+}
+
 export function formatPathStep(type, gender) {
   if (type === 'parent') return gendered(gender, 'отец', 'мать', 'родитель');
   if (type === 'child') return gendered(gender, 'сын', 'дочь', 'ребёнок');
@@ -144,6 +176,7 @@ export function formatPathStep(type, gender) {
 export function formatKinshipKind(kind) {
   if (kind === 'blood') return 'Кровное родство';
   if (kind === 'spouse') return 'Супруги';
+  if (kind === 'affinal') return 'Родство через брак';
   if (kind === 'self') return 'Центр дерева';
   return 'Родство не найдено';
 }

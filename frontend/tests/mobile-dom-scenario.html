@@ -213,6 +213,37 @@
           document.documentElement.classList.contains('person-sidebar-document-locked'),
         );
 
+        const femalePerson = {
+          id: 'daughter',
+          data: {
+            first_name: 'Александра',
+            last_name: 'Сапожникова',
+            maiden_name: 'Хусаинова',
+            gender: 'F',
+          },
+          rels: { parents: [], children: [], spouses: [] },
+        };
+        sidebar.open(
+          {
+            ...viewModel,
+            id: 'daughter',
+            fullName: 'Сапожникова (Хусаинова) Александра',
+            values: { ...viewModel.values, ...femalePerson.data },
+          },
+          { editable: true, people: [femalePerson], handlers: {} },
+        );
+        sidebar.showRelativeMode('mother');
+        await frame();
+        const motherForm = document.querySelector('#person-sidebar-relative-form');
+        const motherLastName = motherForm.elements.last_name;
+        check(
+          'mother form stays inside the mobile sidebar and uses the maiden surname',
+          motherForm.scrollWidth <= motherForm.clientWidth &&
+            motherLastName.value === 'Хусаинова' &&
+            motherLastName.closest('label').textContent.includes('Фамилия'),
+          `${motherForm.scrollWidth}/${motherForm.clientWidth}; ${motherLastName.value}`,
+        );
+
         const chrome = document.querySelector('[data-ui-chrome]');
         const chromeGuard = new SidebarZoomGuard(chrome);
         chromeGuard.activate();
@@ -284,12 +315,24 @@
         const chartPeople = [
           {
             id: 'center',
-            data: { first_name: 'Центр', gender: 'F' },
+            data: {
+              first_name: 'Елена',
+              middle_name: 'Юрьевна',
+              last_name: 'Сапожникова',
+              maiden_name: 'Печёркина',
+              gender: 'F',
+              avatar:
+                'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="64" height="64"%3E%3Crect width="64" height="64" fill="%23df7a39"/%3E%3C/svg%3E',
+            },
             rels: { parents: ['father'], children: ['child'], spouses: [] },
           },
           {
             id: 'father',
-            data: { first_name: 'Отец', gender: 'M' },
+            data: {
+              first_name: 'Отец',
+              last_name: 'Очень-Длинная-Фамилия-Которая-Не-Должна-Расширять-Canvas',
+              gender: 'M',
+            },
             rels: { parents: [], children: [], spouses: [] },
           },
           {
@@ -312,12 +355,36 @@
           },
         });
         await frame();
+        const centerCard = document.querySelector('#KinshipChart .card[data-id="center"]');
+        const centerLabel = centerCard.querySelector('.kinship-card-label');
+        const centerAvatar = centerCard.querySelector('.family-archive-card-avatar');
+        const centerSurname = centerCard.querySelector('.family-archive-card-surname');
+        const centerGivenName = centerCard.querySelector('.family-archive-card-given-name');
+        const fatherCard = document.querySelector('#KinshipChart .card[data-id="father"]');
+        const childCard = document.querySelector('#KinshipChart .card[data-id="child"]');
         check(
           'real Family Chart cards receive center class and computed labels',
           document.querySelector('#KinshipChart .kinship-center-card-inner') &&
             [...document.querySelectorAll('#KinshipChart .kinship-card-label')].some(
-              (label) => label.textContent.trim() === 'отец',
+              (label) => label.textContent.trim() === 'Отец',
             ),
+        );
+        check(
+          'photo card has kinship above the avatar and separate readable name rows',
+          centerLabel.compareDocumentPosition(centerAvatar) & Node.DOCUMENT_POSITION_FOLLOWING &&
+            centerAvatar.compareDocumentPosition(centerSurname) &
+              Node.DOCUMENT_POSITION_FOLLOWING &&
+            centerSurname.textContent.trim() === 'Сапожникова (Печёркина)' &&
+            centerGivenName.textContent.trim() === 'Елена Юрьевна' &&
+            getComputedStyle(centerAvatar).position !== 'absolute',
+        );
+        check(
+          'long surname and cards without photos do not expand the canvas',
+          fatherCard.querySelector('.family-archive-card').scrollWidth <=
+            fatherCard.querySelector('.family-archive-card').clientWidth &&
+            childCard.querySelector('.person-icon') &&
+            childCard.querySelector('.family-archive-card').scrollWidth <=
+              childCard.querySelector('.family-archive-card').clientWidth,
         );
         document.querySelector('#KinshipChart .card[data-id="father"]').click();
         check(

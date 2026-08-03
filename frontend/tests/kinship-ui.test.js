@@ -121,7 +121,7 @@ test('dialog model exposes primary path while alternatives remain separate', () 
   ];
   const relationship = computeAllKinships({ people, centerId: 'center' }).kinships.get('target');
   const model = buildKinshipDialogModel(people, relationship);
-  assert.equal(model.label, 'двоюродная сестра');
+  assert.equal(model.label, 'Двоюродная сестра');
   assert.equal(model.primaryPath.people[0].label, 'center');
   assert.equal(model.primaryPath.people.at(-1).label, 'target');
   assert.equal(model.alternativePaths.length, 1);

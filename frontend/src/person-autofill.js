@@ -245,6 +245,33 @@ function addMaidenSurnameSuggestion(draft, surname) {
   }
 }
 
+function addMotherSurnameSuggestion(draft, selectedPerson) {
+  const data = personData(selectedPerson);
+  const maidenName = cleanText(data.maiden_name);
+  if (personGender(selectedPerson) !== 'F' || !maidenName) {
+    const currentSurname = cleanText(data.last_name);
+    const transformed = transformRussianSurname(currentSurname, 'F');
+    if (transformed.reliable) {
+      setDraftField(
+        draft,
+        'last_name',
+        transformed.value,
+        transformed.value ? 'suggested' : 'empty',
+      );
+    } else {
+      setDraftField(draft, 'last_name', '', 'empty');
+      if (currentSurname) {
+        draft.warnings.push(
+          `Фамилию матери нельзя надёжно вывести из «${currentSurname}»: оставьте поле пустым или укажите её вручную.`,
+        );
+      }
+    }
+    return;
+  }
+  setDraftField(draft, 'last_name', maidenName, 'suggested');
+  setDraftField(draft, 'maiden_name', '', 'empty');
+}
+
 function requiredLink(selectedPerson, relation) {
   return {
     id: `required:${relation}:${personId(selectedPerson)}`,
@@ -292,7 +319,11 @@ export function buildRelativeDraft({
 
   if (['father', 'mother', 'parent'].includes(type)) {
     draft.requiredLinks.push(requiredLink(selectedPerson, 'child'));
-    if (type !== 'parent' && gender) addSurnameSuggestion(draft, selectedSurname, gender);
+    if (type === 'mother' && personGender(selectedPerson) === 'F') {
+      addMotherSurnameSuggestion(draft, selectedPerson);
+    } else if (type !== 'parent' && gender) {
+      addSurnameSuggestion(draft, selectedSurname, gender);
+    }
 
     if (type === 'father') {
       const fatherName = deriveFatherNameFromPatronymic(personPatronymic(selectedPerson));
