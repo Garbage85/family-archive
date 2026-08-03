@@ -426,6 +426,11 @@ button {
 .f3 .card_cont {
   filter: drop-shadow(0 8px 12px rgba(24, 60, 53, 0.12));
 }
+.f3 .links_view .link {
+  stroke: #668079;
+  stroke-width: 1.75px;
+  opacity: 0.58 !important;
+}
 .f3 .card-inner {
   border-radius: 14px !important;
 }
@@ -440,9 +445,9 @@ button {
   max-height: 2.55em;
   overflow: hidden;
   color: var(--forest-2);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   font-weight: 800;
-  line-height: 1.25;
+  line-height: 1.15;
   white-space: normal !important;
   overflow-wrap: break-word;
   text-overflow: ellipsis;
@@ -451,33 +456,36 @@ button {
   cursor: pointer;
 }
 .f3 .family-archive-card {
-  width: 148px;
-  max-width: 148px;
-  min-height: 132px;
-  padding: 5px 8px 7px;
+  width: 184px;
+  min-width: 184px;
+  max-width: 184px;
+  height: 170px;
+  min-height: 170px;
+  max-height: 170px;
+  padding: 4px 8px;
   overflow: hidden;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
+  gap: 1px;
   text-align: center;
 }
 .f3 .family-archive-card .kinship-card-label {
   order: 1;
   width: 100%;
-  min-height: 1.1em;
+  min-height: 1.15em;
 }
 .f3 .family-archive-card-avatar {
   order: 2;
-  width: 58px;
-  height: 58px;
-  min-width: 58px;
-  min-height: 58px;
+  width: 60px;
+  height: 60px;
+  min-width: 60px;
+  min-height: 60px;
   margin: 0;
   padding: 0;
   border-radius: 50%;
   object-fit: cover;
-  flex: 0 0 58px;
+  flex: 0 0 60px;
 }
 .f3 .family-archive-card-avatar svg {
   width: 100%;
@@ -500,23 +508,27 @@ button {
   order: 3;
   display: -webkit-box;
   max-height: 2.3em;
-  font-size: 0.75rem;
+  font-size: 0.78rem;
   font-weight: 800;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
 .f3 .family-archive-card-given-name {
   order: 4;
-  white-space: nowrap;
+  display: -webkit-box;
+  max-height: 2.3em;
   text-overflow: ellipsis;
-  font-size: 0.72rem;
+  font-size: 0.75rem;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 .f3 .family-archive-card-birth-date {
   order: 5;
   white-space: nowrap;
   text-overflow: ellipsis;
   color: var(--muted);
-  font-size: 0.67rem;
+  font-size: 0.75rem;
 }
 .f3-form-cont {
   color: #172521;

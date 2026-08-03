@@ -314,54 +314,97 @@
 
         const chartPeople = [
           {
-            id: 'center',
+            id: 'alexey',
             data: {
-              first_name: 'Елена',
-              middle_name: 'Юрьевна',
-              last_name: 'Сапожникова',
-              maiden_name: 'Печёркина',
-              gender: 'F',
+              first_name: 'Алексей',
+              middle_name: 'Сергеевич',
+              last_name: 'Сапожников',
+              gender: 'M',
               avatar:
                 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="64" height="64"%3E%3Crect width="64" height="64" fill="%23df7a39"/%3E%3C/svg%3E',
             },
-            rels: { parents: ['father'], children: ['child'], spouses: [] },
+            rels: {
+              parents: ['sergey', 'elena'],
+              children: ['pair-child', 'alexey-child'],
+              spouses: ['alexandra'],
+            },
           },
           {
-            id: 'father',
+            id: 'alexandra',
             data: {
-              first_name: 'Отец',
+              first_name: 'Александра',
+              middle_name: 'Васильевна',
+              last_name: 'Сапожникова',
+              maiden_name: 'Хусаинова',
+              gender: 'F',
+            },
+            rels: {
+              parents: ['vasily', 'natalia'],
+              children: ['pair-child'],
+              spouses: ['alexey'],
+            },
+          },
+          {
+            id: 'sergey',
+            data: {
+              first_name: 'Сергей',
+              middle_name: 'Юрьевич',
               last_name: 'Очень-Длинная-Фамилия-Которая-Не-Должна-Расширять-Canvas',
               gender: 'M',
             },
-            rels: { parents: [], children: [], spouses: [] },
+            rels: { parents: [], children: ['alexey'], spouses: [] },
           },
           {
-            id: 'child',
+            id: 'elena',
+            data: { first_name: 'Елена', last_name: 'Сапожникова', gender: 'F' },
+            rels: { parents: [], children: ['alexey'], spouses: [] },
+          },
+          {
+            id: 'vasily',
+            data: { first_name: 'Василий', last_name: 'Хусаинов', gender: 'M' },
+            rels: { parents: [], children: ['alexandra'], spouses: [] },
+          },
+          {
+            id: 'natalia',
+            data: { first_name: 'Наталья', last_name: 'Хусаинова', gender: 'F' },
+            rels: { parents: [], children: ['alexandra'], spouses: [] },
+          },
+          {
+            id: 'pair-child',
+            data: { first_name: 'Дочь', gender: 'F' },
+            rels: { parents: ['alexey', 'alexandra'], children: [], spouses: [] },
+          },
+          {
+            id: 'alexey-child',
             data: { first_name: 'Сын', gender: 'M' },
-            rels: { parents: [], children: [], spouses: [] },
+            rels: { parents: ['alexey'], children: [], spouses: [] },
           },
         ];
+        const chartPeopleBefore = structuredClone(chartPeople);
         let selectedCardId = '';
+        let selectionEvents = 0;
         const familyChart = new FamilyTreeChart('#KinshipChart');
-        const centerKinships = computeAllKinships({
+        const alexeyKinships = computeAllKinships({
           people: chartPeople,
-          centerId: 'center',
+          centerId: 'alexey',
         }).kinships;
         familyChart.mount(chartPeople, {
-          rootPersonId: 'center',
-          kinships: centerKinships,
+          rootPersonId: 'alexey',
+          kinships: alexeyKinships,
           onSelect: (id) => {
             selectedCardId = id;
+            selectionEvents += 1;
           },
         });
+        const adapterDataBefore = familyChart.getData();
         await frame();
-        const centerCard = document.querySelector('#KinshipChart .card[data-id="center"]');
+        const centerCard = document.querySelector('#KinshipChart .card[data-id="alexey"]');
         const centerLabel = centerCard.querySelector('.kinship-card-label');
         const centerAvatar = centerCard.querySelector('.family-archive-card-avatar');
         const centerSurname = centerCard.querySelector('.family-archive-card-surname');
         const centerGivenName = centerCard.querySelector('.family-archive-card-given-name');
-        const fatherCard = document.querySelector('#KinshipChart .card[data-id="father"]');
-        const childCard = document.querySelector('#KinshipChart .card[data-id="child"]');
+        const fatherCard = document.querySelector('#KinshipChart .card[data-id="sergey"]');
+        const childCard = document.querySelector('#KinshipChart .card[data-id="alexey-child"]');
         check(
           'real Family Chart cards receive center class and computed labels',
           document.querySelector('#KinshipChart .kinship-center-card-inner') &&
@@ -374,9 +417,21 @@
           centerLabel.compareDocumentPosition(centerAvatar) & Node.DOCUMENT_POSITION_FOLLOWING &&
             centerAvatar.compareDocumentPosition(centerSurname) &
               Node.DOCUMENT_POSITION_FOLLOWING &&
-            centerSurname.textContent.trim() === 'Сапожникова (Печёркина)' &&
-            centerGivenName.textContent.trim() === 'Елена Юрьевна' &&
+            centerSurname.textContent.trim() === 'Сапожников' &&
+            centerGivenName.textContent.trim() === 'Алексей Сергеевич' &&
             getComputedStyle(centerAvatar).position !== 'absolute',
+        );
+        const cardRects = [...document.querySelectorAll('#KinshipChart .family-archive-card')].map(
+          (card) => getComputedStyle(card),
+        );
+        check(
+          'cards use one rectangular geometry with a readable avatar after fit',
+          cardRects.every(
+            (style) =>
+              parseFloat(style.width) === 184 &&
+              parseFloat(style.height) === 170 &&
+              parseFloat(style.fontSize) >= 12,
+          ) && parseFloat(getComputedStyle(centerAvatar).width) >= 56,
         );
         check(
           'long surname and cards without photos do not expand the canvas',
@@ -386,23 +441,81 @@
             childCard.querySelector('.family-archive-card').scrollWidth <=
               childCard.querySelector('.family-archive-card').clientWidth,
         );
-        document.querySelector('#KinshipChart .card[data-id="father"]').click();
+        const visibleIds = () =>
+          new Set(
+            [...document.querySelectorAll('#KinshipChart .card[data-id]')].map((card) =>
+              card.getAttribute('data-id'),
+            ),
+          );
+        check(
+          'Alexey center keeps spouse, own parents, spouse parents and children visible',
+          ['alexey', 'alexandra', 'sergey', 'elena', 'vasily', 'natalia', 'pair-child'].every(
+            (id) => visibleIds().has(id),
+          ),
+        );
+        document.querySelector('#KinshipChart .card[data-id="sergey"]').click();
         check(
           'ordinary real card click does not change center',
-          selectedCardId === 'father' && familyChart.rootPersonId === 'center',
+          selectedCardId === 'sergey' &&
+            selectionEvents === 1 &&
+            familyChart.rootPersonId === 'alexey',
         );
-        const childKinships = computeAllKinships({
+        const alexandraKinships = computeAllKinships({
           people: chartPeople,
-          centerId: 'child',
+          centerId: 'alexandra',
         }).kinships;
-        familyChart.setRootPerson('child', { kinships: childKinships });
+        familyChart.setRootPerson('alexandra', { kinships: alexandraKinships });
         await frame();
         check(
-          'explicit center action rebuilds Family Chart around new root',
-          familyChart.rootPersonId === 'child' &&
+          'Alexandra center keeps both parent branches and every direct-spouse child',
+          familyChart.rootPersonId === 'alexandra' &&
+            [
+              'alexandra',
+              'alexey',
+              'sergey',
+              'elena',
+              'vasily',
+              'natalia',
+              'pair-child',
+              'alexey-child',
+            ].every((id) => visibleIds().has(id)) &&
             document
-              .querySelector('#KinshipChart .card[data-id="child"] .card-inner')
+              .querySelector('#KinshipChart .card[data-id="alexandra"] .card-inner')
               .classList.contains('kinship-center-card-inner'),
+        );
+        const parentLabels = new Map(
+          ['sergey', 'elena'].map((id) => [
+            id,
+            document
+              .querySelector(`#KinshipChart .card[data-id="${id}"] .kinship-card-label`)
+              ?.textContent.trim(),
+          ]),
+        );
+        check(
+          'spouse parents keep affinal labels',
+          parentLabels.get('sergey') === 'Свёкор' && parentLabels.get('elena') === 'Свекровь',
+        );
+        familyChart.setRootPerson('alexey', { kinships: alexeyKinships });
+        await new Promise((resolve) => setTimeout(resolve, 360));
+        const renderedIds = [...document.querySelectorAll('#KinshipChart .card[data-id]')].map(
+          (card) => card.getAttribute('data-id'),
+        );
+        document.querySelector('#KinshipChart .card[data-id="sergey"]').click();
+        check(
+          'Alexey to Alexandra to Alexey creates no duplicate people or handlers',
+          renderedIds.length === new Set(renderedIds).size && selectionEvents === 2,
+        );
+        check(
+          'source people and persisted adapter data stay unchanged',
+          JSON.stringify(chartPeople) === JSON.stringify(chartPeopleBefore) &&
+            JSON.stringify(familyChart.getData()) === JSON.stringify(adapterDataBefore),
+        );
+        const renderedLink = document.querySelector('#KinshipChart .links_view .link');
+        check(
+          'mobile light-theme links remain visible and the canvas has no page overflow',
+          parseFloat(getComputedStyle(renderedLink).strokeWidth) >= 1.5 &&
+            parseFloat(getComputedStyle(renderedLink).opacity) >= 0.45 &&
+            document.body.scrollWidth <= innerWidth,
         );
         familyChart.destroy();
 

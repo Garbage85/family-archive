@@ -3,7 +3,12 @@ import 'family-chart/styles/family-chart.css';
 import { createFamilyChartCardHtml } from '../family-chart-card.js';
 import { formatPersonName } from '../person-card-formatters.js';
 import { cloneTree, normaliseTree } from '../tree-utils.js';
-import { prepareFamilyChartData } from './family-chart-data.js';
+import { includeDirectSpouseBranches, prepareFamilyChartData } from './family-chart-data.js';
+
+const CARD_WIDTH = 184;
+const CARD_HEIGHT = 170;
+const CARD_X_SPACING = 236;
+const CARD_Y_SPACING = 224;
 
 export class FamilyTreeChart {
   constructor(containerSelector) {
@@ -45,7 +50,16 @@ export class FamilyTreeChart {
       .setAncestryDepth(8)
       .setProgenyDepth(8)
       .setShowSiblingsOfMain(true)
-      .setSingleParentEmptyCard(false);
+      .setSingleParentEmptyCard(false)
+      .setCardXSpacing(CARD_X_SPACING)
+      .setCardYSpacing(CARD_Y_SPACING)
+      .setBeforeUpdate(() => {
+        includeDirectSpouseBranches(this.chart.store.getTree(), this.chartData, this.rootPersonId, {
+          nodeSeparation: CARD_X_SPACING,
+          levelSeparation: CARD_Y_SPACING,
+          isHorizontal: this.orientation === 'horizontal',
+        });
+      });
 
     this.chart.updateMainId(this.rootPersonId);
 
@@ -55,6 +69,7 @@ export class FamilyTreeChart {
     this.card = this.chart
       .setCardHtml()
       .setCardImageField('avatar')
+      .setCardDim({ width: CARD_WIDTH, height: CARD_HEIGHT })
       .setCardInnerHtmlCreator((treeDatum) =>
         createFamilyChartCardHtml(
           treeDatum.data,
