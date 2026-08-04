@@ -152,6 +152,11 @@ const sidebarHandlers = {
       { type: 'add-relative', personId, relation, values, links },
       { fit: true, focusId: personId },
     ),
+  onLinkExistingRelative: (personId, relativeId, relation, links) =>
+    applySidebarAction(
+      { type: 'link-existing-relative', personId, relativeId, relation, links },
+      { fit: true, focusId: personId },
+    ),
   onDelete: (personId) => {
     applySidebarAction({ type: 'delete', personId }, { fit: true });
     return null;

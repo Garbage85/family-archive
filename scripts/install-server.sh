@@ -7,7 +7,7 @@ source "$SCRIPT_DIR/lib/common.sh"
 
 usage() {
   cat <<'EOF'
-Установка Family Archive на Raspberry Pi / Debian.
+Установка Family Archive на Debian / Ubuntu / Raspberry Pi OS.
 
 Использование:
   sudo ./scripts/install-server.sh [опции]
@@ -211,6 +211,8 @@ if (( INSTALL_TEST_MODE )); then
 else
   require_root
 fi
+DETECTED_OS=$(detect_supported_debian_os)
+log "Обнаружена поддерживаемая ОС: $DETECTED_OS."
 require_commands apt-get dpkg-query grep awk sed find cut sort head runuser sleep df
 pocketbase_arch_for "$(uname -m)" >/dev/null
 

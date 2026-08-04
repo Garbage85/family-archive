@@ -1,4 +1,5 @@
 import { SidebarZoomGuard } from './sidebar-zoom-guard.js';
+import { findPotentialPersonDuplicates } from './person-duplicates.js';
 import {
   buildRelativeDraft,
   getRelativeActionTypes,
@@ -46,6 +47,7 @@ export class PersonSidebar {
     this.getPeople = null;
     this.relativeDraft = null;
     this.relativeContext = null;
+    this.allowDuplicateCreation = false;
     this.eventCleanups = [];
     this.viewportCleanups = [];
     this.renderShell();
@@ -138,6 +140,12 @@ export class PersonSidebar {
               <div data-sidebar-suggestion-list></div>
             </section>
             <ul class="person-sidebar-warnings hidden" data-sidebar-warnings></ul>
+            <section class="person-sidebar-duplicates hidden" data-sidebar-duplicates aria-live="polite">
+              <h3>Возможные совпадения</h3>
+              <p>Проверьте существующих персон. Записи не объединяются автоматически.</p>
+              <div data-sidebar-duplicate-list></div>
+              <button class="ghost wide" type="button" data-sidebar-create-anyway>Всё равно создать нового</button>
+            </section>
           </form>
 
           <form id="person-sidebar-photo-form" class="hidden" data-sidebar-panel="photo">
@@ -193,6 +201,19 @@ export class PersonSidebar {
       if (button.matches('[data-autofill-reset]')) {
         this.resetRelativeSuggestion(button.dataset.autofillReset);
       }
+      if (button.matches('[data-sidebar-use-existing]')) {
+        const submission = this.collectRelativeSubmission();
+        this.runAction(
+          'onLinkExistingRelative',
+          button.dataset.sidebarUseExisting,
+          submission.relation,
+          submission.links,
+        );
+      }
+      if (button.matches('[data-sidebar-create-anyway]')) {
+        this.allowDuplicateCreation = true;
+        this.relativeForm.requestSubmit();
+      }
       if (button.matches('[data-sidebar-photo]')) this.showMode('photo');
       if (button.matches('[data-sidebar-delete]')) this.showMode('delete');
       if (button.matches('[data-sidebar-confirm-delete]')) this.runAction('onDelete');
@@ -210,15 +231,18 @@ export class PersonSidebar {
     });
     listen(this.relativeForm, 'submit', (event) => {
       event.preventDefault();
-      const formData = new FormData(this.relativeForm);
-      const values = Object.fromEntries(formData);
-      const relation = values.relative_type;
-      delete values.relative_type;
-      delete values.suggested_link;
-      const selectedLinkIds = new Set(formData.getAll('suggested_link').map(String));
-      const links = (this.relativeDraft?.suggestedLinks || [])
-        .filter((item) => selectedLinkIds.has(item.id))
-        .map(({ personId, relation: linkRelation }) => ({ personId, relation: linkRelation }));
+      const { relation, values, links } = this.collectRelativeSubmission();
+      const relationshipPersonIds = [this.viewModel.id, ...links.map((item) => item.personId)];
+      const duplicates = this.allowDuplicateCreation
+        ? []
+        : findPotentialPersonDuplicates(this.currentPeople(), values, {
+            excludeIds: [this.viewModel.id],
+            relationshipPersonIds,
+          });
+      if (duplicates.length) {
+        this.renderDuplicateCandidates(duplicates);
+        return;
+      }
       this.runAction('onAddRelative', relation, values, links);
     });
     listen(this.photoForm, 'submit', (event) => {
@@ -246,6 +270,8 @@ export class PersonSidebar {
     this.updateSurnameFieldPresentation(this.editForm);
 
     listen(this.relativeForm, 'input', (event) => {
+      this.allowDuplicateCreation = false;
+      this.renderDuplicateCandidates([]);
       const field = AUTOFILL_FIELD_NAMES[event.target.name];
       if (!field || field === 'gender' || !this.relativeDraft) return;
       this.relativeDraft = markDraftFieldExplicit(this.relativeDraft, field, event.target.value);
@@ -321,6 +347,8 @@ export class PersonSidebar {
     const selectedPerson = this.getSelectedPerson();
     if (!selectedPerson) return;
     this.relativeForm.reset();
+    this.allowDuplicateCreation = false;
+    this.renderDuplicateCandidates([]);
     this.relativeForm.querySelector('.person-sidebar-gender').disabled = Boolean(config.lockGender);
     this.relativeForm.elements.relative_type.value = relation;
     this.relativeContext = {
@@ -351,6 +379,45 @@ export class PersonSidebar {
   currentPeople() {
     const people = this.getPeople?.();
     return Array.isArray(people) ? people : this.people;
+  }
+
+  collectRelativeSubmission() {
+    const formData = new FormData(this.relativeForm);
+    const values = Object.fromEntries(formData);
+    const relation = values.relative_type;
+    delete values.relative_type;
+    delete values.suggested_link;
+    const selectedLinkIds = new Set(formData.getAll('suggested_link').map(String));
+    const links = (this.relativeDraft?.suggestedLinks || [])
+      .filter((item) => selectedLinkIds.has(item.id))
+      .map(({ personId, relation: linkRelation }) => ({ personId, relation: linkRelation }));
+    return { relation, values, links };
+  }
+
+  renderDuplicateCandidates(candidates) {
+    const section = this.relativeForm.querySelector('[data-sidebar-duplicates]');
+    const list = this.relativeForm.querySelector('[data-sidebar-duplicate-list]');
+    list.replaceChildren();
+    section.classList.toggle('hidden', candidates.length === 0);
+    for (const candidate of candidates) {
+      const item = document.createElement('div');
+      item.className = 'person-sidebar-duplicate';
+      const details = document.createElement('p');
+      details.textContent = [
+        candidate.name,
+        candidate.birthDate ? `дата рождения ${candidate.birthDate}` : '',
+        candidate.reasons.join(', '),
+      ]
+        .filter(Boolean)
+        .join(' · ');
+      const button = document.createElement('button');
+      button.className = 'ghost wide';
+      button.type = 'button';
+      button.dataset.sidebarUseExisting = candidate.id;
+      button.textContent = `Использовать существующего: ${candidate.name}`;
+      item.append(details, button);
+      list.append(item);
+    }
   }
 
   buildFreshRelativeDraft() {

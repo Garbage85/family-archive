@@ -81,6 +81,11 @@ if [[ -n $CURRENT_RELEASE ]]; then
 else
   failure "Текущий release отсутствует, неполон или находится вне releases."
 fi
+if frontend_assets_are_valid "$INSTALL_ROOT/current/pb_public"; then
+  pass "Frontend assets присутствуют: $INSTALL_ROOT/current/pb_public."
+else
+  failure "Frontend assets отсутствуют или неполны: нужны непустые index.html, JS и CSS."
+fi
 
 if [[ -d $INSTALL_ROOT/shared/pb_data ]]; then
   pass "Каталог данных существует: $INSTALL_ROOT/shared/pb_data"

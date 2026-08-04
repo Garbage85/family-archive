@@ -71,6 +71,24 @@ run_installer() {
     bash "$INSTALLER" --dry-run "$@" 2>&1
 }
 
+os_release_root="$SUITE_ROOT/os-release"
+mkdir -p "$os_release_root"
+printf 'ID=debian\nPRETTY_NAME="Debian GNU/Linux 12"\n' > "$os_release_root/debian"
+printf 'ID=ubuntu\nID_LIKE=debian\nPRETTY_NAME="Ubuntu 24.04 LTS"\n' > "$os_release_root/ubuntu"
+printf 'ID=raspbian\nID_LIKE=debian\nPRETTY_NAME="Raspberry Pi OS"\n' > "$os_release_root/raspbian"
+printf 'ID=fedora\nPRETTY_NAME="Fedora Linux"\n' > "$os_release_root/unsupported"
+for supported_os in debian ubuntu raspbian; do
+  new_case case_root "os-$supported_os"
+  export FAMILY_ARCHIVE_OS_RELEASE_FILE="$os_release_root/$supported_os"
+  assert_success "installer распознаёт $supported_os через os-release" \
+    run_installer "$case_root" '' --yes
+done
+new_case case_root os-unsupported
+export FAMILY_ARCHIVE_OS_RELEASE_FILE="$os_release_root/unsupported"
+assert_failure 'installer отклоняет неподдерживаемый os-release' \
+  run_installer "$case_root" '' --yes
+unset FAMILY_ARCHIVE_OS_RELEASE_FILE
+
 case_root=""
 new_case case_root default-free
 output=$(run_installer "$case_root" '' --yes)
@@ -191,13 +209,17 @@ assert_success 'update-style чтение и запись сохраняет с�
 
 doctor_root="$SUITE_ROOT/doctor"
 mkdir -p "$doctor_root/install/shared/pb_data" "$doctor_root/install/backups" \
-  "$doctor_root/install/current/scripts" "$doctor_root/cli-bin"
+  "$doctor_root/install/current/scripts" "$doctor_root/install/current/pb_public/assets" \
+  "$doctor_root/cli-bin"
 chmod 0755 "$doctor_root/cli-bin"
 printf 'INSTALL_ROOT=%s/install\nPORT=8095\n' "$doctor_root" > "$doctor_root/deployment.env"
 chmod 0600 "$doctor_root/deployment.env"
 printf '%s\n' '#!/usr/bin/env bash' 'exit 0' \
   > "$doctor_root/install/current/scripts/family-archive.sh"
 chmod 0755 "$doctor_root/install/current/scripts/family-archive.sh"
+printf '<!doctype html>\n' > "$doctor_root/install/current/pb_public/index.html"
+printf 'console.log("fixture")\n' > "$doctor_root/install/current/pb_public/assets/app.js"
+printf 'body {}\n' > "$doctor_root/install/current/pb_public/assets/app.css"
 install_doctor_cli() {
   # shellcheck disable=SC2016 # Positional parameter belongs to child bash.
   env TMPDIR="$doctor_root" DEPLOYMENT_CONFIG="$doctor_root/deployment.env" \
@@ -226,6 +248,20 @@ assert_contains 'Несовпадение config/unit: PORT=8095, unit слуш�
   'doctor обнаруживает несовпадение config и unit'
 assert_contains 'Сервис слушает другой порт: 8090; в config указан 8095' "$doctor_output" \
   'doctor обнаруживает несовпадение config и listener'
+assert_contains 'Frontend assets присутствуют' "$doctor_output" \
+  'doctor подтверждает обязательные frontend assets'
+
+rm -f -- "$doctor_root/install/current/pb_public/assets/app.js"
+set +e
+doctor_assets_output=$(env PATH="$MOCK_BIN:$PATH" TMPDIR="$doctor_root" MOCK_BUSY_PORTS=8090 \
+  MOCK_UNIT_PATH="$doctor_root/family-tree.service" FAMILY_ARCHIVE_DOCTOR_TEST_MODE=1 \
+  FAMILY_ARCHIVE_CLI_BIN_DIR="$doctor_root/cli-bin" \
+  DEPLOYMENT_CONFIG="$doctor_root/deployment.env" \
+  bash "$TEST_PROJECT_ROOT/scripts/doctor-server.sh" 2>&1)
+set -e
+assert_contains 'Frontend assets отсутствуют или неполны' "$doctor_assets_output" \
+  'doctor считает отсутствие frontend assets ошибкой'
+printf 'console.log("fixture")\n' > "$doctor_root/install/current/pb_public/assets/app.js"
 
 set +e
 doctor_owner_output=$(env PATH="$MOCK_BIN:$PATH" TMPDIR="$doctor_root" MOCK_BUSY_PORTS=8090 \

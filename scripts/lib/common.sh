@@ -402,6 +402,41 @@ require_commands() {
   ((${#missing[@]} == 0)) || die "Не найдены обязательные команды: ${missing[*]}"
 }
 
+os_release_value() {
+  local file=$1 key=$2 line value
+  [[ -f $file && -r $file ]] || return 1
+  while IFS= read -r line || [[ -n $line ]]; do
+    [[ $line == "$key="* ]] || continue
+    value=${line#*=}
+    if [[ $value == \"*\" && $value == *\" ]]; then
+      value=${value:1:${#value}-2}
+    elif [[ $value == \'*\' && $value == *\' ]]; then
+      value=${value:1:${#value}-2}
+    fi
+    printf '%s\n' "$value"
+    return 0
+  done < "$file"
+  return 1
+}
+
+detect_supported_debian_os() {
+  local file=${FAMILY_ARCHIVE_OS_RELEASE_FILE:-/etc/os-release} id pretty
+  id=$(os_release_value "$file" ID 2>/dev/null || true)
+  pretty=$(os_release_value "$file" PRETTY_NAME 2>/dev/null || true)
+  id=${id,,}
+  pretty=${pretty,,}
+
+  if [[ $id == raspbian || $pretty == *'raspberry pi os'* ]]; then
+    printf 'raspberry-pi-os\n'
+  elif [[ $id == ubuntu ]]; then
+    printf 'ubuntu\n'
+  elif [[ $id == debian ]]; then
+    printf 'debian\n'
+  else
+    die "Поддерживаются Debian, Ubuntu и Raspberry Pi OS; не удалось распознать $file (ID=${id:-не указан})."
+  fi
+}
+
 install_missing_system_packages() {
   local -a packages=() required_commands=(git curl unzip rsync jq node npm systemctl tar sha256sum flock ss)
   local command package
@@ -643,6 +678,13 @@ release_is_valid() {
   local release=$1
   [[ -d $release && -x $release/pocketbase && -d $release/pb_public &&
     -d $release/pb_migrations && -f $release/release.env ]]
+}
+
+frontend_assets_are_valid() {
+  local public_dir=$1
+  [[ -s $public_dir/index.html && -d $public_dir/assets ]] || return 1
+  [[ -n $(find "$public_dir/assets" -maxdepth 1 -type f -name '*.js' -size +0c -print -quit 2>/dev/null) &&
+    -n $(find "$public_dir/assets" -maxdepth 1 -type f -name '*.css' -size +0c -print -quit 2>/dev/null) ]]
 }
 
 current_release() {

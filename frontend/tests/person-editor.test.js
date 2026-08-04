@@ -319,6 +319,78 @@ test('a failed multi-link action leaves the original local tree unchanged', () =
   assert.deepEqual(baseTree, snapshot);
 });
 
+test('an existing probable duplicate can be linked without creating a person', () => {
+  const existingMother = {
+    id: 'existing-mother',
+    data: { first_name: 'Мария', last_name: 'Петрова', gender: 'F' },
+    rels: { parents: [], spouses: [], children: [] },
+  };
+  const snapshot = structuredClone([...baseTree, existingMother]);
+
+  const result = applyPersonAction(editableState({ data: snapshot }), {
+    type: 'link-existing-relative',
+    personId: 'person-1',
+    relativeId: 'existing-mother',
+    relation: 'mother',
+    links: [{ personId: 'person-2', relation: 'spouse' }],
+  });
+  const selected = result.data.find((person) => person.id === 'person-1');
+  const mother = result.data.find((person) => person.id === 'existing-mother');
+  const father = result.data.find((person) => person.id === 'person-2');
+
+  assert.equal(result.data.length, snapshot.length);
+  assert.ok(selected.rels.parents.includes(mother.id));
+  assert.ok(mother.rels.children.includes(selected.id));
+  assert.ok(mother.rels.spouses.includes(father.id));
+  assert.ok(father.rels.spouses.includes(mother.id));
+});
+
+test('linking an existing sibling uses selected parents and no direct sibling fact', () => {
+  const existingBrother = {
+    id: 'existing-brother',
+    data: { first_name: 'Пётр', last_name: 'Петров', gender: 'M' },
+    rels: { parents: [], spouses: [], children: [] },
+  };
+  const result = applyPersonAction(editableState({ data: [...baseTree, existingBrother] }), {
+    type: 'link-existing-relative',
+    personId: 'person-1',
+    relativeId: 'existing-brother',
+    relation: 'brother',
+    links: [{ personId: 'person-2', relation: 'parent' }],
+  });
+  const brother = result.data.find((person) => person.id === 'existing-brother');
+
+  assert.deepEqual(brother.rels.parents, ['person-2']);
+  assert.deepEqual(Object.keys(brother.rels).sort(), ['children', 'parents', 'spouses']);
+});
+
+test('linking an existing person deduplicates links and does not mutate source data', () => {
+  const source = [
+    ...baseTree,
+    {
+      id: 'existing-child',
+      data: { first_name: 'Пётр', gender: 'M' },
+      rels: { parents: [], spouses: [], children: [] },
+    },
+  ];
+  const snapshot = structuredClone(source);
+  const result = applyPersonAction(editableState({ data: source }), {
+    type: 'link-existing-relative',
+    personId: 'person-1',
+    relativeId: 'existing-child',
+    relation: 'son',
+    links: [
+      { personId: 'person-2', relation: 'parent' },
+      { personId: 'person-2', relation: 'parent' },
+    ],
+  });
+  const child = result.data.find((person) => person.id === 'existing-child');
+
+  assert.deepEqual(child.rels.parents, ['person-1', 'person-2']);
+  assert.equal(result.data.length, source.length);
+  assert.deepEqual(source, snapshot);
+});
+
 test('a sibling cannot be created without a selected shared parent', () => {
   assert.throws(
     () =>

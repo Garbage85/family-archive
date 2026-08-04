@@ -1033,6 +1033,33 @@ button {
   line-height: 1.4;
   overflow-wrap: anywhere;
 }
+.person-sidebar-duplicates {
+  min-width: 0;
+  margin-top: 0.9rem;
+  padding: 0.9rem;
+  border: 1px solid #d9ae65;
+  border-radius: 14px;
+  background: #fffaf0;
+}
+.person-sidebar-duplicates h3,
+.person-sidebar-duplicates p {
+  margin: 0 0 0.65rem;
+}
+[data-sidebar-duplicate-list] {
+  display: grid;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+.person-sidebar-duplicate {
+  min-width: 0;
+  padding-top: 0.75rem;
+  border-top: 1px solid #ead4ac;
+}
+.person-sidebar-duplicate p {
+  overflow-wrap: anywhere;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
 .person-sidebar-photo-preview {
   min-height: 132px;
   display: grid;

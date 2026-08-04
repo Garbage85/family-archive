@@ -79,3 +79,29 @@ test('female surname labels and autofill controls remain mobile-safe', async () 
   assert.match(css, /\.person-sidebar-autofill-meta\s*\{[\s\S]*?flex-wrap: wrap/);
   assert.match(css, /\.person-sidebar-form-grid label,[\s\S]*?overflow-wrap: anywhere/);
 });
+
+test('relative creation warns about duplicates and offers both safe choices', async () => {
+  const [sidebar, css] = await Promise.all([
+    source('src/person-sidebar.js'),
+    source('src/styles.css'),
+  ]);
+
+  assert.match(sidebar, /data-sidebar-duplicates aria-live="polite"/);
+  assert.match(sidebar, /data-sidebar-use-existing/);
+  assert.match(sidebar, /Всё равно создать нового/);
+  assert.match(css, /\.person-sidebar-duplicate p\s*\{[\s\S]*?overflow-wrap: anywhere/);
+});
+
+test('edit and relative forms each expose one labelled gender group', async () => {
+  const sidebar = await source('src/person-sidebar.js');
+  const editForm = sidebar.match(/<form id="person-sidebar-edit-form"[\s\S]*?<\/form>/)?.[0];
+  const relativeForm = sidebar.match(
+    /<form id="person-sidebar-relative-form"[\s\S]*?<\/form>/,
+  )?.[0];
+
+  for (const form of [editForm, relativeForm]) {
+    assert.ok(form);
+    assert.equal((form.match(/<fieldset class="person-sidebar-gender">/g) || []).length, 1);
+    assert.equal((form.match(/<legend>Пол<\/legend>/g) || []).length, 1);
+  }
+});
