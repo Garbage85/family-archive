@@ -73,15 +73,67 @@ function relationPeople(ids, peopleById, { getRoleLabel, relationType } = {}) {
       name: person ? formatPersonName(person) : 'Неизвестный человек',
       initials: person ? personInitials(person) : '—',
       roleLabel: getRoleLabel?.(person) || '',
+      isResolved: Boolean(person),
       ...(relationType ? { relationType } : {}),
     };
   });
 }
 
+function siblingRoleLabel(person) {
+  const gender = cleanText(person?.data?.gender).toUpperCase();
+  if (gender === 'M') return 'Брат';
+  if (gender === 'F') return 'Сестра';
+  return 'Брат или сестра';
+}
+
+function buildParentIdsByPerson(treeData, peopleById) {
+  const parentIdsByPerson = new Map([...peopleById.keys()].map((id) => [id, new Set()]));
+  for (const person of treeData) {
+    const personId = String(person?.id ?? '');
+    if (!personId || !peopleById.has(personId)) continue;
+
+    const storedParents = person?.rels?.parents;
+    const directParents = Array.isArray(storedParents) ? storedParents : [];
+    for (const parentId of directParents) {
+      const id = String(parentId ?? '');
+      if (id && id !== personId && peopleById.has(id)) parentIdsByPerson.get(personId).add(id);
+    }
+
+    const storedChildren = person?.rels?.children;
+    const children = Array.isArray(storedChildren) ? storedChildren : [];
+    for (const childId of children) {
+      const id = String(childId ?? '');
+      if (id && id !== personId && peopleById.has(id)) parentIdsByPerson.get(id).add(personId);
+    }
+  }
+  return parentIdsByPerson;
+}
+
+function siblingPeople(person, treeData, peopleById, parentIdsByPerson) {
+  const personId = String(person.id);
+  const selectedParentIds = parentIdsByPerson.get(personId) || new Set();
+  if (!selectedParentIds.size) return [];
+
+  const siblingIds = [];
+  for (const candidate of treeData) {
+    const candidateId = String(candidate?.id ?? '');
+    if (!candidateId || candidateId === personId || !peopleById.has(candidateId)) continue;
+    const candidateParentIds = parentIdsByPerson.get(candidateId) || new Set();
+    if ([...candidateParentIds].some((parentId) => selectedParentIds.has(parentId))) {
+      siblingIds.push(candidateId);
+    }
+  }
+  return relationPeople(siblingIds, peopleById, { getRoleLabel: siblingRoleLabel });
+}
+
 export function preparePersonSidebarData(treeData, personId) {
   if (!Array.isArray(treeData) || personId === null || personId === undefined) return null;
 
-  const peopleById = new Map(treeData.map((person) => [String(person?.id), person]));
+  const peopleById = new Map(
+    treeData
+      .filter((person) => person?.id !== null && person?.id !== undefined && String(person.id))
+      .map((person) => [String(person.id), person]),
+  );
   const person = peopleById.get(String(personId));
   if (!person) return null;
 
@@ -102,11 +154,14 @@ export function preparePersonSidebarData(treeData, personId) {
     // Until that model is introduced, trees.data continues to store parent IDs only.
     relationType: 'biological',
   });
+  const parentIdsByPerson = buildParentIdsByPerson(treeData, peopleById);
+  const siblings = siblingPeople(person, treeData, peopleById, parentIdsByPerson);
   const spousePeople = relationPeople(relations.spouses, peopleById);
   const singleSpouse =
     spousePeople.length === 1 ? peopleById.get(String(relations.spouses?.[0])) : null;
   const relationGroups = [
     { key: 'parents', label: 'Родители', people: parentPeople },
+    { key: 'siblings', label: 'Братья и сёстры', people: siblings },
     {
       key: 'spouses',
       label: getSpouseSectionLabel(singleSpouse, spousePeople.length),

@@ -828,13 +828,25 @@ button {
   padding: 0;
   list-style: none;
 }
-.person-sidebar-relation-group li {
+.person-sidebar-relation-person {
+  width: 100%;
   display: flex;
   align-items: center;
   gap: 0.65rem;
   min-width: 0;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  white-space: normal;
+  text-align: left;
+  overflow-wrap: anywhere;
   font-size: 0.9rem;
   font-weight: 700;
+}
+button.person-sidebar-relation-person:hover,
+button.person-sidebar-relation-person:focus-visible {
+  color: var(--forest);
 }
 .person-sidebar-relation-description {
   display: grid;

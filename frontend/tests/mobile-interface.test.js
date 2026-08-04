@@ -105,3 +105,25 @@ test('edit and relative forms each expose one labelled gender group', async () =
     assert.equal((form.match(/<legend>Пол<\/legend>/g) || []).length, 1);
   }
 });
+
+test('relationship rows use the existing sidebar selection path', async () => {
+  const [sidebar, main, css] = await Promise.all([
+    source('src/person-sidebar.js'),
+    source('src/main.js'),
+    source('src/styles.css'),
+  ]);
+
+  assert.match(sidebar, /createElement\(person\.isResolved \? 'button' : 'div'\)/);
+  assert.match(
+    sidebar,
+    /if \(person\.isResolved\) \{[\s\S]*?row\.dataset\.sidebarOpenPerson = person\.id/,
+  );
+  assert.match(sidebar, /openRelatedPerson\(button\.dataset\.sidebarOpenPerson\)/);
+  assert.match(main, /onSelect: \(personId\) => openSidebar\(personId\)/);
+  const relationRowStyles = css.match(/\.person-sidebar-relation-person\s*\{([^}]*)\}/)?.[1];
+  assert.ok(relationRowStyles);
+  assert.match(relationRowStyles, /min-width: 0/);
+  assert.match(relationRowStyles, /white-space: normal/);
+  assert.match(relationRowStyles, /text-align: left/);
+  assert.match(relationRowStyles, /overflow-wrap: anywhere/);
+});

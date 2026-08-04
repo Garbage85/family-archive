@@ -54,14 +54,16 @@ test('preparePersonSidebarData prepares facts and resolves relatives', () => {
     result.relationGroups.map((group) => [group.key, group.people.map((person) => person.name)]),
     [
       ['parents', ['Петров Иван']],
+      ['siblings', []],
       ['spouses', ['Неизвестный человек']],
       ['children', ['Маша']],
     ],
   );
   assert.equal(result.relationGroups[0].people[0].roleLabel, 'Отец');
   assert.equal(result.relationGroups[0].people[0].relationType, 'biological');
-  assert.equal(result.relationGroups[1].label, 'Супруг(а)');
-  assert.equal(result.relationGroups[1].people[0].roleLabel, '');
+  assert.equal(result.relationGroups[2].label, 'Супруг(а)');
+  assert.equal(result.relationGroups[2].people[0].roleLabel, '');
+  assert.equal(result.relationGroups[2].people[0].isResolved, false);
 });
 
 test('preparePersonSidebarData removes empty and null-like labels', () => {
@@ -90,6 +92,7 @@ test('preparePersonSidebarData removes empty and null-like labels', () => {
     result.relationGroups.map((group) => [group.label, group.people]),
     [
       ['Родители', []],
+      ['Братья и сёстры', []],
       ['Супруг(а)', []],
       ['Дети', []],
     ],
@@ -275,4 +278,142 @@ test('empty and exact legacy notes are hidden while a real note is preserved', (
   );
   assert.equal(result.fields.find((field) => field.key === 'notes').value, 'Настоящая заметка');
   assert.equal(result.values.notes, 'Настоящая заметка');
+});
+
+test('brother with two shared parents is listed exactly once and self is excluded', () => {
+  const source = [
+    {
+      id: 'selected',
+      data: { first_name: 'Анна', gender: 'F' },
+      rels: { parents: ['father', 'mother'] },
+    },
+    {
+      id: 'brother',
+      data: { first_name: 'Иван', gender: 'M' },
+      rels: { parents: ['father', 'mother'] },
+    },
+    {
+      id: 'father',
+      data: { first_name: 'Пётр', gender: 'M' },
+      rels: { children: ['selected', 'brother'] },
+    },
+    {
+      id: 'mother',
+      data: { first_name: 'Мария', gender: 'F' },
+      rels: { children: ['selected', 'brother'] },
+    },
+  ];
+
+  const result = preparePersonSidebarData(source, 'selected');
+  const siblings = result.relationGroups.find((group) => group.key === 'siblings');
+
+  assert.equal(siblings.label, 'Братья и сёстры');
+  assert.deepEqual(
+    siblings.people.map((person) => [person.id, person.roleLabel]),
+    [['brother', 'Брат']],
+  );
+  assert.equal(
+    siblings.people.some((person) => person.id === 'selected'),
+    false,
+  );
+});
+
+test('sister with one shared parent is listed while an unrelated person is ignored', () => {
+  const source = [
+    {
+      id: 'selected',
+      data: { first_name: 'Иван', gender: 'M' },
+      rels: { parents: ['mother'] },
+    },
+    {
+      id: 'sister',
+      data: { first_name: 'Анна', gender: 'F' },
+      rels: { parents: ['mother', 'other-father'] },
+    },
+    {
+      id: 'unrelated',
+      data: { first_name: 'Ольга', gender: 'F' },
+      rels: { parents: ['unrelated-parent'] },
+    },
+    { id: 'mother', data: { first_name: 'Мария' }, rels: {} },
+    { id: 'other-father', data: { first_name: 'Пётр' }, rels: {} },
+    { id: 'unrelated-parent', data: { first_name: 'Сергей' }, rels: {} },
+  ];
+
+  const siblings = preparePersonSidebarData(source, 'selected').relationGroups.find(
+    (group) => group.key === 'siblings',
+  );
+
+  assert.deepEqual(
+    siblings.people.map((person) => [person.id, person.roleLabel]),
+    [['sister', 'Сестра']],
+  );
+});
+
+test('missing parent targets are ignored without creating false siblings', () => {
+  const source = [
+    {
+      id: 'selected',
+      data: { first_name: 'Иван' },
+      rels: { parents: ['missing-parent'] },
+    },
+    {
+      id: 'candidate',
+      data: { first_name: 'Анна', gender: 'F' },
+      rels: { parents: ['missing-parent'] },
+    },
+  ];
+
+  const result = preparePersonSidebarData(source, 'selected');
+  const siblings = result.relationGroups.find((group) => group.key === 'siblings');
+
+  assert.deepEqual(siblings.people, []);
+});
+
+test('one-sided legacy child links produce a neutral sibling without mutating the tree', () => {
+  const source = [
+    { id: 'selected', data: { first_name: 'Иван' }, rels: {} },
+    { id: 'sibling', data: { first_name: 'Саша' }, rels: {} },
+    {
+      id: 'parent',
+      data: { first_name: 'Мария', gender: 'F' },
+      rels: { children: ['selected', 'sibling', 'missing-child'] },
+    },
+  ];
+  const snapshot = structuredClone(source);
+
+  const result = preparePersonSidebarData(source, 'selected');
+  const siblings = result.relationGroups.find((group) => group.key === 'siblings');
+
+  assert.deepEqual(
+    siblings.people.map((person) => [person.id, person.roleLabel]),
+    [['sibling', 'Брат или сестра']],
+  );
+  assert.deepEqual(source, snapshot);
+});
+
+test('parent-child reverse links are indexed once instead of rescanning for every candidate', () => {
+  const peopleCount = 80;
+  let childrenReads = 0;
+  const source = Array.from({ length: peopleCount }, (_, index) => {
+    const rels = { parents: index > 1 ? ['parent'] : [] };
+    Object.defineProperty(rels, 'children', {
+      enumerable: true,
+      get() {
+        childrenReads += 1;
+        return index === 0
+          ? Array.from({ length: peopleCount - 1 }, (_, child) => String(child + 1))
+          : [];
+      },
+    });
+    return {
+      id: index === 0 ? 'parent' : String(index),
+      data: { first_name: `Человек ${index}` },
+      rels,
+    };
+  });
+
+  preparePersonSidebarData(source, '1');
+
+  assert.ok(childrenReads <= peopleCount + 1, `children прочитан ${childrenReads} раз`);
 });

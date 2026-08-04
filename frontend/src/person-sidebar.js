@@ -210,6 +210,9 @@ export class PersonSidebar {
           submission.links,
         );
       }
+      if (button.matches('[data-sidebar-open-person]')) {
+        this.openRelatedPerson(button.dataset.sidebarOpenPerson);
+      }
       if (button.matches('[data-sidebar-create-anyway]')) {
         this.allowDuplicateCreation = true;
         this.relativeForm.requestSubmit();
@@ -379,6 +382,10 @@ export class PersonSidebar {
   currentPeople() {
     const people = this.getPeople?.();
     return Array.isArray(people) ? people : this.people;
+  }
+
+  openRelatedPerson(personId) {
+    if (personId) this.handlers.onSelect?.(String(personId));
   }
 
   collectRelativeSubmission() {
@@ -783,6 +790,12 @@ export class PersonSidebar {
         const list = document.createElement('ul');
         for (const person of group.people) {
           const item = document.createElement('li');
+          const row = document.createElement(person.isResolved ? 'button' : 'div');
+          row.className = 'person-sidebar-relation-person';
+          if (person.isResolved) {
+            row.type = 'button';
+            row.dataset.sidebarOpenPerson = person.id;
+          }
           const initials = document.createElement('span');
           initials.className = 'relation-avatar';
           initials.textContent = person.initials;
@@ -797,7 +810,8 @@ export class PersonSidebar {
             description.append(role);
           }
           description.append(name);
-          item.append(initials, description);
+          row.append(initials, description);
+          item.append(row);
           list.append(item);
         }
         section.append(list);

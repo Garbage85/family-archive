@@ -146,6 +146,7 @@ function applySidebarAction(action, options = {}) {
 }
 
 const sidebarHandlers = {
+  onSelect: (personId) => openSidebar(personId),
   onUpdate: (personId, values) => applySidebarAction({ type: 'update', personId, values }),
   onAddRelative: (personId, relation, values, links) =>
     applySidebarAction(
