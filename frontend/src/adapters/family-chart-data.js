@@ -119,7 +119,8 @@ function referencesResolve(nodes, resolvableById) {
       (field) => !node[field] || resolvableById.has(nodeId(node[field])),
     );
     const arraysResolve = ARRAY_NODE_REFERENCES.every(
-      (field) => !node[field] || node[field].every((relative) => resolvableById.has(nodeId(relative))),
+      (field) =>
+        !node[field] || node[field].every((relative) => resolvableById.has(nodeId(relative))),
     );
     return scalarsResolve && arraysResolve;
   });
@@ -132,7 +133,8 @@ function remapNodeReferences(nodes, resolvableById, dataById) {
       if (node[field]) node[field] = resolvableById.get(nodeId(node[field]));
     }
     for (const field of ARRAY_NODE_REFERENCES) {
-      if (node[field]) node[field] = node[field].map((relative) => resolvableById.get(nodeId(relative)));
+      if (node[field])
+        node[field] = node[field].map((relative) => resolvableById.get(nodeId(relative)));
     }
   }
 }
@@ -147,9 +149,7 @@ function findFreeBranchMidpoint(
   generationSeparation,
   isHorizontal,
 ) {
-  const offsets = nodes.map(
-    (_node, index) => (index - (nodes.length - 1) / 2) * crossSeparation,
-  );
+  const offsets = nodes.map((_node, index) => (index - (nodes.length - 1) / 2) * crossSeparation);
   let midpoint = anchorCross + (outward * (nodes.length + 1) * crossSeparation) / 2;
   const conflicts = (candidate) =>
     offsets.some((offset) =>
@@ -198,8 +198,7 @@ function graftDirectRelatives({
   remapNodeReferences(nodes, resolvableById, dataById);
 
   const anchorPosition = nodePosition(anchorNode, isHorizontal);
-  const targetGeneration =
-    anchorPosition.generation + generationDirection * generationSeparation;
+  const targetGeneration = anchorPosition.generation + generationDirection * generationSeparation;
   const midpoint = findFreeBranchMidpoint(
     nodes,
     tree.data,

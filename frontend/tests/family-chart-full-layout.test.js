@@ -123,7 +123,10 @@ function assertReferencesBelongToTree(tree) {
     }
     for (const field of ['parents', 'children', 'spouses']) {
       if (node[field]) {
-        assert.ok(node[field].length > 0, `${node.data.id}.${field} must be absent instead of empty`);
+        assert.ok(
+          node[field].length > 0,
+          `${node.data.id}.${field} must be absent instead of empty`,
+        );
       }
       for (const relative of node[field] || []) {
         assert.ok(nodes.has(relative), `${node.data.id}.${field} leaves tree`);
