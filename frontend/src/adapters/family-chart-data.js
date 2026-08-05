@@ -65,6 +65,166 @@ function nodePosition(node, isHorizontal) {
     : { cross: node.x, generation: node.y };
 }
 
+function compareIds(left, right) {
+  const a = String(left);
+  const b = String(right);
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+function cloneFamilyChartData(data) {
+  return data.map((person) => ({
+    ...person,
+    data: { ...person.data },
+    rels: {
+      ...person.rels,
+      parents: [...(person.rels.parents || [])],
+      children: [...(person.rels.children || [])],
+      spouses: [...(person.rels.spouses || [])],
+    },
+  }));
+}
+
+function calculateDirectBranch(
+  calculateFamilyTree,
+  data,
+  mainId,
+  nodeSeparation,
+  levelSeparation,
+  isHorizontal,
+) {
+  return calculateFamilyTree(cloneFamilyChartData(data), {
+    main_id: mainId,
+    node_separation: nodeSeparation,
+    level_separation: levelSeparation,
+    single_parent_empty_card: false,
+    is_horizontal: isHorizontal,
+    ancestry_depth: 1,
+    progeny_depth: 1,
+    show_siblings_of_main: true,
+    sortChildrenFunction: (left, right) => compareIds(left.id, right.id),
+    sortSpousesFunction: (person) => person.rels.spouses?.sort(compareIds),
+  });
+}
+
+const SCALAR_NODE_REFERENCES = ['parent', 'spouse', 'coparent'];
+const ARRAY_NODE_REFERENCES = ['parents', 'children', 'spouses'];
+
+function nodeId(node) {
+  return String(node?.data?.id ?? '');
+}
+
+function referencesResolve(nodes, resolvableById) {
+  return nodes.every((node) => {
+    const scalarsResolve = SCALAR_NODE_REFERENCES.every(
+      (field) => !node[field] || resolvableById.has(nodeId(node[field])),
+    );
+    const arraysResolve = ARRAY_NODE_REFERENCES.every(
+      (field) => !node[field] || node[field].every((relative) => resolvableById.has(nodeId(relative))),
+    );
+    return scalarsResolve && arraysResolve;
+  });
+}
+
+function remapNodeReferences(nodes, resolvableById, dataById) {
+  for (const node of nodes) {
+    node.data = dataById.get(nodeId(node)) || node.data;
+    for (const field of SCALAR_NODE_REFERENCES) {
+      if (node[field]) node[field] = resolvableById.get(nodeId(node[field]));
+    }
+    for (const field of ARRAY_NODE_REFERENCES) {
+      if (node[field]) node[field] = node[field].map((relative) => resolvableById.get(nodeId(relative)));
+    }
+  }
+}
+
+function findFreeBranchMidpoint(
+  nodes,
+  displayedNodes,
+  anchorCross,
+  targetGeneration,
+  outward,
+  crossSeparation,
+  generationSeparation,
+  isHorizontal,
+) {
+  const offsets = nodes.map(
+    (_node, index) => (index - (nodes.length - 1) / 2) * crossSeparation,
+  );
+  let midpoint = anchorCross + (outward * (nodes.length + 1) * crossSeparation) / 2;
+  const conflicts = (candidate) =>
+    offsets.some((offset) =>
+      displayedNodes.some((displayed) => {
+        const position = nodePosition(displayed, isHorizontal);
+        return (
+          Math.abs(position.generation - targetGeneration) < generationSeparation &&
+          Math.abs(position.cross - (candidate + offset)) < crossSeparation
+        );
+      }),
+    );
+
+  while (conflicts(midpoint)) midpoint += outward * crossSeparation;
+  return midpoint;
+}
+
+function graftDirectRelatives({
+  tree,
+  branch,
+  relativeIds,
+  anchorNode,
+  relationField,
+  displayedById,
+  dataById,
+  outward,
+  generationDirection,
+  crossSeparation,
+  generationSeparation,
+  isHorizontal,
+}) {
+  const branchById = new Map(branch.data.map((node) => [nodeId(node), node]));
+  const nodes = relativeIds
+    .map(String)
+    .map((id) => branchById.get(id))
+    .filter(Boolean)
+    .sort((left, right) => {
+      const crossDifference =
+        nodePosition(left, isHorizontal).cross - nodePosition(right, isHorizontal).cross;
+      return crossDifference || compareIds(nodeId(left), nodeId(right));
+    });
+  if (!nodes.length) return;
+
+  const resolvableById = new Map(displayedById);
+  for (const node of nodes) resolvableById.set(nodeId(node), node);
+  if (!referencesResolve(nodes, resolvableById)) return;
+  remapNodeReferences(nodes, resolvableById, dataById);
+
+  const anchorPosition = nodePosition(anchorNode, isHorizontal);
+  const targetGeneration =
+    anchorPosition.generation + generationDirection * generationSeparation;
+  const midpoint = findFreeBranchMidpoint(
+    nodes,
+    tree.data,
+    anchorPosition.cross,
+    targetGeneration,
+    outward,
+    crossSeparation,
+    generationSeparation,
+    isHorizontal,
+  );
+  nodes.forEach((node, index) => {
+    const cross = midpoint + (index - (nodes.length - 1) / 2) * crossSeparation;
+    positionNode(node, cross, targetGeneration, isHorizontal);
+    displayedById.set(nodeId(node), node);
+  });
+
+  if (relationField) {
+    anchorNode[relationField] = [...(anchorNode[relationField] || []), ...nodes];
+  }
+  for (const node of nodes) {
+    if (node.coparent) node.coparent.coparent = node;
+  }
+  tree.data.push(...nodes);
+}
+
 function updateTreeDimensions(tree, nodeSeparation, levelSeparation) {
   const xValues = tree.data.map((node) => node.x);
   const yValues = tree.data.map((node) => node.y);
@@ -90,77 +250,109 @@ export function includeDirectSpouseBranches(
   tree,
   chartData,
   centerId,
-  { nodeSeparation = 236, levelSeparation = 224, isHorizontal = false } = {},
+  {
+    nodeSeparation = 236,
+    levelSeparation = 224,
+    isHorizontal = false,
+    calculateTree: calculateFamilyTree,
+  } = {},
 ) {
   if (!tree?.data?.length) return tree;
-  const peopleById = new Map(chartData.map((person) => [String(person.id), person]));
+  const currentData = tree.data_stash?.length ? tree.data_stash : chartData;
+  const peopleById = new Map(currentData.map((person) => [String(person.id), person]));
   const displayedById = new Map(tree.data.map((node) => [String(node.data?.id), node]));
   const center = peopleById.get(String(centerId));
   const centerNode = displayedById.get(String(centerId));
   if (!center || !centerNode) return tree;
 
-  for (const spouseId of center.rels.spouses || []) {
+  const crossSeparation = isHorizontal ? levelSeparation : nodeSeparation;
+  const generationSeparation = isHorizontal ? nodeSeparation : levelSeparation;
+
+  for (const spouseId of [...(center.rels.spouses || [])].sort(compareIds)) {
     const spouse = peopleById.get(String(spouseId));
     const spouseNode = displayedById.get(String(spouseId));
     if (!spouse || !spouseNode) continue;
 
     const centerPosition = nodePosition(centerNode, isHorizontal);
     const spousePosition = nodePosition(spouseNode, isHorizontal);
-    const outward = spousePosition.cross < centerPosition.cross ? -1 : 1;
+    const outward =
+      spousePosition.cross === centerPosition.cross
+        ? compareIds(spouse.id, center.id) < 0
+          ? -1
+          : 1
+        : spousePosition.cross < centerPosition.cross
+          ? -1
+          : 1;
     const missingParentIds = spouse.rels.parents.filter((id) => !displayedById.has(String(id)));
     const missingChildIds = spouse.rels.children.filter((id) => !displayedById.has(String(id)));
+    const spouseParentIds = new Set(spouse.rels.parents.map(String));
+    const missingSiblingIds = currentData
+      .filter(
+        (person) =>
+          person.id !== spouse.id &&
+          person.rels.parents.some((parentId) => spouseParentIds.has(String(parentId))) &&
+          !displayedById.has(String(person.id)),
+      )
+      .map((person) => person.id);
+    if (!missingParentIds.length && !missingChildIds.length && !missingSiblingIds.length) continue;
+    if (typeof calculateFamilyTree !== 'function') continue;
 
-    const parentMidpoint = spousePosition.cross + (outward * nodeSeparation) / 2;
-    const parentNodes = missingParentIds
-      .map((id) => peopleById.get(String(id)))
-      .filter(Boolean)
-      .map((person, index, parents) => {
-        const cross = parentMidpoint + (index - (parents.length - 1) / 2) * nodeSeparation;
-        const node = {
-          data: person,
-          depth: 1,
-          is_ancestry: true,
-          parent: spouseNode,
-          tid: person.id,
-          _x: spouseNode.x,
-          _y: spouseNode.y,
-        };
-        positionNode(node, cross, spousePosition.generation - levelSeparation, isHorizontal);
-        tree.data.push(node);
-        displayedById.set(String(person.id), node);
-        return node;
-      });
-
-    if (parentNodes.length) {
-      spouseNode.parents = [...(spouseNode.parents || []), ...parentNodes];
-      if (parentNodes.length === 2) {
-        parentNodes[0].coparent = parentNodes[1];
-        parentNodes[1].coparent = parentNodes[0];
-      }
+    let branch;
+    try {
+      branch = calculateDirectBranch(
+        calculateFamilyTree,
+        currentData,
+        spouse.id,
+        nodeSeparation,
+        levelSeparation,
+        isHorizontal,
+      );
+    } catch {
+      continue;
     }
 
-    const childMidpoint = spousePosition.cross + (outward * nodeSeparation) / 2;
-    const childNodes = missingChildIds
-      .map((id) => peopleById.get(String(id)))
-      .filter(Boolean)
-      .map((person, index, children) => {
-        const cross = childMidpoint + (index - (children.length - 1) / 2) * nodeSeparation;
-        const node = {
-          data: person,
-          depth: 1,
-          is_ancestry: false,
-          parent: spouseNode,
-          tid: person.id,
-          _x: spouseNode.x,
-          _y: spouseNode.y,
-        };
-        positionNode(node, cross, spousePosition.generation + levelSeparation, isHorizontal);
-        tree.data.push(node);
-        displayedById.set(String(person.id), node);
-        return node;
-      });
-
-    if (childNodes.length) spouseNode.children = [...(spouseNode.children || []), ...childNodes];
+    graftDirectRelatives({
+      tree,
+      branch,
+      relativeIds: missingParentIds,
+      anchorNode: spouseNode,
+      relationField: 'parents',
+      displayedById,
+      dataById: peopleById,
+      outward,
+      generationDirection: -1,
+      crossSeparation,
+      generationSeparation,
+      isHorizontal,
+    });
+    graftDirectRelatives({
+      tree,
+      branch,
+      relativeIds: missingSiblingIds,
+      anchorNode: spouseNode,
+      relationField: null,
+      displayedById,
+      dataById: peopleById,
+      outward,
+      generationDirection: 0,
+      crossSeparation,
+      generationSeparation,
+      isHorizontal,
+    });
+    graftDirectRelatives({
+      tree,
+      branch,
+      relativeIds: missingChildIds,
+      anchorNode: spouseNode,
+      relationField: 'children',
+      displayedById,
+      dataById: peopleById,
+      outward,
+      generationDirection: 1,
+      crossSeparation,
+      generationSeparation,
+      isHorizontal,
+    });
   }
 
   updateTreeDimensions(tree, nodeSeparation, levelSeparation);

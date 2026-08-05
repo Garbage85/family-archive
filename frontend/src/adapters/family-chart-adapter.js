@@ -10,6 +10,20 @@ const CARD_HEIGHT = 170;
 const CARD_X_SPACING = 236;
 const CARD_Y_SPACING = 224;
 
+function comparePersonIds(left, right) {
+  const a = String(left.id);
+  const b = String(right.id);
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+function sortSpouseIds(person) {
+  person.rels.spouses?.sort((left, right) => {
+    const a = String(left);
+    const b = String(right);
+    return a < b ? -1 : a > b ? 1 : 0;
+  });
+}
+
 export class FamilyTreeChart {
   constructor(containerSelector) {
     this.containerSelector = containerSelector;
@@ -53,11 +67,14 @@ export class FamilyTreeChart {
       .setSingleParentEmptyCard(false)
       .setCardXSpacing(CARD_X_SPACING)
       .setCardYSpacing(CARD_Y_SPACING)
+      .setSortChildrenFunction(comparePersonIds)
+      .setSortSpousesFunction(sortSpouseIds)
       .setBeforeUpdate(() => {
         includeDirectSpouseBranches(this.chart.store.getTree(), this.chartData, this.rootPersonId, {
           nodeSeparation: CARD_X_SPACING,
           levelSeparation: CARD_Y_SPACING,
           isHorizontal: this.orientation === 'horizontal',
+          calculateTree: f3.calculateTree,
         });
       });
 

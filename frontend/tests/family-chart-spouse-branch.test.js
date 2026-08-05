@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import * as f3 from 'family-chart';
 import {
   includeDirectSpouseBranches,
   prepareFamilyChartData,
@@ -58,6 +59,12 @@ function calculatedTree(chartData, centerId) {
   };
 }
 
+function includeBranches(tree, chartData, centerId) {
+  return includeDirectSpouseBranches(tree, chartData, centerId, {
+    calculateTree: f3.calculateTree,
+  });
+}
+
 test('changing center keeps both spouses, both direct parent branches and spouse children', () => {
   const people = family();
   const before = structuredClone(people);
@@ -65,7 +72,7 @@ test('changing center keeps both spouses, both direct parent branches and spouse
 
   for (const centerId of ['alexey', 'alexandra']) {
     const tree = calculatedTree(chartData, centerId);
-    includeDirectSpouseBranches(tree, chartData, centerId);
+    includeBranches(tree, chartData, centerId);
     const ids = tree.data.map((node) => node.data.id);
     const spouseId = centerId === 'alexey' ? 'alexandra' : 'alexey';
     const expectedParents = centerId === 'alexey' ? ['vasily', 'natalia'] : ['sergey', 'elena'];
@@ -76,7 +83,7 @@ test('changing center keeps both spouses, both direct parent branches and spouse
   }
 
   const alexandraTree = calculatedTree(chartData, 'alexandra');
-  includeDirectSpouseBranches(alexandraTree, chartData, 'alexandra');
+  includeBranches(alexandraTree, chartData, 'alexandra');
   assert.ok(alexandraTree.data.some((node) => node.data.id === 'alexey-child'));
   assert.deepEqual(people, before);
 });
@@ -85,7 +92,7 @@ test('spouse parents stay affinal and never become center parents or saved facts
   const people = family();
   const chartData = prepareFamilyChartData(people);
   const tree = calculatedTree(chartData, 'alexandra');
-  includeDirectSpouseBranches(tree, chartData, 'alexandra');
+  includeBranches(tree, chartData, 'alexandra');
 
   const center = chartData.find((item) => item.id === 'alexandra');
   assert.deepEqual(center.rels.parents, ['natalia', 'vasily']);
@@ -104,7 +111,7 @@ test('repeated center switching adds no duplicate layout people', () => {
   const chartData = prepareFamilyChartData(family());
   for (const centerId of ['alexey', 'alexandra', 'alexey']) {
     const tree = calculatedTree(chartData, centerId);
-    includeDirectSpouseBranches(tree, chartData, centerId);
+    includeBranches(tree, chartData, centerId);
     const ids = tree.data.map((node) => node.data.id);
     assert.equal(new Set(ids).size, ids.length);
   }
