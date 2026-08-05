@@ -224,6 +224,171 @@ function graftDirectRelatives({
   tree.data.push(...nodes);
 }
 
+function spouseReferences(node) {
+  return [node.spouse, node.coparent, ...(node.spouses || [])].filter(Boolean);
+}
+
+function ensureSpouseReference(personNode, spouseNode) {
+  if (spouseReferences(personNode).includes(spouseNode)) return;
+  personNode.spouses = [...new Set([...spouseReferences(personNode), spouseNode])];
+}
+
+function memberOrder(left, right, dataById) {
+  const genderRank = { M: 0, F: 1 };
+  const leftRank = genderRank[dataById.get(nodeId(left))?.data?.gender] ?? 2;
+  const rightRank = genderRank[dataById.get(nodeId(right))?.data?.gender] ?? 2;
+  return leftRank - rightRank || compareIds(nodeId(left), nodeId(right));
+}
+
+function reflowHouseholdsOnGeneration(
+  tree,
+  generation,
+  originalCrossById,
+  dataById,
+  crossSeparation,
+  isHorizontal,
+) {
+  const row = tree.data.filter(
+    (node) => nodePosition(node, isHorizontal).generation === generation,
+  );
+  if (row.length < 2) return;
+
+  const rowById = new Map(row.map((node) => [nodeId(node), node]));
+  const roots = new Map([...rowById.keys()].map((id) => [id, id]));
+  const find = (id) => {
+    let root = id;
+    while (roots.get(root) !== root) root = roots.get(root);
+    let current = id;
+    while (roots.get(current) !== current) {
+      const next = roots.get(current);
+      roots.set(current, root);
+      current = next;
+    }
+    return root;
+  };
+  const union = (left, right) => {
+    const leftRoot = find(left);
+    const rightRoot = find(right);
+    if (leftRoot === rightRoot) return;
+    const [root, child] = [leftRoot, rightRoot].sort(compareIds);
+    roots.set(child, root);
+  };
+
+  for (const node of row) {
+    const person = dataById.get(nodeId(node));
+    for (const spouseId of person?.rels.spouses || []) {
+      const id = String(spouseId);
+      if (rowById.has(id)) union(nodeId(node), id);
+    }
+  }
+
+  const groups = new Map();
+  for (const node of row) {
+    const root = find(nodeId(node));
+    if (!groups.has(root)) groups.set(root, []);
+    groups.get(root).push(node);
+  }
+  const originalCross = (node) =>
+    originalCrossById.get(nodeId(node)) ?? nodePosition(node, isHorizontal).cross;
+  const orderedGroups = [...groups.entries()]
+    .map(([id, nodes]) => ({
+      id,
+      nodes: nodes.sort((left, right) => memberOrder(left, right, dataById)),
+      cross: Math.min(...nodes.map(originalCross)),
+    }))
+    .sort((left, right) => left.cross - right.cross || compareIds(left.id, right.id));
+  const orderedNodes = orderedGroups.flatMap((group) => group.nodes);
+  const originalPositions = row.map(originalCross);
+  const midpoint = (Math.min(...originalPositions) + Math.max(...originalPositions)) / 2;
+  const firstCross = midpoint - ((orderedNodes.length - 1) * crossSeparation) / 2;
+
+  orderedNodes.forEach((node, index) => {
+    positionNode(node, firstCross + index * crossSeparation, generation, isHorizontal);
+  });
+  for (const node of row) {
+    const nodeCross = nodePosition(node, isHorizontal).cross;
+    for (const [index, spouse] of (node.spouses || []).entries()) {
+      const spouseCross = nodePosition(spouse, isHorizontal).cross;
+      spouse.sx = index === 0 ? (nodeCross + spouseCross) / 2 : spouseCross;
+    }
+    if (node.spouse) {
+      node.sx = (nodeCross + nodePosition(node.spouse, isHorizontal).cross) / 2;
+    }
+  }
+}
+
+function includeDirectSpousesOfDisplayedPeople({
+  tree,
+  currentData,
+  displayedById,
+  dataById,
+  calculateFamilyTree,
+  nodeSeparation,
+  levelSeparation,
+  crossSeparation,
+  isHorizontal,
+}) {
+  if (typeof calculateFamilyTree !== 'function') return;
+  const displayedAtStart = [...tree.data].sort((left, right) =>
+    compareIds(nodeId(left), nodeId(right)),
+  );
+  const originalCrossById = new Map(
+    displayedAtStart.map((node) => [nodeId(node), nodePosition(node, isHorizontal).cross]),
+  );
+  const affectedGenerations = new Set();
+
+  for (const personNode of displayedAtStart) {
+    const person = dataById.get(nodeId(personNode));
+    const missingSpouseIds = [...(person?.rels.spouses || [])]
+      .map(String)
+      .filter((id) => !displayedById.has(id))
+      .sort(compareIds);
+    if (!missingSpouseIds.length) continue;
+
+    let branch;
+    try {
+      branch = calculateDirectBranch(
+        calculateFamilyTree,
+        currentData,
+        person.id,
+        nodeSeparation,
+        levelSeparation,
+        isHorizontal,
+      );
+    } catch {
+      continue;
+    }
+    const branchById = new Map(branch.data.map((node) => [nodeId(node), node]));
+
+    for (const spouseId of missingSpouseIds) {
+      const spouseNode = branchById.get(spouseId);
+      if (!spouseNode) continue;
+      const resolvableById = new Map(displayedById);
+      resolvableById.set(spouseId, spouseNode);
+      if (!referencesResolve([spouseNode], resolvableById)) continue;
+      remapNodeReferences([spouseNode], resolvableById, dataById);
+
+      const position = nodePosition(personNode, isHorizontal);
+      positionNode(spouseNode, position.cross, position.generation, isHorizontal);
+      displayedById.set(spouseId, spouseNode);
+      ensureSpouseReference(personNode, spouseNode);
+      tree.data.push(spouseNode);
+      affectedGenerations.add(position.generation);
+    }
+  }
+
+  for (const generation of [...affectedGenerations].sort((left, right) => left - right)) {
+    reflowHouseholdsOnGeneration(
+      tree,
+      generation,
+      originalCrossById,
+      dataById,
+      crossSeparation,
+      isHorizontal,
+    );
+  }
+}
+
 function updateTreeDimensions(tree, nodeSeparation, levelSeparation) {
   const xValues = tree.data.map((node) => node.x);
   const yValues = tree.data.map((node) => node.y);
@@ -240,10 +405,10 @@ function updateTreeDimensions(tree, nodeSeparation, levelSeparation) {
 }
 
 /**
- * Family Chart walks only the main person's ancestry. Its spouse cards are
- * attached after that walk, so their own parents and spouse-only children are
- * absent from the calculated tree. Add those direct branches to the transient
- * layout without changing any relationship facts in the compatibility data.
+ * Family Chart walks only the main person's ancestry and attaches spouses only
+ * to that bloodline. Add direct spouses of the initially displayed people and
+ * the already-supported center-spouse branches without changing relationship
+ * facts in the compatibility data.
  */
 export function includeDirectSpouseBranches(
   tree,
@@ -266,6 +431,18 @@ export function includeDirectSpouseBranches(
 
   const crossSeparation = isHorizontal ? levelSeparation : nodeSeparation;
   const generationSeparation = isHorizontal ? nodeSeparation : levelSeparation;
+
+  includeDirectSpousesOfDisplayedPeople({
+    tree,
+    currentData,
+    displayedById,
+    dataById: peopleById,
+    calculateFamilyTree,
+    nodeSeparation,
+    levelSeparation,
+    crossSeparation,
+    isHorizontal,
+  });
 
   for (const spouseId of [...(center.rels.spouses || [])].sort(compareIds)) {
     const spouse = peopleById.get(String(spouseId));

@@ -57,6 +57,41 @@ function withEighthChild(people) {
   return updated;
 }
 
+function threeBrothersWithSpouses() {
+  return [
+    person('center', 'M', {
+      parents: ['father', 'mother'],
+      spouses: ['center-wife'],
+    }),
+    person('brother-a', 'M', {
+      parents: ['father', 'mother'],
+      spouses: ['brother-a-wife'],
+    }),
+    person('brother-b', 'M', {
+      parents: ['father', 'mother'],
+      spouses: ['brother-b-wife'],
+    }),
+    person('center-wife', 'F', { spouses: ['center'] }),
+    person('brother-a-wife', 'F', { spouses: ['brother-a'] }),
+    person('brother-b-wife', 'F', { spouses: ['brother-b'] }),
+    person('father', 'M', {
+      spouses: ['mother'],
+      children: ['center', 'brother-a', 'brother-b'],
+    }),
+    person('mother', 'F', {
+      spouses: ['father'],
+      children: ['center', 'brother-a', 'brother-b'],
+    }),
+  ];
+}
+
+function withFourthSpouse(people) {
+  const updated = structuredClone(people);
+  updated.find((item) => item.id === 'brother-a').rels.spouses.push('brother-a-wife-2');
+  updated.push(person('brother-a-wife-2', 'F', { spouses: ['brother-a'] }));
+  return updated;
+}
+
 function treeOptions(mainId) {
   return {
     main_id: mainId,
@@ -132,6 +167,27 @@ function assertReferencesBelongToTree(tree) {
         assert.ok(nodes.has(relative), `${node.data.id}.${field} leaves tree`);
       }
     }
+  }
+}
+
+function hasSpouseLink(tree, leftId, rightId) {
+  const left = nodeById(tree, leftId);
+  const right = nodeById(tree, rightId);
+  if (!left || !right) return false;
+  const references = (node) => [node.spouse, node.coparent, ...(node.spouses || [])];
+  return references(left).includes(right) || references(right).includes(left);
+}
+
+function assertBrotherSpouses(tree, pairs) {
+  for (const [brotherId, spouseId] of pairs) {
+    const brother = nodeById(tree, brotherId);
+    const spouse = nodeById(tree, spouseId);
+    assert.ok(brother, `${brotherId} is missing`);
+    assert.ok(spouse, `${spouseId} is missing`);
+    assert.ok(hasSpouseLink(tree, brotherId, spouseId), `${brotherId} spouse link is missing`);
+    assert.ok(brother.spouses?.includes(spouse), `${brotherId}.spouses is missing ${spouseId}`);
+    assert.equal(spouse.spouse, brother);
+    assert.equal(spouse.y, brother.y);
   }
 }
 
@@ -253,4 +309,59 @@ test('repeated updateMainId and updateTree preserve the full transient structure
   }
 
   assert.deepEqual(chartData, snapshot);
+});
+
+test('direct spouses of all displayed brothers survive center changes and data updates', () => {
+  const people = threeBrothersWithSpouses();
+  const peopleSnapshot = structuredClone(people);
+  const chartData = prepareFamilyChartData(people);
+  const chartDataSnapshot = structuredClone(chartData);
+  const pairs = [
+    ['center', 'center-wife'],
+    ['brother-a', 'brother-a-wife'],
+    ['brother-b', 'brother-b-wife'],
+  ];
+  const expectedIds = pairs.flat();
+  const coordinatesByCenter = new Map();
+
+  for (const centerId of ['center', 'brother-a', 'brother-b', 'center']) {
+    const { tree } = calculateLayout(chartData, centerId);
+    assert.ok(expectedIds.every((id) => ids(tree).includes(id)));
+    assert.equal(new Set(ids(tree)).size, tree.data.length);
+    assertBrotherSpouses(tree, pairs);
+    assertReferencesBelongToTree(tree);
+    assertNoCardOverlaps(tree);
+    if (coordinatesByCenter.has(centerId)) {
+      assert.deepEqual(coordinates(tree), coordinatesByCenter.get(centerId));
+    } else {
+      coordinatesByCenter.set(centerId, coordinates(tree));
+    }
+  }
+
+  const updatedPeople = withFourthSpouse(people);
+  const updatedSnapshot = structuredClone(updatedPeople);
+  const updatedChartData = prepareFamilyChartData(updatedPeople);
+  const store = f3.createStore({ data: structuredClone(chartData), ...treeOptions('center') });
+  store.updateTree();
+  includeDirectSpouseBranches(store.getTree(), chartData, 'center', {
+    nodeSeparation: NODE_SEPARATION,
+    levelSeparation: LEVEL_SEPARATION,
+    calculateTree: f3.calculateTree,
+  });
+  store.updateData(structuredClone(updatedChartData));
+  store.updateTree();
+  includeDirectSpouseBranches(store.getTree(), updatedChartData, 'center', {
+    nodeSeparation: NODE_SEPARATION,
+    levelSeparation: LEVEL_SEPARATION,
+    calculateTree: f3.calculateTree,
+  });
+
+  const updatedTree = store.getTree();
+  assert.equal(new Set(ids(updatedTree)).size, updatedTree.data.length);
+  assertBrotherSpouses(updatedTree, [...pairs, ['brother-a', 'brother-a-wife-2']]);
+  assertReferencesBelongToTree(updatedTree);
+  assertNoCardOverlaps(updatedTree);
+  assert.deepEqual(updatedPeople, updatedSnapshot);
+  assert.deepEqual(chartData, chartDataSnapshot);
+  assert.deepEqual(people, peopleSnapshot);
 });
