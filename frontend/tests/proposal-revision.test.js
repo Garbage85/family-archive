@@ -57,7 +57,11 @@ test('admin tree save after proposal creation makes the proposal stale', () => {
     ],
   });
   const treeAfterAdminSave = tree(6, [
-    { id: '1', data: { first_name: 'Иван', gender: 'M', notes: 'Правка администратора' }, rels: {} },
+    {
+      id: '1',
+      data: { first_name: 'Иван', gender: 'M', notes: 'Правка администратора' },
+      rels: {},
+    },
   ]);
 
   assert.equal(isProposalCurrent(memberProposal, treeAfterAdminSave.revision), false);

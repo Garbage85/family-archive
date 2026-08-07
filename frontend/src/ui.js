@@ -1,7 +1,4 @@
-import {
-  getProposalApprovalBlockReason,
-  isProposalCurrent,
-} from './proposal-revision.js';
+import { getProposalApprovalBlockReason, isProposalCurrent } from './proposal-revision.js';
 import { ROLE_LABELS } from './tree-utils.js';
 
 function escapeHtml(value = '') {

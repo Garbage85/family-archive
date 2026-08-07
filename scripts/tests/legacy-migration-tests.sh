@@ -5,6 +5,7 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$TEST_DIR/../.." && pwd)"
 MIGRATOR="$PROJECT_ROOT/scripts/migrate-legacy-server.sh"
 SUITE_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/family-archive-legacy-tests.XXXXXX")
+TEST_REPO="$SUITE_ROOT/source.git"
 PASSED=0
 FAILED=0
 case_root=""
@@ -16,6 +17,12 @@ cleanup() {
   fi
 }
 trap cleanup EXIT
+
+# GitHub Actions PR checkouts often lack refs/heads/main. Migrator resolves
+# --branch main from a bare mirror, so expose HEAD as main for the suite.
+git clone --bare "$PROJECT_ROOT" "$TEST_REPO"
+git --git-dir="$TEST_REPO" update-ref refs/heads/main "$(git -C "$PROJECT_ROOT" rev-parse HEAD)"
+git --git-dir="$TEST_REPO" rev-parse --verify "refs/heads/main^{commit}" >/dev/null
 
 pass() {
   PASSED=$((PASSED + 1))
@@ -185,7 +192,7 @@ run_migration() {
     MOCK_LEGACY_HEALTH_FAIL_FILE="$root/fail-legacy-health" \
     MOCK_POCKETBASE_ZIP="$root/pocketbase.zip" \
     "$MIGRATOR" --legacy-root "$root/legacy" --install-root "$install_root" \
-      --repo "$PROJECT_ROOT" --branch main --yes ${extra:+"$extra"}
+      --repo "$TEST_REPO" --branch main --yes ${extra:+"$extra"}
 }
 
 new_case() {
