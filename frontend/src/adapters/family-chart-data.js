@@ -80,11 +80,167 @@ function updateTreeDimensions(tree, nodeSeparation, levelSeparation) {
   };
 }
 
+function personId(node) {
+  return String(node?.data?.id || '');
+}
+
+/**
+ * Family Chart attaches spouses before siblings are added, so displayed
+ * sibling cards keep spouse facts in chartData but not in the calculated
+ * tree. Append only missing spouse cards; positions are corrected by the
+ * main-generation household reflow that follows.
+ */
+function appendMissingSpousesOfDisplayedSiblings(tree, peopleById, displayedById) {
+  const siblingNodes = tree.data.filter((node) => node.sibling);
+  for (const siblingNode of siblingNodes) {
+    const id = personId(siblingNode);
+    const person = peopleById.get(id);
+    if (!person) continue;
+
+    const missingSpouseIds = [...(person.rels.spouses || [])]
+      .map(String)
+      .filter((spouseId) => spouseId && !displayedById.has(spouseId));
+    if (!missingSpouseIds.length) continue;
+
+    if (!Array.isArray(siblingNode.spouses)) siblingNode.spouses = [];
+
+    missingSpouseIds.forEach((spouseId, index) => {
+      if (displayedById.has(spouseId)) return;
+      const spousePerson = peopleById.get(spouseId);
+      if (!spousePerson) return;
+
+      const spouseNode = {
+        data: spousePerson,
+        added: true,
+        depth: siblingNode.depth,
+        spouse: siblingNode,
+        tid: `${id}-spouse-${index}`,
+        x: siblingNode.x,
+        y: siblingNode.y,
+      };
+
+      siblingNode.spouses.push(spouseNode);
+      tree.data.push(spouseNode);
+      displayedById.set(spouseId, spouseNode);
+    });
+  }
+}
+
+function householdMembers(anchorNode) {
+  const members = [];
+  const add = (node) => {
+    if (node && !members.includes(node)) members.push(node);
+  };
+  add(anchorNode);
+  for (const spouse of anchorNode.spouses || []) add(spouse);
+  add(anchorNode.spouse);
+  return members;
+}
+
+function orderHouseholdMembers(members, anchorNode, isHorizontal) {
+  const anchorIndex = members.indexOf(anchorNode);
+  const spouses = members.filter((node) => node !== anchorNode);
+  spouses.sort((left, right) => {
+    const crossDelta =
+      nodePosition(left, isHorizontal).cross - nodePosition(right, isHorizontal).cross;
+    if (crossDelta !== 0) return crossDelta;
+    return personId(left).localeCompare(personId(right));
+  });
+  // Keep the blood/main person as the household anchor slot; spouses follow in
+  // their current visual order (or id order when still stacked on the anchor).
+  if (anchorIndex === -1)
+    return [...members].sort((left, right) => {
+      const crossDelta =
+        nodePosition(left, isHorizontal).cross - nodePosition(right, isHorizontal).cross;
+      if (crossDelta !== 0) return crossDelta;
+      return personId(left).localeCompare(personId(right));
+    });
+  return [anchorNode, ...spouses];
+}
+
+function updateSpouseLinkAnchors(anchorNode, isHorizontal) {
+  const generation = nodePosition(anchorNode, isHorizontal).generation;
+  const spouses = anchorNode.spouses || [];
+  spouses.forEach((spouseNode, index) => {
+    const anchorCross = nodePosition(anchorNode, isHorizontal).cross;
+    const spouseCross = nodePosition(spouseNode, isHorizontal).cross;
+    const linkCross = index === 0 ? (anchorCross + spouseCross) / 2 : spouseCross;
+    if (isHorizontal) {
+      spouseNode.sx = generation;
+      spouseNode.sy = linkCross;
+    } else {
+      spouseNode.sx = linkCross;
+      spouseNode.sy = generation;
+    }
+  });
+}
+
+/**
+ * Pack main + sibling households on the main generation so appended sibling
+ * spouses do not share coordinates with neighbouring cards.
+ *
+ * Spacing: each card on the row occupies one slot; consecutive cards (inside
+ * a household and between households) are placed nodeSeparation apart on the
+ * cross axis. Generation axis is unchanged. Ancestry/progeny nodes outside
+ * this generation are not moved; parent/children object refs are not rebuilt.
+ */
+function reflowMainSiblingGeneration(tree, centerNode, { nodeSeparation, isHorizontal }) {
+  const generation = nodePosition(centerNode, isHorizontal).generation;
+  const households = [];
+
+  const mainMembers = householdMembers(centerNode).filter(
+    (node) => nodePosition(node, isHorizontal).generation === generation || node === centerNode,
+  );
+  // Newly appended spouses may still share the sibling's provisional x/y.
+  const siblingNodes = tree.data.filter((node) => node.sibling);
+  households.push({
+    anchor: centerNode,
+    members: mainMembers,
+    orderKey: Math.min(...mainMembers.map((node) => nodePosition(node, isHorizontal).cross)),
+  });
+
+  for (const siblingNode of siblingNodes) {
+    const members = householdMembers(siblingNode);
+    households.push({
+      anchor: siblingNode,
+      members,
+      orderKey: Math.min(...members.map((node) => nodePosition(node, isHorizontal).cross)),
+    });
+  }
+
+  households.sort((left, right) => {
+    if (left.orderKey !== right.orderKey) return left.orderKey - right.orderKey;
+    return personId(left.anchor).localeCompare(personId(right.anchor));
+  });
+
+  for (const household of households) {
+    household.members = orderHouseholdMembers(household.members, household.anchor, isHorizontal);
+  }
+
+  const orderedMembers = households.flatMap((household) => household.members);
+  if (orderedMembers.length === 0) return;
+
+  const originalCrosses = orderedMembers.map((node) => nodePosition(node, isHorizontal).cross);
+  const midpoint = (Math.min(...originalCrosses) + Math.max(...originalCrosses)) / 2;
+  const firstCross = midpoint - ((orderedMembers.length - 1) * nodeSeparation) / 2;
+
+  orderedMembers.forEach((node, index) => {
+    positionNode(node, firstCross + index * nodeSeparation, generation, isHorizontal);
+  });
+
+  for (const household of households) {
+    updateSpouseLinkAnchors(household.anchor, isHorizontal);
+  }
+}
+
 /**
  * Family Chart walks only the main person's ancestry. Its spouse cards are
  * attached after that walk, so their own parents and spouse-only children are
  * absent from the calculated tree. Add those direct branches to the transient
  * layout without changing any relationship facts in the compatibility data.
+ *
+ * Also append missing spouses of displayed siblings and reflow only the main
+ * generation households so those spouses fit without card overlaps (ADR-008).
  */
 export function includeDirectSpouseBranches(
   tree,
@@ -98,6 +254,9 @@ export function includeDirectSpouseBranches(
   const center = peopleById.get(String(centerId));
   const centerNode = displayedById.get(String(centerId));
   if (!center || !centerNode) return tree;
+
+  appendMissingSpousesOfDisplayedSiblings(tree, peopleById, displayedById);
+  reflowMainSiblingGeneration(tree, centerNode, { nodeSeparation, isHorizontal });
 
   for (const spouseId of center.rels.spouses || []) {
     const spouse = peopleById.get(String(spouseId));
