@@ -9,6 +9,7 @@
     "lint": "eslint .",
     "format": "prettier --write . ../README.md ../docs ../.github",
     "format:check": "prettier --check . ../README.md ../docs ../.github",
+    "postinstall": "patch-package",
     "check": "node --check src/main.js && node --check src/api.js && node --check src/adapters/family-chart-adapter.js && node --check src/adapters/family-chart-data.js && node --check src/family-chart-card.js && node --check src/kinship-dialog.js && node --check src/kinship-engine.js && node --check src/kinship-formatter-ru.js && node --check src/kinship-state.js && node --check src/person-autofill.js && node --check src/person-card-formatters.js && node --check src/person-duplicates.js && node --check src/person-editor.js && node --check src/person-relationship-rules.js && node --check src/person-sidebar-model.js && node --check src/person-sidebar.js && node --check src/proposal-revision.js && node --check src/sidebar-zoom-guard.js && node --check src/tree-utils.js && node --check src/ui.js",
     "test": "node --test tests/*.test.js"
   },
@@ -20,6 +21,7 @@
     "@eslint/js": "9.32.0",
     "eslint": "9.32.0",
     "globals": "16.3.0",
+    "patch-package": "8.0.0",
     "prettier": "3.6.2",
     "vite": "^6.4.3"
   }
