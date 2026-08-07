@@ -1,3 +1,4 @@
+import { getProposalApprovalBlockReason, isProposalCurrent } from './proposal-revision.js';
 import { ROLE_LABELS } from './tree-utils.js';
 
 function escapeHtml(value = '') {
@@ -187,13 +188,20 @@ export function renderProposals(proposals, currentTree, handlers) {
     .map((item) => {
       const author = item.expand?.author;
       const diff = handlers.diff(currentTree.data, item.data);
-      const conflict = Number(item.base_revision) !== Number(currentTree.revision);
-      return `<article class="proposal-card" data-id="${escapeHtml(item.id)}"><div class="proposal-card-head"><div><strong>${escapeHtml(author?.name || author?.email || 'Пользователь')}</strong><p class="muted compact">${new Date(item.created).toLocaleString('ru-RU')}</p></div>${conflict ? '<span class="warning-badge">Старая версия</span>' : '<span class="ok-badge">Актуально</span>'}</div><p>${escapeHtml(item.comment || 'Комментарий не указан.')}</p><div class="diff-row"><span>Добавлено: ${diff.added}</span><span>Изменено: ${diff.changed}</span><span>Удалено: ${diff.removed}</span></div><div class="proposal-actions"><button type="button" class="ghost" data-action="preview">Посмотреть</button><button type="button" class="danger" data-action="reject">Отклонить</button><button type="button" class="primary" data-action="approve">Принять</button></div></article>`;
+      const current = isProposalCurrent(item, currentTree.revision);
+      const staleReason = getProposalApprovalBlockReason(item, currentTree.revision);
+      const approveControl = current
+        ? '<button type="button" class="primary" data-action="approve">Принять</button>'
+        : `<button type="button" class="primary" data-action="approve" disabled title="${escapeHtml(staleReason)}" aria-disabled="true">Принять</button>`;
+      const staleHint = current
+        ? ''
+        : `<p class="proposal-stale-hint" role="status">${escapeHtml(staleReason)}</p>`;
+      return `<article class="proposal-card" data-id="${escapeHtml(item.id)}"><div class="proposal-card-head"><div><strong>${escapeHtml(author?.name || author?.email || 'Пользователь')}</strong><p class="muted compact">${new Date(item.created).toLocaleString('ru-RU')}</p></div>${current ? '<span class="ok-badge">Актуально</span>' : '<span class="warning-badge">Старая версия</span>'}</div><p>${escapeHtml(item.comment || 'Комментарий не указан.')}</p>${staleHint}<div class="diff-row"><span>Добавлено: ${diff.added}</span><span>Изменено: ${diff.changed}</span><span>Удалено: ${diff.removed}</span></div><div class="proposal-actions"><button type="button" class="ghost" data-action="preview">Посмотреть</button><button type="button" class="danger" data-action="reject">Отклонить</button>${approveControl}</div></article>`;
     })
     .join('');
   list.onclick = (event) => {
     const button = event.target.closest('button[data-action]');
-    if (!button) return;
+    if (!button || button.disabled) return;
     handlers.onAction(button.dataset.action, button.closest('[data-id]').dataset.id);
   };
 }
