@@ -1,4 +1,5 @@
 import PocketBase from 'pocketbase';
+import { assertProposalCanBeApproved } from './proposal-revision.js';
 import { isoNow } from './tree-utils.js';
 
 export const pb = new PocketBase(window.location.origin);
@@ -69,6 +70,7 @@ export async function listPendingProposals() {
 
 export async function approveProposal(proposal, tree, reviewerId, note = '') {
   const latestTree = await reloadTree(tree.id);
+  assertProposalCanBeApproved(proposal, latestTree.revision);
   const updatedTree = await pb.collection('trees').update(tree.id, {
     data: proposal.data,
     revision: Number(latestTree.revision) + 1,

@@ -25,6 +25,7 @@ import { applyPersonAction, canEditPeople, persistTreeChanges } from './person-e
 import { formatPersonName } from './person-card-formatters.js';
 import { preparePersonSidebarData } from './person-sidebar-model.js';
 import { PersonSidebar } from './person-sidebar.js';
+import { STALE_PROPOSAL_CODE } from './proposal-revision.js';
 import { SidebarZoomGuard } from './sidebar-zoom-guard.js';
 import { cloneTree, diffTrees, downloadJson, validateTree } from './tree-utils.js';
 import {
@@ -334,15 +335,24 @@ async function handleProposalAction(action, id) {
   }
   if (action === 'approve') {
     if (!confirm('Принять предложение?')) return;
-    tree = await approveProposal(proposal, tree, user.id);
-    workingData = cloneTree(tree.data);
-    dirty = false;
-    previewMode = false;
-    saveOutcome = 'idle';
-    mountTree();
-    configureRoleUi();
-    updateSaveButton();
-    return openProposals();
+    try {
+      tree = await approveProposal(proposal, tree, user.id);
+      workingData = cloneTree(tree.data);
+      dirty = false;
+      previewMode = false;
+      saveOutcome = 'idle';
+      mountTree();
+      configureRoleUi();
+      updateSaveButton();
+      return openProposals();
+    } catch (error) {
+      alert(error.message || error);
+      if (error.code === STALE_PROPOSAL_CODE) {
+        setStatus(error.message, 'error');
+        return openProposals();
+      }
+      setStatus(error.message || 'Не удалось принять предложение.', 'error');
+    }
   }
 }
 

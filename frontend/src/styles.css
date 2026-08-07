@@ -405,6 +405,17 @@ button {
   padding: 1rem;
   background: #fbfdfc;
 }
+.proposal-stale-hint {
+  margin: 0.65rem 0 0;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid #f0d4a8;
+  border-radius: 12px;
+  background: #fff7ea;
+  color: #8c5200;
+  font-size: 0.88rem;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
 .diff-row {
   display: flex;
   flex-wrap: wrap;
