@@ -81,10 +81,72 @@ function updateTreeDimensions(tree, nodeSeparation, levelSeparation) {
 }
 
 /**
+ * Family Chart attaches spouses before siblings are added, so displayed
+ * sibling cards keep their spouse facts in chartData but not in the
+ * calculated tree. Append only the missing spouse cards next to those
+ * sibling nodes without replacing existing nodes or grafting spouse
+ * parents/children.
+ */
+function appendMissingSpousesOfDisplayedSiblings(
+  tree,
+  peopleById,
+  displayedById,
+  { nodeSeparation, isHorizontal },
+) {
+  const siblingNodes = tree.data.filter((node) => node.sibling);
+  for (const siblingNode of siblingNodes) {
+    const personId = String(siblingNode.data?.id || '');
+    const person = peopleById.get(personId);
+    if (!person) continue;
+
+    const missingSpouseIds = [...(person.rels.spouses || [])]
+      .map(String)
+      .filter((spouseId) => spouseId && !displayedById.has(spouseId));
+    if (!missingSpouseIds.length) continue;
+
+    const gender = String(person.data?.gender || '').toUpperCase();
+    const side = gender === 'M' ? -1 : 1;
+    if (!Array.isArray(siblingNode.spouses)) siblingNode.spouses = [];
+
+    const siblingPosition = nodePosition(siblingNode, isHorizontal);
+    missingSpouseIds.forEach((spouseId, index) => {
+      if (displayedById.has(spouseId)) return;
+      const spousePerson = peopleById.get(spouseId);
+      if (!spousePerson) return;
+
+      const spouseCross = siblingPosition.cross - nodeSeparation * (index + 1) * side;
+      const spouseNode = {
+        data: spousePerson,
+        added: true,
+        depth: siblingNode.depth,
+        spouse: siblingNode,
+        tid: `${personId}-spouse-${index}`,
+      };
+      positionNode(spouseNode, spouseCross, siblingPosition.generation, isHorizontal);
+
+      const linkCross = index > 0 ? spouseCross : spouseCross + (nodeSeparation / 2) * side;
+      if (isHorizontal) {
+        spouseNode.sx = siblingPosition.generation;
+        spouseNode.sy = linkCross;
+      } else {
+        spouseNode.sx = linkCross;
+        spouseNode.sy = siblingPosition.generation;
+      }
+
+      siblingNode.spouses.push(spouseNode);
+      tree.data.push(spouseNode);
+      displayedById.set(spouseId, spouseNode);
+    });
+  }
+}
+
+/**
  * Family Chart walks only the main person's ancestry. Its spouse cards are
  * attached after that walk, so their own parents and spouse-only children are
  * absent from the calculated tree. Add those direct branches to the transient
  * layout without changing any relationship facts in the compatibility data.
+ *
+ * Also append missing spouses of already-displayed sibling nodes (ADR-008 A).
  */
 export function includeDirectSpouseBranches(
   tree,
@@ -98,6 +160,11 @@ export function includeDirectSpouseBranches(
   const center = peopleById.get(String(centerId));
   const centerNode = displayedById.get(String(centerId));
   if (!center || !centerNode) return tree;
+
+  appendMissingSpousesOfDisplayedSiblings(tree, peopleById, displayedById, {
+    nodeSeparation,
+    isHorizontal,
+  });
 
   for (const spouseId of center.rels.spouses || []) {
     const spouse = peopleById.get(String(spouseId));
