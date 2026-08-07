@@ -1,0 +1,186 @@
+diff --git a/node_modules/family-chart/dist/family-chart.esm.js b/node_modules/family-chart/dist/family-chart.esm.js
+index 3867be0..5ac4718 100644
+--- a/node_modules/family-chart/dist/family-chart.esm.js
++++ b/node_modules/family-chart/dist/family-chart.esm.js
+@@ -60,6 +60,37 @@ function calculateEnterAndExitPositions(d, entering, exiting) {
+         }
+     }
+ }
++function pendingSpouseIds(d) {
++    let spouses = d.data.rels.spouses || [];
++    if (d._ignore_spouses)
++        spouses = spouses.filter(sp_id => !d._ignore_spouses.includes(sp_id));
++    return spouses;
++}
++// Same geometry as setupSpouses for one non-ancestry person (used for sibling:true only).
++function attachSpousesToPerson(d, tree, data_stash, node_separation) {
++    const spouses = pendingSpouseIds(d);
++    if (spouses.length === 0)
++        return;
++    const side = d.data.data.gender === "M" ? -1 : 1; // female on right
++    d.x += spouses.length / 2 * node_separation * side;
++    spouses.forEach((sp_id, i) => {
++        const spouse = {
++            data: data_stash.find(d0 => d0.id === sp_id),
++            added: true,
++            depth: d.depth,
++            spouse: d,
++            x: d.x - (node_separation * (i + 1)) * side,
++            y: d.y,
++            tid: `${d.data.id}-spouse-${i}`,
++        };
++        spouse.sx = i > 0 ? spouse.x : spouse.x + (node_separation / 2) * side;
++        spouse.sy = i > 0 ? spouse.y : spouse.y + (node_separation / 2) * side;
++        if (!d.spouses)
++            d.spouses = [];
++        d.spouses.push(spouse);
++        tree.push(spouse);
++    });
++}
+ function setupSiblings({ tree, data_stash, node_separation, sortChildrenFunction }) {
+     const main = tree.find(d => d.data.main);
+     if (!main)
+@@ -71,6 +102,9 @@ function setupSiblings({ tree, data_stash, node_separation, sortChildrenFunction
+         throw new Error('no parents');
+     const siblings_added = addSiblingsToTree(main);
+     positionSiblings(main);
++    // setupSpouses ran before siblings existed; attach only sibling households here.
++    for (let i = 0; i < siblings_added.length; i++)
++        attachSpousesToPerson(siblings_added[i], tree, data_stash, node_separation);
+     function findSiblings(main) {
+         return data_stash.filter(d => {
+             if (d.id === main.data.id)
+@@ -105,7 +139,6 @@ function setupSiblings({ tree, data_stash, node_separation, sortChildrenFunction
+         return siblings_added;
+     }
+     function positionSiblings(main) {
+-        var _a, _b;
+         const sorted_siblings = [main, ...siblings_added];
+         if (sortChildrenFunction)
+             sorted_siblings.sort((a, b) => sortChildrenFunction(a.data, b.data)); // first sort by custom function if provided
+@@ -129,16 +162,23 @@ function setupSiblings({ tree, data_stash, node_separation, sortChildrenFunction
+         const spouses_x = (main.spouses || []).map(d => d.x);
+         const x_range = d3.extent([main_x, ...spouses_x]);
+         const main_sorted_index = sorted_siblings.findIndex(d => d.data.id === main.data.id);
+-        for (let i = 0; i < sorted_siblings.length; i++) {
+-            if (i === main_sorted_index)
+-                continue;
++        // Reserve household width from pending spouse counts. With zero sibling spouses
++        // this matches stock 0.9.0: sib.x = x_range edge ± node_separation * k.
++        let rightEdge = x_range[1] !== undefined && x_range[1] !== null ? x_range[1] : 0;
++        for (let i = main_sorted_index + 1; i < sorted_siblings.length; i++) {
+             const sib = sorted_siblings[i];
+-            if (i < main_sorted_index) {
+-                sib.x = ((_a = x_range[0]) !== null && _a !== void 0 ? _a : 0) - node_separation * (main_sorted_index - i);
+-            }
+-            else {
+-                sib.x = ((_b = x_range[1]) !== null && _b !== void 0 ? _b : 0) + node_separation * (i - main_sorted_index);
+-            }
++            const n = pendingSpouseIds(sib).length;
++            const center = rightEdge + node_separation + (n / 2) * node_separation;
++            sib.x = center;
++            rightEdge = center + (n / 2) * node_separation;
++        }
++        let leftEdge = x_range[0] !== undefined && x_range[0] !== null ? x_range[0] : 0;
++        for (let i = main_sorted_index - 1; i >= 0; i--) {
++            const sib = sorted_siblings[i];
++            const n = pendingSpouseIds(sib).length;
++            const center = leftEdge - node_separation - (n / 2) * node_separation;
++            sib.x = center;
++            leftEdge = center - (n / 2) * node_separation;
+         }
+     }
+ }
+diff --git a/node_modules/family-chart/dist/family-chart.js b/node_modules/family-chart/dist/family-chart.js
+index 1c750d4..d96135e 100644
+--- a/node_modules/family-chart/dist/family-chart.js
++++ b/node_modules/family-chart/dist/family-chart.js
+@@ -83,6 +83,37 @@
+             }
+         }
+     }
++    function pendingSpouseIds(d) {
++        let spouses = d.data.rels.spouses || [];
++        if (d._ignore_spouses)
++            spouses = spouses.filter(sp_id => !d._ignore_spouses.includes(sp_id));
++        return spouses;
++    }
++    // Same geometry as setupSpouses for one non-ancestry person (used for sibling:true only).
++    function attachSpousesToPerson(d, tree, data_stash, node_separation) {
++        const spouses = pendingSpouseIds(d);
++        if (spouses.length === 0)
++            return;
++        const side = d.data.data.gender === "M" ? -1 : 1; // female on right
++        d.x += spouses.length / 2 * node_separation * side;
++        spouses.forEach((sp_id, i) => {
++            const spouse = {
++                data: data_stash.find(d0 => d0.id === sp_id),
++                added: true,
++                depth: d.depth,
++                spouse: d,
++                x: d.x - (node_separation * (i + 1)) * side,
++                y: d.y,
++                tid: `${d.data.id}-spouse-${i}`,
++            };
++            spouse.sx = i > 0 ? spouse.x : spouse.x + (node_separation / 2) * side;
++            spouse.sy = i > 0 ? spouse.y : spouse.y + (node_separation / 2) * side;
++            if (!d.spouses)
++                d.spouses = [];
++            d.spouses.push(spouse);
++            tree.push(spouse);
++        });
++    }
+     function setupSiblings({ tree, data_stash, node_separation, sortChildrenFunction }) {
+         const main = tree.find(d => d.data.main);
+         if (!main)
+@@ -94,6 +125,9 @@
+             throw new Error('no parents');
+         const siblings_added = addSiblingsToTree(main);
+         positionSiblings(main);
++        // setupSpouses ran before siblings existed; attach only sibling households here.
++        for (let i = 0; i < siblings_added.length; i++)
++            attachSpousesToPerson(siblings_added[i], tree, data_stash, node_separation);
+         function findSiblings(main) {
+             return data_stash.filter(d => {
+                 if (d.id === main.data.id)
+@@ -128,7 +162,6 @@
+             return siblings_added;
+         }
+         function positionSiblings(main) {
+-            var _a, _b;
+             const sorted_siblings = [main, ...siblings_added];
+             if (sortChildrenFunction)
+                 sorted_siblings.sort((a, b) => sortChildrenFunction(a.data, b.data)); // first sort by custom function if provided
+@@ -152,16 +185,23 @@
+             const spouses_x = (main.spouses || []).map(d => d.x);
+             const x_range = d3__namespace.extent([main_x, ...spouses_x]);
+             const main_sorted_index = sorted_siblings.findIndex(d => d.data.id === main.data.id);
+-            for (let i = 0; i < sorted_siblings.length; i++) {
+-                if (i === main_sorted_index)
+-                    continue;
++            // Reserve household width from pending spouse counts. With zero sibling spouses
++            // this matches stock 0.9.0: sib.x = x_range edge ± node_separation * k.
++            let rightEdge = x_range[1] !== undefined && x_range[1] !== null ? x_range[1] : 0;
++            for (let i = main_sorted_index + 1; i < sorted_siblings.length; i++) {
+                 const sib = sorted_siblings[i];
+-                if (i < main_sorted_index) {
+-                    sib.x = ((_a = x_range[0]) !== null && _a !== void 0 ? _a : 0) - node_separation * (main_sorted_index - i);
+-                }
+-                else {
+-                    sib.x = ((_b = x_range[1]) !== null && _b !== void 0 ? _b : 0) + node_separation * (i - main_sorted_index);
+-                }
++                const n = pendingSpouseIds(sib).length;
++                const center = rightEdge + node_separation + (n / 2) * node_separation;
++                sib.x = center;
++                rightEdge = center + (n / 2) * node_separation;
++            }
++            let leftEdge = x_range[0] !== undefined && x_range[0] !== null ? x_range[0] : 0;
++            for (let i = main_sorted_index - 1; i >= 0; i--) {
++                const sib = sorted_siblings[i];
++                const n = pendingSpouseIds(sib).length;
++                const center = leftEdge - node_separation - (n / 2) * node_separation;
++                sib.x = center;
++                leftEdge = center - (n / 2) * node_separation;
+             }
+         }
+     }
