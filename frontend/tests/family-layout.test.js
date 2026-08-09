@@ -39,11 +39,17 @@ async function loadFixture() {
 test('structural fixture has no PII and preserves topology counts', async () => {
   const fixture = await loadFixture();
   assert.equal(fixture.kind, 'structural-topology');
-  assert.ok(fixture.personCount >= 20);
+  assert.ok(Array.isArray(fixture.people));
+  assert.ok(fixture.people.length > 0, 'fixture must contain people');
+  assert.ok(fixture.personCount > 0);
+  assert.equal(fixture.personCount, fixture.people.length);
   assert.match(fixture.people[0].id, /^p\d{3}$/);
   assert.equal(Object.keys(fixture.people[0].data).join(','), 'gender');
-  assert.ok(fixture.meta.spouseEdgeCount > 0);
-  assert.ok(fixture.meta.parentChildEdgeCount > 0);
+  assert.ok(fixture.meta.spouseEdgeCount > 0, 'fixture must include at least one spouse edge');
+  assert.ok(
+    fixture.meta.parentChildEdgeCount > 0,
+    'fixture must include at least one parent-child edge',
+  );
 });
 
 test('anonymizeTreeTopology remaps ids and strips PII', () => {

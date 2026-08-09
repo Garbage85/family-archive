@@ -11,7 +11,7 @@ import {
   saveTree,
   uploadPhoto,
 } from './api.js';
-import { FamilyTreeChart } from './adapters/family-chart-adapter.js';
+import { createTreeChart } from './adapters/create-tree-chart.js';
 import { KinshipDialog } from './kinship-dialog.js';
 import {
   KinshipCalculator,
@@ -21,6 +21,7 @@ import {
   resolveCenterPersonId,
   selectCenterPersonId,
 } from './kinship-state.js';
+import { isPrototypeLayoutMode, resolveLayoutMode } from './layout/layout-mode.js';
 import { applyPersonAction, canEditPeople, persistTreeChanges } from './person-editor.js';
 import { formatPersonName } from './person-card-formatters.js';
 import { preparePersonSidebarData } from './person-sidebar-model.js';
@@ -42,7 +43,8 @@ import {
 const root = document.querySelector('#app');
 renderShell(root);
 setupToolbarMenu(document);
-const chart = new FamilyTreeChart('#FamilyChart');
+const layoutMode = resolveLayoutMode();
+const chart = createTreeChart('#FamilyChart', { layoutMode });
 const personSidebar = new PersonSidebar(document.querySelector('#person-sidebar-host'));
 const kinshipDialog = new KinshipDialog(document.querySelector('#kinship-dialog'));
 const kinshipCalculator = new KinshipCalculator();
@@ -231,13 +233,20 @@ async function enterApplication(authUser) {
   configureRoleUi();
   mountTree();
   updateSaveButton();
-  setStatus(
-    user.role === 'viewer'
-      ? 'Режим просмотра.'
-      : user.role === 'member'
-        ? 'Изменения отправляются администратору.'
-        : 'Нажмите на человека, чтобы открыть карточку.',
-  );
+  if (isPrototypeLayoutMode()) {
+    setStatus(
+      'Экспериментальный layout (?layout=prototype). Координаты не сохраняются в trees.data.',
+      'warning',
+    );
+  } else {
+    setStatus(
+      user.role === 'viewer'
+        ? 'Режим просмотра.'
+        : user.role === 'member'
+          ? 'Изменения отправляются администратору.'
+          : 'Нажмите на человека, чтобы открыть карточку.',
+    );
+  }
   if (user.role === 'admin') await refreshProposals();
 }
 

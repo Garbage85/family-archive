@@ -1,6 +1,7 @@
 /**
- * Isolated household-based layout prototype for Family Archive.
- * Not wired into the UI. Does not use Family Chart private APIs.
+ * Household-based layout prototype for Family Archive.
+ * Preview-wired via ?layout=prototype (PrototypeFamilyTreeChart).
+ * Does not use Family Chart private APIs. Never writes coords to trees.data.
  */
 
 function unique(ids) {

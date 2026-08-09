@@ -11,14 +11,8 @@
       },
       "rels": {
         "parents": [],
-        "spouses": [
-          "p002"
-        ],
-        "children": [
-          "p006",
-          "p007",
-          "p010"
-        ]
+        "spouses": ["p002"],
+        "children": ["p006", "p007", "p010"]
       }
     },
     {
@@ -28,14 +22,8 @@
       },
       "rels": {
         "parents": [],
-        "spouses": [
-          "p001"
-        ],
-        "children": [
-          "p006",
-          "p007",
-          "p010"
-        ]
+        "spouses": ["p001"],
+        "children": ["p006", "p007", "p010"]
       }
     },
     {
@@ -44,13 +32,8 @@
         "gender": "F"
       },
       "rels": {
-        "parents": [
-          "p004",
-          "p005"
-        ],
-        "spouses": [
-          "p010"
-        ],
+        "parents": ["p004", "p005"],
+        "spouses": ["p010"],
         "children": []
       }
     },
@@ -61,12 +44,8 @@
       },
       "rels": {
         "parents": [],
-        "spouses": [
-          "p005"
-        ],
-        "children": [
-          "p003"
-        ]
+        "spouses": ["p005"],
+        "children": ["p003"]
       }
     },
     {
@@ -76,12 +55,8 @@
       },
       "rels": {
         "parents": [],
-        "spouses": [
-          "p004"
-        ],
-        "children": [
-          "p003"
-        ]
+        "spouses": ["p004"],
+        "children": ["p003"]
       }
     },
     {
@@ -90,10 +65,7 @@
         "gender": "M"
       },
       "rels": {
-        "parents": [
-          "p001",
-          "p002"
-        ],
+        "parents": ["p001", "p002"],
         "spouses": [],
         "children": []
       }
@@ -104,13 +76,8 @@
         "gender": "M"
       },
       "rels": {
-        "parents": [
-          "p001",
-          "p002"
-        ],
-        "spouses": [
-          "p008"
-        ],
+        "parents": ["p001", "p002"],
+        "spouses": ["p008"],
         "children": []
       }
     },
@@ -120,12 +87,8 @@
         "gender": "F"
       },
       "rels": {
-        "parents": [
-          "p009"
-        ],
-        "spouses": [
-          "p007"
-        ],
+        "parents": ["p009"],
+        "spouses": ["p007"],
         "children": []
       }
     },
@@ -137,9 +100,7 @@
       "rels": {
         "parents": [],
         "spouses": [],
-        "children": [
-          "p008"
-        ]
+        "children": ["p008"]
       }
     },
     {
@@ -148,13 +109,8 @@
         "gender": "M"
       },
       "rels": {
-        "parents": [
-          "p001",
-          "p002"
-        ],
-        "spouses": [
-          "p003"
-        ],
+        "parents": ["p001", "p002"],
+        "spouses": ["p003"],
         "children": []
       }
     }
