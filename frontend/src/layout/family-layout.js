@@ -368,8 +368,7 @@ function materializeCandidateLayout({
   const households = candidate.households.map((household) => ({
     ...household,
     generation:
-      household.generation ??
-      Math.min(...household.memberIds.map((id) => generation.get(id) ?? 0)),
+      household.generation ?? Math.min(...household.memberIds.map((id) => generation.get(id) ?? 0)),
   }));
 
   return {

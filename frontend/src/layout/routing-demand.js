@@ -353,7 +353,10 @@ export function finalizeRoutingPlan(demand, { baselines, cardAlongHalf, isHorizo
 /**
  * Count residual lane conflicts after routing (same lane axis, overlapping spans).
  */
-export function countLaneConflicts(links, { orientation = 'vertical', minGap = ROUTING_LANE_GAP } = {}) {
+export function countLaneConflicts(
+  links,
+  { orientation = 'vertical', minGap = ROUTING_LANE_GAP } = {},
+) {
   const isHorizontal = orientation === 'horizontal';
   const buses = [];
   for (const link of links || []) {
@@ -363,7 +366,7 @@ export function countLaneConflicts(links, { orientation = 'vertical', minGap = R
       const a = points[i];
       const b = points[i + 1];
       if (isHorizontal) {
-        if (Math.abs(a[0] - b[0]) > EPS && Math.abs(a[1] - b[1]) <= EPS) continue; // skip true H? 
+        if (Math.abs(a[0] - b[0]) > EPS && Math.abs(a[1] - b[1]) <= EPS) continue; // skip true H?
         // generation-crossing buses are vertical (const X) in horizontal orientation
         if (Math.abs(a[0] - b[0]) <= EPS && Math.abs(a[1] - b[1]) > EPS) {
           buses.push({

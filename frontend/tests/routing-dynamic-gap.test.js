@@ -132,10 +132,7 @@ test('routingCorridorHeight formula is explicit and never shrinks lane pitch', (
   assert.equal(routingCorridorHeight(20), 428);
   // Adjacent lane pitch is constant for every K.
   for (const k of [2, 10, 20]) {
-    assert.equal(
-      (routingCorridorHeight(k) - 2 * ROUTING_EDGE_PADDING) / (k - 1),
-      ROUTING_LANE_GAP,
-    );
+    assert.equal((routingCorridorHeight(k) - 2 * ROUTING_EDGE_PADDING) / (k - 1), ROUTING_LANE_GAP);
   }
 });
 
