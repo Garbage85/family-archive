@@ -47,6 +47,7 @@ export function scorePlacementCandidate(metrics) {
     (metrics.branchIntegrityViolations || 0) +
     (metrics.parentSiblingBranchSideViolations || 0) +
     (metrics.parallelLaneOverlap || 0) +
+    (metrics.parallelGapViolations || 0) +
     (metrics.coldWarmSignatureMismatch || 0);
 
   const soft = {

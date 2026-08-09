@@ -16,14 +16,18 @@
  *
  * Pipeline after placement:
  *   1) family-junction routes in the generation gap
- *   2) parallel vertical lane separation for near-collinear unrelated stems
+ *   2) parallel lane separation for near-parallel unrelated H/V corridors
  *   3) line-jumps only for remaining true H×V crossings
  *
  * Exterior overflow buses under the child row are forbidden.
  * Coordinates are display-only and must never be written to trees.data.
  */
 
-import { assignParallelVerticalLanes, VERTICAL_LANE_GAP } from './parallel-lanes.js';
+import {
+  assignParallelLanes,
+  fitBusOffsetsToGenerationGaps,
+  MIN_PARALLEL_GAP,
+} from './parallel-lanes.js';
 
 export const CROSSING_STYLE = 'line-jump';
 export const LINE_JUMP_RADIUS = 10;
@@ -168,7 +172,7 @@ export function assignFamilyLanes(families, isHorizontal = false) {
   return families;
 }
 
-function verticalBusY(family) {
+function naturalVerticalBusY(family) {
   const gap = family.childTop - family.parentBottom;
   const minY = family.parentBottom + BUS_INSET;
   const maxY = family.childTop - BUS_INSET;
@@ -178,7 +182,17 @@ function verticalBusY(family) {
   return roundCoord(Math.min(maxY, Math.max(minY, busY)));
 }
 
-function horizontalBusX(family) {
+function verticalBusY(family) {
+  const busOffset = family.busOffset || 0;
+  const raw = naturalVerticalBusY(family) + busOffset;
+  // Parallel lanes may use the full open gap (small expansion past BUS_INSET).
+  const hardMin = family.parentBottom + 1;
+  const hardMax = family.childTop - 1;
+  if (hardMax <= hardMin) return roundCoord((family.parentBottom + family.childTop) / 2);
+  return roundCoord(Math.min(hardMax, Math.max(hardMin, raw)));
+}
+
+function naturalHorizontalBusX(family) {
   const gap = family.childLeft - family.parentRight;
   const minX = family.parentRight + BUS_INSET;
   const maxX = family.childLeft - BUS_INSET;
@@ -186,6 +200,15 @@ function horizontalBusX(family) {
   const t = family.laneT ?? 0.45;
   const busX = family.parentRight + gap * t;
   return roundCoord(Math.min(maxX, Math.max(minX, busX)));
+}
+
+function horizontalBusX(family) {
+  const busOffset = family.busOffset || 0;
+  const raw = naturalHorizontalBusX(family) + busOffset;
+  const hardMin = family.parentRight + 1;
+  const hardMax = family.childLeft - 1;
+  if (hardMax <= hardMin) return roundCoord((family.parentRight + family.childLeft) / 2);
+  return roundCoord(Math.min(hardMax, Math.max(hardMin, raw)));
 }
 
 export function simplifyPoints(points) {
@@ -680,24 +703,64 @@ function buildRoutedLinks(layout, families, isHorizontal) {
  * Rebuild link polylines from final node coordinates.
  * Call only after nodes are placed; never mutates people / trees.data.
  */
-export function routeLayoutLinks(layout, { orientation = 'vertical' } = {}) {
+export function routeLayoutLinks(
+  layout,
+  { orientation = 'vertical', applyParallelLanes = true, parallelGap = MIN_PARALLEL_GAP } = {},
+) {
   const isHorizontal = orientation === 'horizontal';
   const families = assignFamilyLanes(buildParentFamilies(layout), isHorizontal);
-  for (const family of families) family.stemOffset = 0;
+  for (const family of families) {
+    family.stemOffset = 0;
+    family.busOffset = 0;
+  }
 
-  // Pass 1: natural family-junction routes (horizontal bus lanes already assigned).
+  // Pass 1: natural family-junction routes.
   let routed = buildRoutedLinks(layout, families, isHorizontal);
 
-  // Pass 2: separate coincident / near-collinear unrelated generation corridors.
-  const offsets = assignParallelVerticalLanes(routed, {
-    gap: VERTICAL_LANE_GAP,
-    orientation: isHorizontal ? 'horizontal' : 'vertical',
-  });
-  if (offsets.size) {
-    for (const family of families) {
-      family.stemOffset = offsets.get(family.familyKey) || 0;
+  // Pass 2: separate near-parallel unrelated H/V corridors, then rebuild polylines
+  // so bends and connecting segments stay consistent (no broken stubs).
+  if (applyParallelLanes) {
+    const nodesById = new Map((layout.nodes || []).map((node) => [String(node.id), node]));
+    let { offsetXByFamily, offsetYByFamily } = assignParallelLanes(routed, {
+      gap: parallelGap,
+      nodesById,
+    });
+
+    const familyGapMeta = families.map((family) =>
+      isHorizontal
+        ? {
+            familyKey: family.familyKey,
+            parentBottom: family.parentRight,
+            childTop: family.childLeft,
+            naturalBusY: naturalHorizontalBusX(family),
+          }
+        : {
+            familyKey: family.familyKey,
+            parentBottom: family.parentBottom,
+            childTop: family.childTop,
+            naturalBusY: naturalVerticalBusY(family),
+          },
+    );
+
+    if (!isHorizontal && offsetYByFamily.size) {
+      offsetYByFamily = fitBusOffsetsToGenerationGaps(familyGapMeta, offsetYByFamily, parallelGap);
     }
-    routed = buildRoutedLinks(layout, families, isHorizontal);
+    if (isHorizontal && offsetXByFamily.size) {
+      offsetXByFamily = fitBusOffsetsToGenerationGaps(familyGapMeta, offsetXByFamily, parallelGap);
+    }
+
+    if (offsetXByFamily.size || offsetYByFamily.size) {
+      for (const family of families) {
+        if (isHorizontal) {
+          family.stemOffset = offsetYByFamily.get(family.familyKey) || 0;
+          family.busOffset = offsetXByFamily.get(family.familyKey) || 0;
+        } else {
+          family.stemOffset = offsetXByFamily.get(family.familyKey) || 0;
+          family.busOffset = offsetYByFamily.get(family.familyKey) || 0;
+        }
+      }
+      routed = buildRoutedLinks(layout, families, isHorizontal);
+    }
   }
 
   // Pass 3: line-jumps only for remaining true H×V crossings.

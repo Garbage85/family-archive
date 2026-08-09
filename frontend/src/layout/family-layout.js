@@ -484,6 +484,8 @@ export function layoutFamilyTree(
       crossings: winner.metrics.crossings,
       jumps: winner.metrics.jumps,
       parallelLaneOverlap: winner.metrics.parallelLaneOverlap || 0,
+      parallelGapViolations: winner.metrics.parallelGapViolations || 0,
+      minUnrelatedParallelGap: winner.metrics.minUnrelatedParallelGap ?? null,
       coldWarmSignatureMismatch: 0,
     },
   };

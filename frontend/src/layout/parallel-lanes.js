@@ -1,28 +1,41 @@
 /**
- * Parallel corridor lane assignment for unrelated near-collinear routes.
+ * Parallel corridor lane assignment for unrelated near-parallel routes.
  *
- * same familyKey → may share stem/junction
- * different familyKey + overlapping range at same/near axis → separate lanes
+ * same familyKey → may share stem/bus/junction
+ * different familyKey + interacting spans + cross-axis gap < MIN_PARALLEL_GAP
+ *   → must receive separated lanes
  *
- * Vertical orientation: separate by X (parallel vertical stems).
- * Horizontal orientation: separate by Y (parallel horizontal stems).
+ * Segment roles:
+ *   - vertical stem  (movable via stemOffset / offset X)
+ *   - vertical drop  (immovable — locked to child card X)
+ *   - horizontal bus (movable via busOffset / offset Y)
+ *   - short stubs    (ignored for conflict detection)
  *
- * Deterministic symmetric offsets: 0, -gap, +gap, -2gap, +2gap, ...
+ * Offsets for N movable lanes are centered:
+ *   N=2: -g/2, +g/2
+ *   N=3: -g, 0, +g
+ * and then pushed away from immovable obstacles so every interacting
+ * unrelated pair ends up >= MIN_PARALLEL_GAP apart.
  */
 
-export const VERTICAL_LANE_GAP = 14;
-export const VERTICAL_LANE_THRESHOLD = 14;
+export const MIN_PARALLEL_GAP = 16;
+/** @deprecated use MIN_PARALLEL_GAP */
+export const VERTICAL_LANE_GAP = MIN_PARALLEL_GAP;
+/** @deprecated use MIN_PARALLEL_GAP */
+export const VERTICAL_LANE_THRESHOLD = MIN_PARALLEL_GAP;
 
-function almostEq(a, b, eps = 0.51) {
+/**
+ * Collinear peers whose spans abut within this distance still form one visual
+ * rail (generation buses separated by about one household step).
+ */
+export const PARALLEL_SPAN_JOIN_PAD = 240;
+
+const AXIS_EPS = 0.51;
+const SHORT_STUB_MAX = 20;
+const FLOAT_EPS = 1e-6;
+
+function almostEq(a, b, eps = AXIS_EPS) {
   return Math.abs(a - b) < eps;
-}
-
-function rangesOverlap(a0, a1, b0, b1, pad = 0) {
-  const minA = Math.min(a0, a1);
-  const maxA = Math.max(a0, a1);
-  const minB = Math.min(b0, b1);
-  const maxB = Math.max(b0, b1);
-  return minA <= maxB + pad && minB <= maxA + pad;
 }
 
 function familyKeyOf(link) {
@@ -30,87 +43,162 @@ function familyKeyOf(link) {
 }
 
 /**
- * Corridor segments that run along the generation-crossing direction.
- * vertical orientation → vertical segments (const X)
- * horizontal orientation → horizontal segments (const Y)
+ * Positive gap between 1D ranges, or <= 0 when they overlap.
  */
-function corridorSegments(link, orientation = 'vertical') {
+function rangeGap(a0, a1, b0, b1) {
+  const minA = Math.min(a0, a1);
+  const maxA = Math.max(a0, a1);
+  const minB = Math.min(b0, b1);
+  const maxB = Math.max(b0, b1);
+  return Math.max(minA, minB) - Math.min(maxA, maxB);
+}
+
+/**
+ * Spans interact when they overlap or abut within joinPad.
+ */
+export function spansInteract(a0, a1, b0, b1, joinPad = PARALLEL_SPAN_JOIN_PAD) {
+  return rangeGap(a0, a1, b0, b1) <= joinPad + FLOAT_EPS;
+}
+
+/**
+ * Collect classified axis-aligned segments.
+ * @param {object[]} links
+ * @param {'vertical'|'horizontal'} direction
+ * @param {Map<string,{x:number,y:number}>|null} nodesById
+ */
+export function collectParallelSegments(links, direction = 'vertical', nodesById = null) {
   const segs = [];
-  const points = link.points || [];
-  for (let i = 0; i < points.length - 1; i += 1) {
-    const a = points[i];
-    const b = points[i + 1];
-    if (orientation === 'horizontal') {
-      if (almostEq(a[1], b[1]) && !almostEq(a[0], b[0])) {
+  for (const link of links || []) {
+    if (link.type === 'spouse') continue;
+    const points = link.points || [];
+    const target = nodesById?.get(String(link.target));
+
+    for (let i = 0; i < points.length - 1; i += 1) {
+      const a = points[i];
+      const b = points[i + 1];
+      if (direction === 'horizontal') {
+        if (!(almostEq(a[1], b[1]) && !almostEq(a[0], b[0]))) continue;
+        const span0 = Math.min(a[0], b[0]);
+        const span1 = Math.max(a[0], b[0]);
+        const length = span1 - span0;
+        if (length < SHORT_STUB_MAX) continue; // junction→stem stubs
+        const axis = a[1];
+        // In horizontal trees the child approach sits on child.y (immovable).
+        // In vertical trees long horizontals are buses (movable).
+        const isChildRail = Boolean(target && almostEq(axis, target.y));
         segs.push({
           link,
           familyKey: familyKeyOf(link),
-          axis: a[1],
-          span0: Math.min(a[0], b[0]),
-          span1: Math.max(a[0], b[0]),
+          direction,
+          role: isChildRail ? 'drop' : 'bus',
+          movable: !isChildRail,
+          axis,
+          span0,
+          span1,
+          index: i,
+        });
+      } else {
+        if (!(almostEq(a[0], b[0]) && !almostEq(a[1], b[1]))) continue;
+        const span0 = Math.min(a[1], b[1]);
+        const span1 = Math.max(a[1], b[1]);
+        const axis = a[0];
+        let role = 'stem';
+        let movable = true;
+        if (target && almostEq(axis, target.x)) {
+          // Child drop locked to card X — cannot be lane-shifted.
+          role = 'drop';
+          movable = false;
+        }
+        segs.push({
+          link,
+          familyKey: familyKeyOf(link),
+          direction,
+          role,
+          movable,
+          axis,
+          span0,
+          span1,
           index: i,
         });
       }
-    } else if (almostEq(a[0], b[0]) && !almostEq(a[1], b[1])) {
-      segs.push({
-        link,
-        familyKey: familyKeyOf(link),
-        axis: a[0],
-        span0: Math.min(a[1], b[1]),
-        span1: Math.max(a[1], b[1]),
-        index: i,
-      });
     }
   }
   return segs;
 }
 
 /**
- * Cluster unrelated corridor segments that share axis (or are within threshold)
- * and have overlapping span ranges.
+ * Unrelated parallel segment pairs closer than minGap on the cross-axis
+ * with interacting spans on the main axis.
  */
-export function findVerticalLaneConflicts(
+export function findParallelGapConflicts(
   links,
-  { threshold = VERTICAL_LANE_THRESHOLD, orientation = 'vertical' } = {},
+  {
+    minGap = MIN_PARALLEL_GAP,
+    spanPad = PARALLEL_SPAN_JOIN_PAD,
+    direction = null,
+    nodesById = null,
+  } = {},
 ) {
-  const segs = (links || []).flatMap((link) => corridorSegments(link, orientation));
+  const directions = direction ? [direction] : ['vertical', 'horizontal'];
   const conflicts = [];
-  for (let i = 0; i < segs.length; i += 1) {
-    for (let j = i + 1; j < segs.length; j += 1) {
-      const a = segs[i];
-      const b = segs[j];
-      if (a.familyKey === b.familyKey) continue;
-      if (Math.abs(a.axis - b.axis) > threshold) continue;
-      if (!rangesOverlap(a.span0, a.span1, b.span0, b.span1, 1)) continue;
-      conflicts.push({ a, b });
+  for (const dir of directions) {
+    const segs = collectParallelSegments(links, dir, nodesById);
+    for (let i = 0; i < segs.length; i += 1) {
+      for (let j = i + 1; j < segs.length; j += 1) {
+        const a = segs[i];
+        const b = segs[j];
+        if (a.familyKey === b.familyKey) continue;
+        // Two immovable drops cannot be separated without moving cards; skip.
+        if (!a.movable && !b.movable) continue;
+        const cross = Math.abs(a.axis - b.axis);
+        if (cross + FLOAT_EPS >= minGap) continue;
+        if (!spansInteract(a.span0, a.span1, b.span0, b.span1, spanPad)) continue;
+        conflicts.push({ a, b, cross, direction: dir });
+      }
     }
   }
   return conflicts;
 }
 
-function symmetricLaneOffsets(count, gap) {
-  const offsets = [0];
-  let step = 1;
-  while (offsets.length < count) {
-    offsets.push(-step * gap);
-    if (offsets.length >= count) break;
-    offsets.push(step * gap);
-    step += 1;
-  }
-  return offsets.slice(0, count);
+/**
+ * Legacy name: generation-corridor conflicts (orientation selects direction).
+ */
+export function findVerticalLaneConflicts(
+  links,
+  {
+    threshold = MIN_PARALLEL_GAP,
+    orientation = 'vertical',
+    spanPad = PARALLEL_SPAN_JOIN_PAD,
+    nodesById = null,
+  } = {},
+) {
+  return findParallelGapConflicts(links, {
+    minGap: threshold,
+    spanPad,
+    direction: orientation === 'horizontal' ? 'horizontal' : 'vertical',
+    nodesById,
+  });
 }
 
 /**
- * Assign axis offsets per familyKey for conflicting corridor clusters.
- * Returns Map<familyKey, offset>.
+ * Centered symmetric lane offsets so adjacent lanes are exactly `gap` apart.
  */
-export function assignParallelVerticalLanes(
-  links,
-  { gap = VERTICAL_LANE_GAP, threshold = VERTICAL_LANE_THRESHOLD, orientation = 'vertical' } = {},
-) {
-  const conflicts = findVerticalLaneConflicts(links, { threshold, orientation });
-  if (!conflicts.length) return new Map();
+export function centeredSymmetricOffsets(count, gap = MIN_PARALLEL_GAP) {
+  if (count <= 0) return [];
+  if (count === 1) return [0];
+  const offsets = [];
+  for (let i = 0; i < count; i += 1) {
+    offsets.push((i - (count - 1) / 2) * gap);
+  }
+  return offsets;
+}
 
+/** @deprecated use centeredSymmetricOffsets */
+function symmetricLaneOffsets(count, gap) {
+  return centeredSymmetricOffsets(count, gap);
+}
+
+function unionFind() {
   const parent = new Map();
   function find(id) {
     if (!parent.has(id)) parent.set(id, id);
@@ -125,36 +213,335 @@ export function assignParallelVerticalLanes(
     const child = ra < rb ? rb : ra;
     parent.set(child, root);
   }
+  return { find, union, parent };
+}
 
-  for (const { a, b } of conflicts) union(a.familyKey, b.familyKey);
+/**
+ * Assign offsets for one axis.
+ * Movable families are packed into centered lanes, then shifted as a rigid group
+ * (and individually if needed) so every movable axis stays >= gap from obstacles
+ * and from other movables.
+ */
+function offsetsForAxis(conflicts, gap) {
+  if (!conflicts.length) return new Map();
 
-  const clusters = new Map();
-  for (const key of parent.keys()) {
-    const root = find(key);
-    if (!clusters.has(root)) clusters.set(root, new Set());
-    clusters.get(root).add(key);
+  const { find, union } = unionFind();
+  const movableFamilies = new Set();
+  const obstacleAxesByFamily = new Map(); // familyKey -> number[] natural axes of immovable segs
+  const naturalAxisSamples = new Map();
+
+  for (const { a, b } of conflicts) {
+    for (const seg of [a, b]) {
+      if (!naturalAxisSamples.has(seg.familyKey)) naturalAxisSamples.set(seg.familyKey, []);
+      naturalAxisSamples.get(seg.familyKey).push(seg.axis);
+      if (seg.movable) movableFamilies.add(seg.familyKey);
+      else {
+        if (!obstacleAxesByFamily.has(seg.familyKey)) obstacleAxesByFamily.set(seg.familyKey, []);
+        obstacleAxesByFamily.get(seg.familyKey).push(seg.axis);
+      }
+    }
+    // Cluster movable families that conflict with each other.
+    if (a.movable && b.movable) union(a.familyKey, b.familyKey);
+    // Movable vs immovable: movable still needs a lane; track via singleton cluster.
+    if (a.movable && !b.movable) union(a.familyKey, a.familyKey);
+    if (b.movable && !a.movable) union(b.familyKey, b.familyKey);
   }
 
-  // Also include every key seen in conflicts (union-find only indexes via union).
-  for (const { a, b } of conflicts) {
-    const rootA = find(a.familyKey);
-    const rootB = find(b.familyKey);
-    if (!clusters.has(rootA)) clusters.set(rootA, new Set());
-    if (!clusters.has(rootB)) clusters.set(rootB, new Set());
-    clusters.get(rootA).add(a.familyKey);
-    clusters.get(rootB).add(b.familyKey);
+  const clusters = new Map();
+  for (const familyKey of movableFamilies) {
+    const root = find(familyKey);
+    if (!clusters.has(root)) clusters.set(root, new Set());
+    clusters.get(root).add(familyKey);
+  }
+
+  function meanAxis(familyKey) {
+    const samples = naturalAxisSamples.get(familyKey) || [0];
+    return samples.reduce((sum, value) => sum + value, 0) / samples.length;
   }
 
   const offsets = new Map();
+
   for (const members of clusters.values()) {
-    if (members.size < 2) continue;
-    const sorted = [...members].sort((a, b) => a.localeCompare(b));
-    const laneOffsets = symmetricLaneOffsets(sorted.length, gap);
+    const sorted = [...members].sort((left, right) => {
+      const axisDiff = meanAxis(left) - meanAxis(right);
+      if (Math.abs(axisDiff) > FLOAT_EPS) return axisDiff;
+      return left.localeCompare(right);
+    });
+
+    // Obstacles that interact with this cluster (immovable axes from conflicts).
+    const obstacles = [];
+    for (const { a, b } of conflicts) {
+      const aIn = members.has(a.familyKey);
+      const bIn = members.has(b.familyKey);
+      if (aIn && !b.movable) obstacles.push(b.axis);
+      if (bIn && !a.movable) obstacles.push(a.axis);
+      if (!a.movable && bIn) obstacles.push(a.axis);
+      if (!b.movable && aIn) obstacles.push(b.axis);
+    }
+    // Also include immovable axes from members themselves (own drops) — not obstacles to self.
+    const uniqueObstacles = [...new Set(obstacles)].sort((a, b) => a - b);
+
+    let laneOffsets = centeredSymmetricOffsets(sorted.length, gap);
+
+    // Preferred natural axes — final axis ≈ meanAxis + offset for stems that start
+    // near meanAxis. For families whose conflict samples are already at card drops
+    // (shouldn't happen for movable), meanAxis reflects stem samples.
+    const preferred = sorted.map((familyKey) => meanAxis(familyKey));
+    // Anchor group so mean preferred stays centered: offsets already centered at 0
+    // relative to each family's own natural axis.
+
+    // Push group rigidly so all (preferred[i] + laneOffsets[i]) clear obstacles.
+    const finalAxes = () => preferred.map((axis, index) => axis + laneOffsets[index]);
+
+    function minObstacleGap(axes) {
+      let best = Number.POSITIVE_INFINITY;
+      for (const axis of axes) {
+        for (const obstacle of uniqueObstacles) {
+          best = Math.min(best, Math.abs(axis - obstacle));
+        }
+      }
+      return best;
+    }
+
+    if (uniqueObstacles.length) {
+      let shift = 0;
+      let axes = finalAxes();
+      let guard = 0;
+      while (minObstacleGap(axes) + FLOAT_EPS < gap && guard < 24) {
+        guard += 1;
+        // Deterministic push: move group toward the side with more clearance.
+        const mid = axes.reduce((sum, value) => sum + value, 0) / axes.length;
+        const obsMid =
+          uniqueObstacles.reduce((sum, value) => sum + value, 0) / uniqueObstacles.length;
+        const step = mid >= obsMid ? gap : -gap;
+        shift += step;
+        laneOffsets = centeredSymmetricOffsets(sorted.length, gap).map((value) => value + shift);
+        axes = finalAxes();
+      }
+      // If still colliding, place lanes sequentially in free slots around obstacles.
+      if (minObstacleGap(axes) + FLOAT_EPS < gap) {
+        const occupied = uniqueObstacles.slice().sort((a, b) => a - b);
+        const placed = [];
+        for (const familyKey of sorted) {
+          const natural = meanAxis(familyKey);
+          let best = null;
+          // Candidate positions: natural, and ±k*gap from each obstacle/natural.
+          const candidates = [natural];
+          for (const base of [...occupied, natural]) {
+            for (let k = 1; k <= sorted.length + 2; k += 1) {
+              candidates.push(base + k * gap, base - k * gap);
+            }
+          }
+          candidates.sort((a, b) => Math.abs(a - natural) - Math.abs(b - natural) || a - b);
+          for (const candidate of candidates) {
+            const okOthers = placed.every((axis) => Math.abs(axis - candidate) + FLOAT_EPS >= gap);
+            const okObs = occupied.every((axis) => Math.abs(axis - candidate) + FLOAT_EPS >= gap);
+            if (okOthers && okObs) {
+              best = candidate;
+              break;
+            }
+          }
+          if (best == null) best = natural + (placed.length + 1) * gap;
+          placed.push(best);
+          offsets.set(familyKey, best - natural);
+        }
+        continue;
+      }
+    }
+
     sorted.forEach((familyKey, index) => {
       offsets.set(familyKey, laneOffsets[index]);
     });
   }
+
   return offsets;
+}
+
+/**
+ * Assign cross-axis offsets for unrelated parallel conflicts.
+ * @returns {{ offsetXByFamily: Map<string,number>, offsetYByFamily: Map<string,number> }}
+ */
+export function assignParallelLanes(
+  links,
+  { gap = MIN_PARALLEL_GAP, spanPad = PARALLEL_SPAN_JOIN_PAD, nodesById = null } = {},
+) {
+  const verticalConflicts = findParallelGapConflicts(links, {
+    minGap: gap,
+    spanPad,
+    direction: 'vertical',
+    nodesById,
+  });
+  const horizontalConflicts = findParallelGapConflicts(links, {
+    minGap: gap,
+    spanPad,
+    direction: 'horizontal',
+    nodesById,
+  });
+  return {
+    offsetXByFamily: offsetsForAxis(verticalConflicts, gap),
+    offsetYByFamily: offsetsForAxis(horizontalConflicts, gap),
+  };
+}
+
+/**
+ * Repack bus (offset Y in vertical trees) so final bus coordinates stay inside
+ * each family's open generation gap while preserving MIN_PARALLEL_GAP.
+ *
+ * families: [{ familyKey, parentBottom, childTop, naturalBusY }]
+ * offsetYByFamily: Map from assignParallelLanes
+ */
+export function fitBusOffsetsToGenerationGaps(families, offsetYByFamily, gap = MIN_PARALLEL_GAP) {
+  if (!offsetYByFamily?.size || !families?.length) return offsetYByFamily || new Map();
+
+  // Seed with families that already received an offset, then pull in every
+  // family that shares an overlapping open generation-gap band so packing
+  // cannot slide a bus onto a neighbor that stayed at its natural Y.
+  function gapBand(family) {
+    return {
+      min: family.parentBottom + 1,
+      max: family.childTop - 1,
+    };
+  }
+  function bandsOverlap(left, right) {
+    const a = gapBand(left);
+    const b = gapBand(right);
+    return a.min < b.max - FLOAT_EPS && b.min < a.max - FLOAT_EPS;
+  }
+
+  const seedKeys = new Set(offsetYByFamily.keys());
+  const involved = [];
+  for (const family of families) {
+    if (seedKeys.has(family.familyKey)) {
+      involved.push(family);
+      continue;
+    }
+    for (const seedKey of seedKeys) {
+      const seed = families.find((item) => item.familyKey === seedKey);
+      if (seed && bandsOverlap(family, seed)) {
+        involved.push(family);
+        break;
+      }
+    }
+  }
+  if (involved.length < 2) return new Map(offsetYByFamily);
+
+  // Cluster families whose open generation gaps overlap.
+  const { find, union } = unionFind();
+  for (let i = 0; i < involved.length; i += 1) {
+    for (let j = i + 1; j < involved.length; j += 1) {
+      if (bandsOverlap(involved[i], involved[j])) {
+        union(involved[i].familyKey, involved[j].familyKey);
+      }
+    }
+  }
+
+  const clusters = new Map();
+  for (const family of involved) {
+    const root = find(family.familyKey);
+    if (!clusters.has(root)) clusters.set(root, []);
+    clusters.get(root).push(family);
+  }
+
+  const fitted = new Map(offsetYByFamily);
+  for (const members of clusters.values()) {
+    if (members.length < 2) continue;
+    const sorted = members.slice().sort((left, right) => {
+      const axisDiff = left.naturalBusY - right.naturalBusY;
+      if (Math.abs(axisDiff) > FLOAT_EPS) return axisDiff;
+      const o =
+        (offsetYByFamily.get(left.familyKey) || 0) - (offsetYByFamily.get(right.familyKey) || 0);
+      if (Math.abs(o) > FLOAT_EPS) return o;
+      return left.familyKey.localeCompare(right.familyKey);
+    });
+
+    const hardMin = Math.max(...sorted.map((family) => family.parentBottom + 1));
+    const hardMax = Math.min(...sorted.map((family) => family.childTop - 1));
+    const n = sorted.length;
+    const need = (n - 1) * gap;
+    if (hardMax - hardMin + FLOAT_EPS < need) {
+      // Not enough room: keep prior offsets (caller may expand gap elsewhere).
+      continue;
+    }
+    const start = (hardMin + hardMax - need) / 2;
+    sorted.forEach((family, index) => {
+      const absolute = start + index * gap;
+      fitted.set(family.familyKey, absolute - family.naturalBusY);
+    });
+  }
+  return fitted;
+}
+
+/**
+ * Legacy: returns only generation-corridor offsets (Map<familyKey, offset>).
+ */
+export function assignParallelVerticalLanes(
+  links,
+  {
+    gap = MIN_PARALLEL_GAP,
+    threshold = MIN_PARALLEL_GAP,
+    orientation = 'vertical',
+    nodesById = null,
+  } = {},
+) {
+  const direction = orientation === 'horizontal' ? 'horizontal' : 'vertical';
+  const conflicts = findParallelGapConflicts(links, {
+    minGap: threshold,
+    direction,
+    nodesById,
+  });
+  return offsetsForAxis(conflicts, gap);
+}
+
+/**
+ * Hard geometric metrics for unrelated parallel gaps.
+ */
+export function measureUnrelatedParallelGaps(
+  links,
+  { minGap = MIN_PARALLEL_GAP, spanPad = PARALLEL_SPAN_JOIN_PAD, nodesById = null } = {},
+) {
+  let minUnrelatedParallelGap = Number.POSITIVE_INFINITY;
+  let parallelGapViolations = 0;
+  let interactingPairs = 0;
+  const violationPairs = [];
+
+  for (const direction of ['vertical', 'horizontal']) {
+    const segs = collectParallelSegments(links, direction, nodesById);
+    for (let i = 0; i < segs.length; i += 1) {
+      for (let j = i + 1; j < segs.length; j += 1) {
+        const a = segs[i];
+        const b = segs[j];
+        if (a.familyKey === b.familyKey) continue;
+        // Immovable drop–drop pairs are card-aligned columns; not lane-fixable.
+        if (!a.movable && !b.movable) continue;
+        if (!spansInteract(a.span0, a.span1, b.span0, b.span1, spanPad)) continue;
+        interactingPairs += 1;
+        const cross = Math.abs(a.axis - b.axis);
+        if (cross < minUnrelatedParallelGap) minUnrelatedParallelGap = cross;
+        if (cross + FLOAT_EPS < minGap) {
+          parallelGapViolations += 1;
+          violationPairs.push({
+            direction,
+            familyA: a.familyKey,
+            familyB: b.familyKey,
+            cross,
+            roleA: a.role,
+            roleB: b.role,
+          });
+        }
+      }
+    }
+  }
+
+  if (!Number.isFinite(minUnrelatedParallelGap)) {
+    minUnrelatedParallelGap = minGap;
+  }
+  return {
+    minUnrelatedParallelGap,
+    parallelGapViolations,
+    interactingPairs,
+    violationPairs,
+    minGapRequired: minGap,
+  };
 }
 
 /**
@@ -190,9 +577,30 @@ export function countParallelLaneFamilies(offsetByFamily) {
 }
 
 /**
- * Residual hard overlaps: unrelated corridors still on (nearly) the same axis
- * after lane assignment. Uses a tight epsilon — not the clustering threshold.
+ * Residual hard overlaps: unrelated corridors still closer than MIN_PARALLEL_GAP.
  */
-export function findParallelLaneOverlaps(links, { orientation = 'vertical', eps = 0.51 } = {}) {
-  return findVerticalLaneConflicts(links, { threshold: eps, orientation });
+export function findParallelLaneOverlaps(
+  links,
+  {
+    orientation = null,
+    minGap = MIN_PARALLEL_GAP,
+    spanPad = PARALLEL_SPAN_JOIN_PAD,
+    nodesById = null,
+  } = {},
+) {
+  if (orientation === 'vertical' || orientation === 'horizontal') {
+    return findParallelGapConflicts(links, {
+      minGap,
+      spanPad,
+      direction: orientation === 'horizontal' ? 'horizontal' : 'vertical',
+      nodesById,
+    });
+  }
+  return findParallelGapConflicts(links, { minGap, spanPad, nodesById });
 }
+
+function corridorSegments(link, orientation = 'vertical') {
+  return collectParallelSegments([link], orientation === 'horizontal' ? 'horizontal' : 'vertical');
+}
+
+export { corridorSegments, symmetricLaneOffsets };

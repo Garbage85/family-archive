@@ -78,6 +78,7 @@ function hardGate(people, layout, label) {
     `${label} parentSiblingBranchSide`,
   );
   assert.equal(layout.meta.parallelLaneOverlap ?? 0, 0, `${label} parallelLaneOverlap`);
+  assert.equal(layout.meta.parallelGapViolations ?? 0, 0, `${label} parallelGapViolations`);
   assert.equal(layout.meta.hardViolations ?? 0, 0, `${label} hard`);
   const parity = assertCrossingJumpParity(layout);
   assert.equal(parity.missedJumps, 0, `${label} missedJumps`);
@@ -147,6 +148,7 @@ test('parallel lanes separate coincident unrelated verticals', () => {
   const offsets = assignParallelVerticalLanes(links, { gap: VERTICAL_LANE_GAP });
   assert.equal(offsets.size, 3);
   const values = [...offsets.values()].sort((a, b) => a - b);
+  // Centered symmetric lanes: N=3 → -gap, 0, +gap
   assert.deepEqual(values, [-VERTICAL_LANE_GAP, 0, VERTICAL_LANE_GAP]);
   // same family may share
   const same = [

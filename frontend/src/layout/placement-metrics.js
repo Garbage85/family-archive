@@ -26,6 +26,8 @@ import {
   countParallelLaneFamilies,
   findParallelLaneOverlaps,
   findVerticalLaneConflicts,
+  measureUnrelatedParallelGaps,
+  MIN_PARALLEL_GAP,
 } from './parallel-lanes.js';
 import { scorePlacementCandidate } from './placement-cost.js';
 import {
@@ -138,8 +140,12 @@ export function collectPlacementMetrics(
     householdToBranch,
     side,
   );
-  // Residual hard overlaps after lane assignment (tight eps, not cluster threshold).
-  const parallelLaneOverlap = findParallelLaneOverlaps(layout.links).length;
+  const nodesById = new Map((layout.nodes || []).map((node) => [String(node.id), node]));
+  const parallelGaps = measureUnrelatedParallelGaps(layout.links, { nodesById });
+  const parallelGapViolations = parallelGaps.parallelGapViolations;
+  const minUnrelatedParallelGap = parallelGaps.minUnrelatedParallelGap;
+  // Residual hard overlaps after lane assignment.
+  const parallelLaneOverlap = findParallelLaneOverlaps(layout.links, { nodesById }).length;
 
   const growth = compareGrowthStability(
     previousSnapshot,
@@ -171,6 +177,9 @@ export function collectPlacementMetrics(
     branchIntegrityViolations,
     parentSiblingBranchSideViolations,
     parallelLaneOverlap,
+    parallelGapViolations,
+    minUnrelatedParallelGap,
+    minParallelGapRequired: MIN_PARALLEL_GAP,
     coldWarmSignatureMismatch: 0,
     existingHouseholdsSideChanges: growth.existingHouseholdsSideChanges,
     existingBranchOrderInversions: growth.existingBranchOrderInversions,
