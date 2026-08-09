@@ -163,6 +163,104 @@ export function findLostVisiblePeople(expectedIds, layout) {
   return [...expectedIds].filter((id) => !shown.has(String(id))).sort();
 }
 
+/**
+ * Unique directed parent→child edges from topology (children[] + parents[]).
+ */
+export function collectTopologyParentChildEdges(people) {
+  const edges = [];
+  const seen = new Set();
+  for (const person of people || []) {
+    const parentId = String(person.id);
+    for (const childId of person.rels?.children || []) {
+      const key = `${parentId}->${childId}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      edges.push({ parent: parentId, child: String(childId) });
+    }
+  }
+  for (const person of people || []) {
+    const childId = String(person.id);
+    for (const parentId of person.rels?.parents || []) {
+      const key = `${parentId}->${childId}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      edges.push({ parent: String(parentId), child: childId });
+    }
+  }
+  return edges.sort((left, right) =>
+    `${left.parent}->${left.child}`.localeCompare(`${right.parent}->${right.child}`),
+  );
+}
+
+/**
+ * Per topology parent-child edge: visibility, should-show, drawn, reason if not drawn.
+ * Rule: an edge must be drawn iff both endpoints are in the layout visible set.
+ */
+export function analyzeParentChildEdges(people, layout) {
+  const visible = new Set((layout.nodes || []).map((node) => String(node.id)));
+  const drawn = new Set(
+    (layout.links || [])
+      .filter((link) => link.type === 'parent-child')
+      .map((link) => `${link.source}->${link.target}`),
+  );
+  return collectTopologyParentChildEdges(people).map((edge) => {
+    const parentVisible = visible.has(edge.parent);
+    const childVisible = visible.has(edge.child);
+    const bothVisible = parentVisible && childVisible;
+    const shouldShow = bothVisible;
+    const shown = drawn.has(`${edge.parent}->${edge.child}`);
+    let whyNot = null;
+    if (shouldShow && !shown) {
+      whyNot = 'MISSING_IN_LAYOUT';
+    } else if (!bothVisible) {
+      const parts = [];
+      if (!parentVisible) parts.push(`parent ${edge.parent} not in visible set`);
+      if (!childVisible) parts.push(`child ${edge.child} not in visible set`);
+      whyNot = parts.join('; ');
+    } else if (!shouldShow && shown) {
+      whyNot = 'DRAWN_BUT_NOT_BOTH_VISIBLE';
+    }
+    return {
+      parent: edge.parent,
+      child: edge.child,
+      parentVisible,
+      childVisible,
+      bothVisible,
+      shouldShow,
+      shown,
+      whyNot,
+    };
+  });
+}
+
+export function findMissingVisibleParentChildLinks(people, layout) {
+  return analyzeParentChildEdges(people, layout).filter((edge) => edge.shouldShow && !edge.shown);
+}
+
+export function findMissingVisibleSpouseLinks(people, layout) {
+  const visible = new Set((layout.nodes || []).map((node) => String(node.id)));
+  const drawn = new Set(
+    (layout.links || [])
+      .filter((link) => link.type === 'spouse')
+      .map((link) => [link.source, link.target].map(String).sort().join('|')),
+  );
+  const missing = [];
+  const seen = new Set();
+  for (const person of people || []) {
+    for (const spouseId of person.rels?.spouses || []) {
+      const a = String(person.id);
+      const b = String(spouseId);
+      const key = [a, b].sort().join('|');
+      if (seen.has(key)) continue;
+      seen.add(key);
+      if (visible.has(a) && visible.has(b) && !drawn.has(key)) {
+        missing.push({ a, b, key });
+      }
+    }
+  }
+  return missing;
+}
+
 export function findLinksThroughForeignCards(layout) {
   const rects = (layout.nodes || []).map(cardRect);
   const hits = [];
@@ -201,6 +299,8 @@ export function summarizeLayout(people, layout) {
   const spouseIssues = assertSpousesNearby(layout);
   const generationIssues = assertParentChildGenerationOrder(layout);
   const missingEndpoints = findMissingRelationEndpoints(people, layout);
+  const missingVisibleParentChild = findMissingVisibleParentChildLinks(people, layout);
+  const missingVisibleSpouse = findMissingVisibleSpouseLinks(people, layout);
   const lineHits = findLinksThroughForeignCards(layout);
   const spouseLinks = (layout.links || []).filter((link) => link.type === 'spouse').length;
   const parentLinks = (layout.links || []).filter((link) => link.type === 'parent-child').length;
@@ -212,6 +312,10 @@ export function summarizeLayout(people, layout) {
     overlaps: overlaps.length,
     overlapPairs: overlaps,
     lostNodes: 0,
+    missingVisibleParentChildLinks: missingVisibleParentChild.length,
+    missingVisibleParentChildDetails: missingVisibleParentChild,
+    missingVisibleSpouseLinks: missingVisibleSpouse.length,
+    missingVisibleSpouseDetails: missingVisibleSpouse,
     missingEndpoints: missingEndpoints.length,
     missingEndpointDetails: missingEndpoints,
     spousePlacementIssues: spouseIssues.length,

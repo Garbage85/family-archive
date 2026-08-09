@@ -14,13 +14,16 @@ import {
   selectVisiblePeople,
 } from '../src/layout/family-layout.js';
 import {
+  analyzeParentChildEdges,
   assertParentChildGenerationOrder,
   assertSpousesNearby,
   findCardOverlaps,
   findLinksThroughForeignCards,
   findMissingRelationEndpoints,
+  findMissingVisibleParentChildLinks,
+  findMissingVisibleSpouseLinks,
 } from '../src/layout/layout-validators.js';
-import { compareLayouts } from './helpers/compare-layouts.js';
+import { compareLayouts, scanPrototypeCenters } from './helpers/compare-layouts.js';
 
 const fixturePath = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -164,4 +167,98 @@ test('line-through-card check runs (may warn but does not require zero for proto
   const layout = layoutFamilyTree(people, { centerId: fixture.meta.defaultCenterId });
   const hits = findLinksThroughForeignCards(layout);
   assert.ok(Array.isArray(hits));
+});
+
+test('regression: real fixture center p010 keeps every visible parent-child edge', async () => {
+  const fixture = await loadFixture();
+  const people = loadStructuralPeople(fixture);
+  const centerId = 'p010';
+  const layout = layoutFamilyTree(people, { centerId, orientation: 'vertical' });
+  const edgeReport = analyzeParentChildEdges(people, layout);
+  const required = edgeReport.filter((edge) => edge.shouldShow);
+  const missing = findMissingVisibleParentChildLinks(people, layout);
+  const missingSpouses = findMissingVisibleSpouseLinks(people, layout);
+
+  assert.equal(findCardOverlaps(layout.nodes).length, 0);
+  assert.equal(missing.length, 0, `missing visible parent-child: ${JSON.stringify(missing)}`);
+  assert.equal(
+    missingSpouses.length,
+    0,
+    `missing visible spouse: ${JSON.stringify(missingSpouses)}`,
+  );
+  assert.ok(required.length > 0, 'p010 must have at least one visible parent-child edge');
+  for (const edge of required) {
+    assert.equal(edge.shown, true, `${edge.parent}->${edge.child} should be drawn`);
+  }
+
+  const comparison = compareLayouts(people, centerId);
+  assert.equal(comparison.prototype.lostNodes, 0);
+  assert.equal(comparison.prototype.overlaps, 0);
+  assert.equal(comparison.prototype.missingVisibleParentChildLinks, 0);
+  assert.equal(comparison.prototype.missingVisibleSpouseLinks, 0);
+  // Apples-to-apples: unique topology edges among displayed people match prototype.
+  assert.equal(comparison.prototype.parentChildLinks, comparison.prototype.parentChildLinksUnique);
+  assert.equal(
+    comparison.familyChart.parentChildLinksUnique,
+    comparison.prototype.parentChildLinksUnique,
+  );
+  // Family Chart raw count includes reverse ancestry.parent pointers and is higher.
+  assert.ok(
+    comparison.familyChart.parentChildLinksRaw > comparison.familyChart.parentChildLinksUnique,
+    'expected FC raw parentChildLinks to overcount vs unique topology edges',
+  );
+  assert.equal(
+    comparison.familyChart.parentChildLinksRaw,
+    comparison.familyChart.parentChildFromParents +
+      comparison.familyChart.parentChildFromAncestryParent,
+  );
+
+  console.log(
+    '\nP010 PARENT-CHILD EDGE REPORT\n',
+    JSON.stringify(
+      {
+        displayedCount: layout.nodes.length,
+        visibleIds: layout.nodes.map((node) => node.id).sort(),
+        spouseLinks: layout.links.filter((link) => link.type === 'spouse').length,
+        parentChildLinks: layout.links.filter((link) => link.type === 'parent-child').length,
+        familyChart: comparison.familyChart,
+        requiredEdges: required,
+        nonVisibleEdgesSample: edgeReport.filter((edge) => !edge.bothVisible).slice(0, 8),
+      },
+      null,
+      2,
+    ),
+  );
+});
+
+test('gate: prototype centers p001..p010 have no lost nodes, overlaps, or missing visible links', async () => {
+  const fixture = await loadFixture();
+  const people = loadStructuralPeople(fixture);
+  const centerIds = Array.from(
+    { length: 10 },
+    (_, index) => `p${String(index + 1).padStart(3, '0')}`,
+  );
+  const rows = scanPrototypeCenters(people, centerIds);
+  const failures = rows.filter(
+    (row) =>
+      row.lostNodes > 0 ||
+      row.overlaps > 0 ||
+      row.missingVisibleParentChildLinks > 0 ||
+      row.missingVisibleSpouseLinks > 0,
+  );
+
+  console.log('\nPROTOTYPE CENTER SCAN p001..p010\n', JSON.stringify(rows, null, 2));
+  assert.deepEqual(failures, [], `centers failed gate: ${JSON.stringify(failures)}`);
+
+  for (const row of rows) {
+    assert.equal(row.lostNodes, 0, `${row.centerId} lostNodes`);
+    assert.equal(row.overlaps, 0, `${row.centerId} overlaps`);
+    assert.equal(row.missingSiblingSpouses, 0, `${row.centerId} missingSiblingSpouses`);
+    assert.equal(
+      row.missingVisibleParentChildLinks,
+      0,
+      `${row.centerId} missingVisibleParentChildLinks`,
+    );
+    assert.equal(row.missingVisibleSpouseLinks, 0, `${row.centerId} missingVisibleSpouseLinks`);
+  }
 });

@@ -2,7 +2,11 @@ import * as f3 from 'family-chart';
 import { prepareFamilyChartData } from '../../src/adapters/family-chart-data.js';
 import { layoutFamilyTree, selectVisiblePeople } from '../../src/layout/family-layout.js';
 import {
+  analyzeParentChildEdges,
+  collectTopologyParentChildEdges,
   findCardOverlaps,
+  findMissingVisibleParentChildLinks,
+  findMissingVisibleSpouseLinks,
   summarizeLayout,
   boundingBox,
 } from '../../src/layout/layout-validators.js';
@@ -16,6 +20,17 @@ function timed(fn) {
   const start = performance.now();
   const result = fn();
   return { result, ms: performance.now() - start };
+}
+
+/**
+ * Count unique topology parent→child edges among a displayed id set.
+ * This is the apples-to-apples metric vs prototype parentChildLinks.
+ */
+function countUniqueTopologyParentChild(people, displayedIds) {
+  const shown = new Set([...displayedIds].map(String));
+  return collectTopologyParentChildEdges(people).filter(
+    (edge) => shown.has(edge.parent) && shown.has(edge.child),
+  ).length;
 }
 
 function familyChartVisibleLayout(people, centerId, { isHorizontal = false } = {}) {
@@ -43,7 +58,9 @@ function familyChartVisibleLayout(people, centerId, { isHorizontal = false } = {
   }));
 
   const spouseLinks = [];
-  const parentChildLinks = [];
+  const parentChildLinksRaw = [];
+  const parentChildFromParents = [];
+  const parentChildFromAncestryParent = [];
   const byId = new Map(tree.data.map((node) => [String(node.data.id), node]));
 
   for (const node of tree.data) {
@@ -65,26 +82,35 @@ function familyChartVisibleLayout(people, centerId, { isHorizontal = false } = {
       }
     }
     for (const parent of node.parents || []) {
-      parentChildLinks.push({
+      const edge = {
         type: 'parent-child',
         source: String(parent.data.id),
         target: String(node.data.id),
+        via: 'parents[]',
         points: [
           [parent.x, parent.y],
           [node.x, node.y],
         ],
-      });
+      };
+      parentChildLinksRaw.push(edge);
+      parentChildFromParents.push(edge);
     }
+    // Family Chart ancestry nodes keep a reverse `parent` pointer (child → ancestor
+    // in walk order). Counting those as parent-child edges overcounts real topology
+    // edges (same geometric relation counted twice, often with reversed endpoints).
     if (node.parent && !node.parents?.length) {
-      parentChildLinks.push({
+      const edge = {
         type: 'parent-child',
         source: String(node.parent.data.id),
         target: String(node.data.id),
+        via: 'ancestry.parent',
         points: [
           [node.parent.x, node.parent.y],
           [node.x, node.y],
         ],
-      });
+      };
+      parentChildLinksRaw.push(edge);
+      parentChildFromAncestryParent.push(edge);
     }
   }
 
@@ -101,9 +127,12 @@ function familyChartVisibleLayout(people, centerId, { isHorizontal = false } = {
     }
   }
 
+  const displayedIds = nodes.map((node) => node.id);
+  const parentChildLinksUnique = countUniqueTopologyParentChild(chartData, displayedIds);
+
   const layout = {
     nodes,
-    links: [...spouseLinks, ...parentChildLinks],
+    links: [...spouseLinks, ...parentChildLinksRaw],
   };
 
   return {
@@ -112,7 +141,12 @@ function familyChartVisibleLayout(people, centerId, { isHorizontal = false } = {
     inputCount: people.length,
     displayedCount: nodes.length,
     spouseLinks: spouseLinks.length,
-    parentChildLinks: parentChildLinks.length,
+    // Raw engine pointer count (includes reverse ancestry.parent extras).
+    parentChildLinks: parentChildLinksRaw.length,
+    parentChildLinksRaw: parentChildLinksRaw.length,
+    parentChildLinksUnique,
+    parentChildFromParents: parentChildFromParents.length,
+    parentChildFromAncestryParent: parentChildFromAncestryParent.length,
     overlaps: findCardOverlaps(nodes).length,
     lostNodes: lostNodes.length,
     lostNodeIds: lostNodes,
@@ -139,6 +173,7 @@ function prototypeLayout(people, centerId, { isHorizontal = false } = {}) {
   const lostNodes = expectedVisible.filter((id) => !shown.has(id));
   const summary = summarizeLayout(people, result);
   summary.lostNodes = lostNodes.length;
+  const parentChildEdgeReport = analyzeParentChildEdges(people, result);
   return {
     engine: 'family-layout-prototype',
     ms,
@@ -146,10 +181,17 @@ function prototypeLayout(people, centerId, { isHorizontal = false } = {}) {
     displayedCount: result.nodes.length,
     spouseLinks: summary.spouseLinks,
     parentChildLinks: summary.parentChildLinks,
+    parentChildLinksUnique: countUniqueTopologyParentChild(
+      people,
+      result.nodes.map((node) => node.id),
+    ),
     overlaps: summary.overlaps,
     lostNodes: lostNodes.length,
     lostNodeIds: lostNodes,
     missingSiblingSpouses: 0,
+    missingVisibleParentChildLinks: findMissingVisibleParentChildLinks(people, result).length,
+    missingVisibleSpouseLinks: findMissingVisibleSpouseLinks(people, result).length,
+    parentChildEdgeReport,
     boundingBox: summary.boundingBox,
     summary,
     layout: result,
@@ -167,6 +209,10 @@ export function compareLayouts(people, centerId, options = {}) {
       displayedCount: familyChart.displayedCount,
       spouseLinks: familyChart.spouseLinks,
       parentChildLinks: familyChart.parentChildLinks,
+      parentChildLinksRaw: familyChart.parentChildLinksRaw,
+      parentChildLinksUnique: familyChart.parentChildLinksUnique,
+      parentChildFromParents: familyChart.parentChildFromParents,
+      parentChildFromAncestryParent: familyChart.parentChildFromAncestryParent,
       overlaps: familyChart.overlaps,
       lostNodes: familyChart.lostNodes,
       missingSiblingSpouses: familyChart.missingSiblingSpouses,
@@ -178,9 +224,12 @@ export function compareLayouts(people, centerId, options = {}) {
       displayedCount: prototype.displayedCount,
       spouseLinks: prototype.spouseLinks,
       parentChildLinks: prototype.parentChildLinks,
+      parentChildLinksUnique: prototype.parentChildLinksUnique,
       overlaps: prototype.overlaps,
       lostNodes: prototype.lostNodes,
       missingSiblingSpouses: prototype.missingSiblingSpouses,
+      missingVisibleParentChildLinks: prototype.missingVisibleParentChildLinks,
+      missingVisibleSpouseLinks: prototype.missingVisibleSpouseLinks,
       boundingBox: prototype.boundingBox,
       ms: prototype.ms,
       spousePlacementIssues: prototype.summary.spousePlacementIssues,
@@ -188,4 +237,29 @@ export function compareLayouts(people, centerId, options = {}) {
       linksThroughCards: prototype.summary.linksThroughCards,
     },
   };
+}
+
+export function scanPrototypeCenters(people, centerIds) {
+  return centerIds.map((centerId) => {
+    const report = compareLayouts(people, centerId);
+    return {
+      centerId,
+      displayedCount: report.prototype.displayedCount,
+      lostNodes: report.prototype.lostNodes,
+      missingSiblingSpouses: report.prototype.missingSiblingSpouses,
+      overlaps: report.prototype.overlaps,
+      missingVisibleParentChildLinks: report.prototype.missingVisibleParentChildLinks,
+      missingVisibleSpouseLinks: report.prototype.missingVisibleSpouseLinks,
+      spouseLinks: report.prototype.spouseLinks,
+      parentChildLinks: report.prototype.parentChildLinks,
+      familyChart: {
+        displayedCount: report.familyChart.displayedCount,
+        spouseLinks: report.familyChart.spouseLinks,
+        parentChildLinksRaw: report.familyChart.parentChildLinksRaw,
+        parentChildLinksUnique: report.familyChart.parentChildLinksUnique,
+        parentChildFromParents: report.familyChart.parentChildFromParents,
+        parentChildFromAncestryParent: report.familyChart.parentChildFromAncestryParent,
+      },
+    };
+  });
 }
