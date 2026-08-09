@@ -11,8 +11,12 @@ export const SOFT_WEIGHTS = {
   existingBranchOrderInversions: 12000,
   unexpectedCoupleFlip: 80000,
   // Routing quality — never outweighs family structure.
+  // Priority among softs: crossings/jumps → max lanes → routing height → bends → length → bbox.
   crossings: 5000,
   jumps: 4000,
+  maxLaneCountPerGap: 900,
+  requiredLaneCountTotal: 120,
+  totalRoutingGapHeight: 1.2,
   nearCollinear: 2500,
   familyInterleave: 800,
   bends: 40,
@@ -48,6 +52,8 @@ export function scorePlacementCandidate(metrics) {
     (metrics.parentSiblingBranchSideViolations || 0) +
     (metrics.parallelLaneOverlap || 0) +
     (metrics.parallelGapViolations || 0) +
+    (metrics.laneConflicts || 0) +
+    (metrics.routingOutsideGenerationGap || 0) +
     (metrics.coldWarmSignatureMismatch || 0);
 
   const soft = {
@@ -59,6 +65,12 @@ export function scorePlacementCandidate(metrics) {
     unexpectedCoupleFlip: (metrics.unexpectedCoupleFlip || 0) * SOFT_WEIGHTS.unexpectedCoupleFlip,
     crossings: (metrics.crossings || 0) * SOFT_WEIGHTS.crossings,
     jumps: (metrics.jumps || 0) * SOFT_WEIGHTS.jumps,
+    maxLaneCountPerGap: (metrics.maxLaneCount || 0) * SOFT_WEIGHTS.maxLaneCountPerGap,
+    requiredLaneCountTotal:
+      (metrics.requiredLaneCountTotal || metrics.totalLaneCount || 0) *
+      SOFT_WEIGHTS.requiredLaneCountTotal,
+    totalRoutingGapHeight:
+      (metrics.totalRoutingGapHeight || 0) * SOFT_WEIGHTS.totalRoutingGapHeight,
     nearCollinear: (metrics.nearCollinear || 0) * SOFT_WEIGHTS.nearCollinear,
     familyInterleave: (metrics.familyInterleave || 0) * SOFT_WEIGHTS.familyInterleave,
     bends: (metrics.bends || 0) * SOFT_WEIGHTS.bends,

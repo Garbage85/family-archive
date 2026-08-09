@@ -173,6 +173,7 @@ export function assignFamilyLanes(families, isHorizontal = false) {
 }
 
 function naturalVerticalBusY(family) {
+  if (Number.isFinite(family.busAbsolute)) return roundCoord(family.busAbsolute);
   const gap = family.childTop - family.parentBottom;
   const minY = family.parentBottom + BUS_INSET;
   const maxY = family.childTop - BUS_INSET;
@@ -183,9 +184,12 @@ function naturalVerticalBusY(family) {
 }
 
 function verticalBusY(family) {
+  if (Number.isFinite(family.busAbsolute)) {
+    return roundCoord(family.busAbsolute + (family.busOffset || 0));
+  }
   const busOffset = family.busOffset || 0;
   const raw = naturalVerticalBusY(family) + busOffset;
-  // Parallel lanes may use the full open gap (small expansion past BUS_INSET).
+  // Legacy path: keep bus inside the open gap.
   const hardMin = family.parentBottom + 1;
   const hardMax = family.childTop - 1;
   if (hardMax <= hardMin) return roundCoord((family.parentBottom + family.childTop) / 2);
@@ -193,6 +197,7 @@ function verticalBusY(family) {
 }
 
 function naturalHorizontalBusX(family) {
+  if (Number.isFinite(family.busAbsolute)) return roundCoord(family.busAbsolute);
   const gap = family.childLeft - family.parentRight;
   const minX = family.parentRight + BUS_INSET;
   const maxX = family.childLeft - BUS_INSET;
@@ -203,6 +208,9 @@ function naturalHorizontalBusX(family) {
 }
 
 function horizontalBusX(family) {
+  if (Number.isFinite(family.busAbsolute)) {
+    return roundCoord(family.busAbsolute + (family.busOffset || 0));
+  }
   const busOffset = family.busOffset || 0;
   const raw = naturalHorizontalBusX(family) + busOffset;
   const hardMin = family.parentRight + 1;
@@ -705,62 +713,99 @@ function buildRoutedLinks(layout, families, isHorizontal) {
  */
 export function routeLayoutLinks(
   layout,
-  { orientation = 'vertical', applyParallelLanes = true, parallelGap = MIN_PARALLEL_GAP } = {},
+  {
+    orientation = 'vertical',
+    applyParallelLanes = true,
+    parallelGap = MIN_PARALLEL_GAP,
+    routingPlan = null,
+  } = {},
 ) {
   const isHorizontal = orientation === 'horizontal';
   const families = assignFamilyLanes(buildParentFamilies(layout), isHorizontal);
   for (const family of families) {
     family.stemOffset = 0;
     family.busOffset = 0;
+    family.busAbsolute = null;
+    if (routingPlan?.laneByFamilyKey?.has(family.familyKey)) {
+      const lane = routingPlan.laneByFamilyKey.get(family.familyKey);
+      family.laneIndex = lane.laneIndex ?? family.laneIndex ?? 0;
+      if (Number.isFinite(lane.axis)) family.busAbsolute = lane.axis;
+    }
   }
 
-  // Pass 1: natural family-junction routes.
+  // Pass 1: family-junction routes (bus Y/X from routingPlan when present).
   let routed = buildRoutedLinks(layout, families, isHorizontal);
 
-  // Pass 2: separate near-parallel unrelated H/V corridors, then rebuild polylines
-  // so bends and connecting segments stay consistent (no broken stubs).
+  // Pass 2: separate near-parallel unrelated VERTICAL stems/drops.
+  // Horizontal buses are already assigned structured lanes via routingPlan;
+  // do not re-pack them into a fixed gap.
   if (applyParallelLanes) {
     const nodesById = new Map((layout.nodes || []).map((node) => [String(node.id), node]));
-    let { offsetXByFamily, offsetYByFamily } = assignParallelLanes(routed, {
+    const { offsetXByFamily, offsetYByFamily } = assignParallelLanes(routed, {
       gap: parallelGap,
       nodesById,
     });
 
-    const familyGapMeta = families.map((family) =>
-      isHorizontal
-        ? {
-            familyKey: family.familyKey,
-            parentBottom: family.parentRight,
-            childTop: family.childLeft,
-            naturalBusY: naturalHorizontalBusX(family),
+    // With a routingPlan, only apply stem (generation-crossing) offsets on the
+    // cross-axis of vertical/horizontal stems — never override planned bus axes.
+    let changed = false;
+    for (const family of families) {
+      if (isHorizontal) {
+        const stem = offsetYByFamily.get(family.familyKey);
+        if (stem) {
+          family.stemOffset = stem;
+          changed = true;
+        }
+        if (!routingPlan) {
+          const bus = offsetXByFamily.get(family.familyKey);
+          if (bus) {
+            family.busOffset = bus;
+            changed = true;
           }
-        : {
-            familyKey: family.familyKey,
-            parentBottom: family.parentBottom,
-            childTop: family.childTop,
-            naturalBusY: naturalVerticalBusY(family),
-          },
-    );
-
-    if (!isHorizontal && offsetYByFamily.size) {
-      offsetYByFamily = fitBusOffsetsToGenerationGaps(familyGapMeta, offsetYByFamily, parallelGap);
-    }
-    if (isHorizontal && offsetXByFamily.size) {
-      offsetXByFamily = fitBusOffsetsToGenerationGaps(familyGapMeta, offsetXByFamily, parallelGap);
-    }
-
-    if (offsetXByFamily.size || offsetYByFamily.size) {
-      for (const family of families) {
-        if (isHorizontal) {
-          family.stemOffset = offsetYByFamily.get(family.familyKey) || 0;
-          family.busOffset = offsetXByFamily.get(family.familyKey) || 0;
-        } else {
-          family.stemOffset = offsetXByFamily.get(family.familyKey) || 0;
-          family.busOffset = offsetYByFamily.get(family.familyKey) || 0;
+        }
+      } else {
+        const stem = offsetXByFamily.get(family.familyKey);
+        if (stem) {
+          family.stemOffset = stem;
+          changed = true;
+        }
+        if (!routingPlan) {
+          const bus = offsetYByFamily.get(family.familyKey);
+          if (bus) {
+            family.busOffset = bus;
+            changed = true;
+          }
         }
       }
-      routed = buildRoutedLinks(layout, families, isHorizontal);
     }
+
+    if (!routingPlan && (offsetXByFamily.size || offsetYByFamily.size)) {
+      const familyGapMeta = families.map((family) =>
+        isHorizontal
+          ? {
+              familyKey: family.familyKey,
+              parentBottom: family.parentRight,
+              childTop: family.childLeft,
+              naturalBusY: naturalHorizontalBusX({ ...family, busAbsolute: null, busOffset: 0 }),
+            }
+          : {
+              familyKey: family.familyKey,
+              parentBottom: family.parentBottom,
+              childTop: family.childTop,
+              naturalBusY: naturalVerticalBusY({ ...family, busAbsolute: null, busOffset: 0 }),
+            },
+      );
+      let fittedBus = isHorizontal ? offsetXByFamily : offsetYByFamily;
+      if (fittedBus.size) {
+        fittedBus = fitBusOffsetsToGenerationGaps(familyGapMeta, fittedBus, parallelGap);
+        for (const family of families) {
+          family.busOffset = fittedBus.get(family.familyKey) || 0;
+        }
+        changed = true;
+      }
+    }
+
+    if (changed) routed = buildRoutedLinks(layout, families, isHorizontal);
   }
 
   // Pass 3: line-jumps only for remaining true H×V crossings.

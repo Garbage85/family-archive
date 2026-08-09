@@ -3,9 +3,11 @@
  * Preview-wired via ?layout=prototype (PrototypeFamilyTreeChart).
  * Does not use Family Chart private APIs. Never writes coords to trees.data.
  *
- * Placement pipeline:
- *   household blocks → multi-candidate ordering (spouse-side + family affinity)
- *   → routing → parallel lanes → line-jumps for unavoidable crossings
+ * Four-phase pipeline:
+ *   A) cross-axis household placement (family sides, ordering, spouse side)
+ *   B) routing demand / lane conflict graph per generation gap
+ *   C) dynamic generation spacing from required lane counts
+ *   D) final routing (structured bus lanes → stem separation → jumps)
  */
 
 import { routeLayoutLinks } from './link-routing.js';
@@ -19,6 +21,14 @@ import {
   householdOrderingByGeneration,
   summarizeCandidateRow,
 } from './placement-metrics.js';
+import {
+  applyGenerationBaselines,
+  computeGenerationBaselines,
+  estimateRoutingDemand,
+  finalizeRoutingPlan,
+  ROUTING_EDGE_PADDING,
+  ROUTING_LANE_GAP,
+} from './routing-demand.js';
 
 function unique(ids) {
   return [...new Set((ids || []).map(String).filter(Boolean))];
@@ -273,6 +283,11 @@ function buildDraftLinks(visible, nodeById) {
   return draftLinks;
 }
 
+/**
+ * PHASE A→B→C→D for one placement candidate.
+ * Cross-axis order comes from the candidate; generation-axis is recomputed
+ * from routing demand so lanes never shrink into a fixed gap.
+ */
 function materializeCandidateLayout({
   visible,
   generation,
@@ -281,12 +296,16 @@ function materializeCandidateLayout({
   cardHeight,
   orientation,
 }) {
+  const isHorizontal = orientation === 'horizontal';
+  const cardAlong = isHorizontal ? cardWidth : cardHeight;
+  const cardAlongHalf = cardAlong / 2;
   const householdByMember = new Map();
   for (const household of candidate.households) {
     for (const memberId of household.memberIds) householdByMember.set(memberId, household);
   }
 
-  const nodes = visible
+  // Provisional nodes: cross-axis from Phase A, generation index attached.
+  const provisionalNodes = visible
     .map((person) => {
       const position = candidate.nodePositions.get(person.id) || { x: 0, y: 0 };
       const household = householdByMember.get(person.id);
@@ -303,26 +322,71 @@ function materializeCandidateLayout({
     })
     .sort((left, right) => left.id.localeCompare(right.id));
 
-  const nodeById = new Map(nodes.map((node) => [node.id, node]));
-  const draftLinks = buildDraftLinks(visible, nodeById);
+  const draftLinks = buildDraftLinks(
+    visible,
+    new Map(provisionalNodes.map((node) => [node.id, node])),
+  );
+
+  // PHASE B — lane demand from cross-axis spans (generation-axis not required).
+  const demand = estimateRoutingDemand({
+    nodes: provisionalNodes,
+    links: draftLinks,
+    orientation,
+  });
+
+  // PHASE C — whole generations move; card baselines from required lanes.
+  const baselines = computeGenerationBaselines({
+    generations: demand.generations,
+    requiredLaneCountByGap: demand.requiredLaneCountByGap,
+    cardAlongAxis: cardAlong,
+    centerGeneration: 0,
+  });
+  const finalPositions = applyGenerationBaselines(
+    candidate.nodePositions,
+    generation,
+    baselines,
+    isHorizontal,
+  );
+  const routingPlan = finalizeRoutingPlan(demand, {
+    baselines,
+    cardAlongHalf,
+    isHorizontal,
+  });
+
+  const nodes = provisionalNodes.map((node) => {
+    const position = finalPositions.get(node.id) || { x: node.x, y: node.y };
+    return { ...node, x: position.x, y: position.y };
+  });
+
+  // PHASE D — structured bus lanes, stem separation, jumps. Nodes stay fixed.
   const links = routeLayoutLinks(
     { nodes, links: draftLinks, households: candidate.households },
-    { orientation },
+    { orientation, routingPlan },
   );
+
+  // Keep household generation-axis metadata in sync with final baselines.
+  const households = candidate.households.map((household) => ({
+    ...household,
+    generation:
+      household.generation ??
+      Math.min(...household.memberIds.map((id) => generation.get(id) ?? 0)),
+  }));
 
   return {
     nodes,
     links,
-    households: candidate.households,
+    households,
     spouseSide: candidate.spouseSide,
     candidateId: candidate.candidateId,
     generationOrders: candidate.generationOrders,
+    routingPlan,
+    baselines: Object.fromEntries(baselines),
   };
 }
 
 /**
  * Household-first layout with multi-candidate placement optimization.
- * Coordinates are final before links are built; routing never moves nodes.
+ * After Phase C, node coordinates are final; routing never moves nodes.
  */
 export function layoutFamilyTree(
   people,
@@ -354,10 +418,12 @@ export function layoutFamilyTree(
 
   const isHorizontal = orientation === 'horizontal';
   const crossStep = isHorizontal ? levelSeparation : nodeSeparation;
+  // Provisional generation step for Phase A only (cross-axis is independent).
   const generationStep = isHorizontal ? nodeSeparation : levelSeparation;
   const cardCross = isHorizontal ? cardHeight : cardWidth;
   const gap = Math.max(0, crossStep - cardCross);
 
+  // PHASE A — cross-axis household candidates.
   const candidates = buildPlacementCandidates({
     households,
     generationMap: generation,
@@ -387,16 +453,24 @@ export function layoutFamilyTree(
     });
     layout.meta = {
       centerId: String(centerId),
+      orientation,
       spouseSide: candidate.spouseSide,
       branchOrderByGeneration: candidate.branchOrderByGeneration,
+      requiredLaneCountByGap: layout.routingPlan?.requiredLaneCountByGap || {},
+      routingGapHeightByGap: layout.routingPlan?.routingGapHeightByGap || {},
+      maxLaneCount: layout.routingPlan?.maxLaneCount || 0,
+      totalLaneCount: layout.routingPlan?.totalLaneCount || 0,
+      totalRoutingGapHeight: layout.routingPlan?.totalRoutingGapHeight || 0,
+      generationBaselines: layout.baselines || {},
+      routingConstants: { ROUTING_LANE_GAP, ROUTING_EDGE_PADDING },
     };
-    // Ranking metrics are canonical (no previousSnapshot) so cold === warm.
     const metrics = collectPlacementMetrics(people, layout, {
       expectedVisibleIds,
       households: layout.households,
       canonicalOrderKey,
       spouseSide: candidate.spouseSide,
       householdToBranch: candidate.householdToBranch,
+      routingPlan: layout.routingPlan,
     });
     metrics.spouseSide = candidate.spouseSide;
     metrics.candidateId = candidate.candidateId;
@@ -438,10 +512,12 @@ export function layoutFamilyTree(
           spouseSide: winner.candidate.spouseSide,
           householdToBranch: winner.candidate.householdToBranch,
           previousSnapshot,
+          routingPlan: winner.layout.routingPlan,
         },
       )
     : null;
 
+  const plan = winner.layout.routingPlan;
   const result = {
     nodes,
     links,
@@ -486,6 +562,15 @@ export function layoutFamilyTree(
       parallelLaneOverlap: winner.metrics.parallelLaneOverlap || 0,
       parallelGapViolations: winner.metrics.parallelGapViolations || 0,
       minUnrelatedParallelGap: winner.metrics.minUnrelatedParallelGap ?? null,
+      laneConflicts: winner.metrics.laneConflicts || 0,
+      routingOutsideGenerationGap: winner.metrics.routingOutsideGenerationGap || 0,
+      requiredLaneCountByGap: plan?.requiredLaneCountByGap || {},
+      routingGapHeightByGap: plan?.routingGapHeightByGap || {},
+      maxLaneCount: plan?.maxLaneCount || 0,
+      totalLaneCount: plan?.totalLaneCount || 0,
+      totalRoutingGapHeight: plan?.totalRoutingGapHeight || 0,
+      generationBaselines: winner.layout.baselines || {},
+      routingConstants: { ROUTING_LANE_GAP, ROUTING_EDGE_PADDING },
       coldWarmSignatureMismatch: 0,
     },
   };

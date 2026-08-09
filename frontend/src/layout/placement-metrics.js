@@ -36,6 +36,11 @@ import {
   countFamilySideViolations,
   countParentSiblingBranchSideViolations,
 } from './placement-optimizer.js';
+import {
+  countLaneConflicts,
+  findRoutingOutsideGenerationGap,
+  ROUTING_LANE_GAP,
+} from './routing-demand.js';
 
 function unique(ids) {
   return [...new Set((ids || []).map(String).filter(Boolean))];
@@ -92,6 +97,7 @@ export function collectPlacementMetrics(
     spouseSide = null,
     householdToBranch = null,
     previousSnapshot = null,
+    routingPlan = null,
   } = {},
 ) {
   const expected = expectedVisibleIds || (layout.nodes || []).map((node) => String(node.id));
@@ -141,11 +147,24 @@ export function collectPlacementMetrics(
     side,
   );
   const nodesById = new Map((layout.nodes || []).map((node) => [String(node.id), node]));
+  const orientation = layout.meta?.orientation || 'vertical';
   const parallelGaps = measureUnrelatedParallelGaps(layout.links, { nodesById });
   const parallelGapViolations = parallelGaps.parallelGapViolations;
   const minUnrelatedParallelGap = parallelGaps.minUnrelatedParallelGap;
   // Residual hard overlaps after lane assignment.
   const parallelLaneOverlap = findParallelLaneOverlaps(layout.links, { nodesById }).length;
+  const structuredLaneConflicts = countLaneConflicts(layout.links, {
+    orientation,
+    minGap: ROUTING_LANE_GAP,
+  });
+  const outsideGap = findRoutingOutsideGenerationGap(layout, { orientation });
+  const plan = routingPlan || {
+    requiredLaneCountByGap: layout.meta?.requiredLaneCountByGap,
+    routingGapHeightByGap: layout.meta?.routingGapHeightByGap,
+    maxLaneCount: layout.meta?.maxLaneCount,
+    totalLaneCount: layout.meta?.totalLaneCount,
+    totalRoutingGapHeight: layout.meta?.totalRoutingGapHeight,
+  };
 
   const growth = compareGrowthStability(
     previousSnapshot,
@@ -180,6 +199,14 @@ export function collectPlacementMetrics(
     parallelGapViolations,
     minUnrelatedParallelGap,
     minParallelGapRequired: MIN_PARALLEL_GAP,
+    laneConflicts: structuredLaneConflicts,
+    routingOutsideGenerationGap: outsideGap.length,
+    requiredLaneCountByGap: plan?.requiredLaneCountByGap || {},
+    routingGapHeightByGap: plan?.routingGapHeightByGap || {},
+    maxLaneCount: plan?.maxLaneCount || 0,
+    totalLaneCount: plan?.totalLaneCount || 0,
+    requiredLaneCountTotal: plan?.totalLaneCount || plan?.requiredLaneCountTotal || 0,
+    totalRoutingGapHeight: plan?.totalRoutingGapHeight || 0,
     coldWarmSignatureMismatch: 0,
     existingHouseholdsSideChanges: growth.existingHouseholdsSideChanges,
     existingBranchOrderInversions: growth.existingBranchOrderInversions,
@@ -244,6 +271,10 @@ export function summarizeCandidateRow(candidateId, metrics) {
     branchIntegrityViolations: metrics.branchIntegrityViolations,
     parentSiblingBranchSideViolations: metrics.parentSiblingBranchSideViolations,
     parallelLaneOverlap: metrics.parallelLaneOverlap,
+    laneConflicts: metrics.laneConflicts,
+    maxLaneCount: metrics.maxLaneCount,
+    totalLaneCount: metrics.totalLaneCount,
+    totalRoutingGapHeight: metrics.totalRoutingGapHeight,
     existingHouseholdsSideChanges: metrics.existingHouseholdsSideChanges,
     existingBranchOrderInversions: metrics.existingBranchOrderInversions,
     unexpectedCoupleFlip: metrics.unexpectedCoupleFlip,
