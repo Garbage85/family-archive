@@ -397,10 +397,89 @@ export function findUnrelatedLinkIntersections(layout) {
       hits.push({
         a: `${left.link.type}:${left.link.source}->${left.link.target}`,
         b: `${right.link.type}:${right.link.source}->${right.link.target}`,
+        familyA: left.familyKey,
+        familyB: right.familyKey,
       });
     }
   }
   return hits;
+}
+
+function pointXY(point) {
+  if (Array.isArray(point)) return { x: point[0], y: point[1] };
+  return { x: point.x, y: point.y };
+}
+
+export function findZeroLengthSegments(layout) {
+  const hits = [];
+  for (const link of layout.links || []) {
+    const points = link.points || [];
+    for (let i = 0; i < points.length - 1; i += 1) {
+      const a = pointXY(points[i]);
+      const b = pointXY(points[i + 1]);
+      if (Math.abs(a.x - b.x) < 1e-9 && Math.abs(a.y - b.y) < 1e-9) {
+        hits.push(`${link.type}:${link.source}->${link.target}#${i}`);
+      }
+    }
+  }
+  return hits;
+}
+
+function orientRaw(ax, ay, bx, by, cx, cy) {
+  const value = (by - ay) * (cx - bx) - (bx - ax) * (cy - by);
+  if (Math.abs(value) < 1e-9) return 0;
+  return value > 0 ? 1 : 2;
+}
+
+function segmentsCrossProperXY(a1, a2, b1, b2) {
+  const o1 = orientRaw(a1.x, a1.y, a2.x, a2.y, b1.x, b1.y);
+  const o2 = orientRaw(a1.x, a1.y, a2.x, a2.y, b2.x, b2.y);
+  const o3 = orientRaw(b1.x, b1.y, b2.x, b2.y, a1.x, a1.y);
+  const o4 = orientRaw(b1.x, b1.y, b2.x, b2.y, a2.x, a2.y);
+  return o1 !== o2 && o3 !== o4 && o1 !== 0 && o2 !== 0 && o3 !== 0 && o4 !== 0;
+}
+
+export function findSelfIntersectingPolylines(layout) {
+  const hits = [];
+  for (const link of layout.links || []) {
+    const points = (link.points || []).map(pointXY);
+    const segs = [];
+    for (let i = 0; i < points.length - 1; i += 1) {
+      const a = points[i];
+      const b = points[i + 1];
+      if (Math.abs(a.x - b.x) < 1e-9 && Math.abs(a.y - b.y) < 1e-9) continue;
+      segs.push({ a, b, index: i });
+    }
+    let selfHit = false;
+    for (let i = 0; i < segs.length && !selfHit; i += 1) {
+      for (let j = i + 1; j < segs.length; j += 1) {
+        if (j === i + 1) continue;
+        if (i === 0 && j === segs.length - 1) continue;
+        if (segmentsCrossProperXY(segs[i].a, segs[i].b, segs[j].a, segs[j].b)) {
+          selfHit = true;
+          break;
+        }
+      }
+    }
+    if (selfHit) hits.push(`${link.type}:${link.source}->${link.target}`);
+  }
+  return hits;
+}
+
+/** Stable signature of all link polylines for deterministic routing checks. */
+export function layoutRouteSignature(layout) {
+  return (layout.links || [])
+    .map((link) => {
+      const pts = (link.points || [])
+        .map((point) => {
+          const { x, y } = pointXY(point);
+          return `${Math.round(x * 1000) / 1000},${Math.round(y * 1000) / 1000}`;
+        })
+        .join(';');
+      return `${link.type}|${link.source}->${link.target}|${link.familyKey || ''}|${pts}`;
+    })
+    .sort()
+    .join('\n');
 }
 
 export function boundingBox(nodes) {
@@ -425,6 +504,8 @@ export function summarizeLayout(people, layout) {
   const collinearUnrelated = findOverlappingCollinearUnrelatedSegments(layout);
   const ambiguousLanes = findAmbiguousSharedLanes(layout);
   const unrelatedCrossings = findUnrelatedLinkIntersections(layout);
+  const zeroLength = findZeroLengthSegments(layout);
+  const selfIntersections = findSelfIntersectingPolylines(layout);
   const spouseLinks = (layout.links || []).filter((link) => link.type === 'spouse').length;
   const parentLinks = (layout.links || []).filter((link) => link.type === 'parent-child').length;
   return {
@@ -447,6 +528,9 @@ export function summarizeLayout(people, layout) {
     overlappingCollinearUnrelated: collinearUnrelated.length,
     ambiguousSharedLanes: ambiguousLanes.length,
     unrelatedLinkIntersections: unrelatedCrossings.length,
+    zeroLengthSegments: zeroLength.length,
+    selfIntersectingPolylines: selfIntersections.length,
+    routeSignature: layoutRouteSignature(layout),
     boundingBox: boundingBox(layout.nodes),
   };
 }

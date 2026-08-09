@@ -24,8 +24,12 @@ import {
   findMissingVisibleParentChildLinks,
   findMissingVisibleSpouseLinks,
   findOverlappingCollinearUnrelatedSegments,
+  findSelfIntersectingPolylines,
   findUnrelatedLinkIntersections,
+  findZeroLengthSegments,
+  layoutRouteSignature,
 } from '../src/layout/layout-validators.js';
+import { routingMetrics } from '../src/layout/link-routing.js';
 import { compareLayouts, scanPrototypeCenters } from './helpers/compare-layouts.js';
 
 const fixturePath = path.join(
@@ -323,6 +327,7 @@ test('gate: prototype centers p001..p010 have no lost nodes, overlaps, or missin
 
   for (const centerId of centerIds) {
     const layout = layoutFamilyTree(people, { centerId });
+    const layoutAgain = layoutFamilyTree(people, { centerId });
     assert.equal(findLinksThroughForeignCards(layout).length, 0, `${centerId} linksThroughCards`);
     assert.equal(
       findOverlappingCollinearUnrelatedSegments(layout).length,
@@ -330,6 +335,22 @@ test('gate: prototype centers p001..p010 have no lost nodes, overlaps, or missin
       `${centerId} collinear unrelated`,
     );
     assert.equal(findAmbiguousSharedLanes(layout).length, 0, `${centerId} ambiguous lanes`);
+    assert.equal(
+      findUnrelatedLinkIntersections(layout).length,
+      0,
+      `${centerId} unrelated crossings`,
+    );
+    assert.equal(findZeroLengthSegments(layout).length, 0, `${centerId} zero-length segments`);
+    assert.equal(
+      findSelfIntersectingPolylines(layout).length,
+      0,
+      `${centerId} self-intersecting polylines`,
+    );
+    assert.equal(
+      layoutRouteSignature(layout),
+      layoutRouteSignature(layoutAgain),
+      `${centerId} deterministic route signatures`,
+    );
   }
 });
 
@@ -353,8 +374,38 @@ test('family-junction routing keeps spouse links short and separates parent fami
   assert.equal(findLinksThroughForeignCards(layout).length, 0);
   assert.equal(findAmbiguousSharedLanes(layout).length, 0);
   assert.equal(findOverlappingCollinearUnrelatedSegments(layout).length, 0);
+  assert.equal(findUnrelatedLinkIntersections(layout).length, 0);
+  assert.equal(findZeroLengthSegments(layout).length, 0);
+  assert.equal(findSelfIntersectingPolylines(layout).length, 0);
 
-  const crossings = findUnrelatedLinkIntersections(layout);
+  const metrics = routingMetrics(layout.links);
+  const crossingsBefore = {
+    p001: 0,
+    p002: 0,
+    p003: 8,
+    p004: 0,
+    p005: 0,
+    p006: 8,
+    p007: 8,
+    p008: 8,
+    p009: 0,
+    p010: 8,
+  };
+  const centerIds = Array.from(
+    { length: 10 },
+    (_, index) => `p${String(index + 1).padStart(3, '0')}`,
+  );
+  const crossingReport = centerIds.map((centerId) => {
+    const centered = layoutFamilyTree(people, { centerId });
+    return {
+      centerId,
+      before: crossingsBefore[centerId],
+      after: findUnrelatedLinkIntersections(centered).length,
+      maxBends: routingMetrics(centered.links).maxBendsPerParentChild,
+      routingBounds: routingMetrics(centered.links).routingBounds,
+    };
+  });
+
   console.log(
     '\nP010 ROUTING METRICS\n',
     JSON.stringify(
@@ -367,11 +418,18 @@ test('family-junction routing keeps spouse links short and separates parent fami
         hasP009: layout.nodes.some((node) => node.id === 'p009'),
         linksThroughCards: 0,
         ambiguousSharedLanes: 0,
-        unrelatedLinkIntersections: crossings.length,
+        unrelatedLinkIntersections: 0,
+        maxBendsPerParentChild: metrics.maxBendsPerParentChild,
+        routingBounds: metrics.routingBounds,
         familyKeys: [...familyKeys].sort(),
+        crossingReport,
       },
       null,
       2,
     ),
   );
+
+  for (const row of crossingReport) {
+    assert.equal(row.after, 0, `${row.centerId} crossings after`);
+  }
 });
