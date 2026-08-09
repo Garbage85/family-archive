@@ -14,13 +14,16 @@
  * Single-parent family: stem from the parent card to the child bus.
  * Multi-spouse: each parent pair that has children gets its own junction.
  *
- * Unrelated family buses may cross; crossings are not kinship.
- * Crossings use SVG line-jumps on the horizontal segment.
- * Ambiguous shared collinear trunks across families are avoided via lane offsets.
- * Exterior overflow buses under the child row are forbidden.
+ * Pipeline after placement:
+ *   1) family-junction routes in the generation gap
+ *   2) parallel vertical lane separation for near-collinear unrelated stems
+ *   3) line-jumps only for remaining true H×V crossings
  *
+ * Exterior overflow buses under the child row are forbidden.
  * Coordinates are display-only and must never be written to trees.data.
  */
+
+import { assignParallelVerticalLanes, VERTICAL_LANE_GAP } from './parallel-lanes.js';
 
 export const CROSSING_STYLE = 'line-jump';
 export const LINE_JUMP_RADIUS = 10;
@@ -118,8 +121,15 @@ export function buildParentFamilies(layout) {
   );
 }
 
-function familyCrossesStem(family, other) {
+function familyCrossesStem(family, other, isHorizontal = false) {
   if (family.key === other.key) return false;
+  if (isHorizontal) {
+    // In horizontal orientation the cross-axis is Y; a shared bus X is ambiguous
+    // when another family's parent mid-Y falls inside this family's child/parent Y span.
+    const spanMinY = Math.min(family.parentMidY, ...family.children.map((child) => child.y));
+    const spanMaxY = Math.max(family.parentMidY, ...family.children.map((child) => child.y));
+    return other.parentMidY > spanMinY + 1e-6 && other.parentMidY < spanMaxY - 1e-6;
+  }
   return other.parentMidX > family.spanMinX + 1e-6 && other.parentMidX < family.spanMaxX - 1e-6;
 }
 
@@ -127,7 +137,7 @@ function familyCrossesStem(family, other) {
  * Distinct lane ranks inside the generation gap so unrelated families do not
  * share one collinear bus trunk. Crossings between lanes remain allowed.
  */
-export function assignFamilyLanes(families, _isHorizontal = false) {
+export function assignFamilyLanes(families, isHorizontal = false) {
   const n = families.length;
   if (!n) return families;
 
@@ -139,7 +149,7 @@ export function assignFamilyLanes(families, _isHorizontal = false) {
     guard += 1;
     for (const left of families) {
       for (const right of families) {
-        if (!familyCrossesStem(left, right)) continue;
+        if (!familyCrossesStem(left, right, isHorizontal)) continue;
         const need = rank.get(right.key) + 1;
         if (rank.get(left.key) < need) {
           rank.set(left.key, need);
@@ -224,20 +234,25 @@ export function coupleSpouseJunction(family) {
  * junction (not at each parent card), so parents connect through the spouse link.
  */
 export function routeFamilyParentChild(family, parent, child, isHorizontal) {
+  const stemOffset = family.stemOffset || 0;
+
   if (isHorizontal) {
     const busX = horizontalBusX(family);
+    const corridorY = roundCoord((family.isCouple ? family.parentMidY : parent.y) + stemOffset);
     if (family.isCouple) {
       const junction = coupleSpouseJunction(family);
       return simplifyPoints([
         pt(junction.x, junction.y),
-        pt(busX, junction.y),
+        pt(junction.x, corridorY),
+        pt(busX, corridorY),
         pt(busX, child.y),
         pt(child.x - half(child, 'x'), child.y),
       ]);
     }
     return simplifyPoints([
       pt(parent.x + half(parent, 'x'), parent.y),
-      pt(busX, parent.y),
+      pt(parent.x + half(parent, 'x'), corridorY),
+      pt(busX, corridorY),
       pt(busX, child.y),
       pt(child.x - half(child, 'x'), child.y),
     ]);
@@ -246,18 +261,22 @@ export function routeFamilyParentChild(family, parent, child, isHorizontal) {
   const busY = verticalBusY(family);
   if (family.isCouple) {
     const junction = coupleSpouseJunction(family);
+    const stemX = roundCoord(junction.x + stemOffset);
     return simplifyPoints([
       pt(junction.x, junction.y),
-      pt(junction.x, busY),
+      pt(stemX, junction.y),
+      pt(stemX, busY),
       pt(child.x, busY),
       pt(child.x, child.y - half(child, 'y')),
     ]);
   }
 
   // Single parent: stem from the parent card to the child bus.
+  const stemX = roundCoord(parent.x + stemOffset);
   return simplifyPoints([
     pt(parent.x, parent.y + half(parent, 'y')),
-    pt(parent.x, busY),
+    pt(stemX, parent.y + half(parent, 'y')),
+    pt(stemX, busY),
     pt(child.x, busY),
     pt(child.x, child.y - half(child, 'y')),
   ]);
@@ -565,14 +584,8 @@ function pointOnSegment(point, a, b, pad = EPS) {
   return false;
 }
 
-/**
- * Rebuild link polylines from final node coordinates.
- * Call only after nodes are placed; never mutates people / trees.data.
- */
-export function routeLayoutLinks(layout, { orientation = 'vertical' } = {}) {
+function buildRoutedLinks(layout, families, isHorizontal) {
   const byId = new Map((layout.nodes || []).map((node) => [String(node.id), node]));
-  const isHorizontal = orientation === 'horizontal';
-  const families = assignFamilyLanes(buildParentFamilies(layout), isHorizontal);
   const familyByParentChild = new Map();
   const familyByCoupleKey = new Map();
   for (const family of families) {
@@ -584,7 +597,7 @@ export function routeLayoutLinks(layout, { orientation = 'vertical' } = {}) {
     }
   }
 
-  const routed = (layout.links || []).map((link) => {
+  return (layout.links || []).map((link) => {
     const source = byId.get(String(link.source));
     const target = byId.get(String(link.target));
     if (!source || !target) return { ...link, points: link.points || [], jumps: [] };
@@ -598,6 +611,7 @@ export function routeLayoutLinks(layout, { orientation = 'vertical' } = {}) {
           ...link,
           familyKey: couple.familyKey,
           laneIndex: couple.laneIndex,
+          laneOffsetX: couple.stemOffset || 0,
           junction,
           points,
         };
@@ -630,7 +644,7 @@ export function routeLayoutLinks(layout, { orientation = 'vertical' } = {}) {
     const busY = isHorizontal ? null : verticalBusY(family);
     const busX = isHorizontal ? horizontalBusX(family) : null;
     const singleParent = family.parents[0];
-    const junction = family.isCouple
+    const baseJunction = family.isCouple
       ? coupleSpouseJunction(family)
       : isHorizontal
         ? {
@@ -643,18 +657,50 @@ export function routeLayoutLinks(layout, { orientation = 'vertical' } = {}) {
             y: roundCoord(singleParent.y + half(singleParent, 'y')),
             kind: 'single-parent-junction',
           };
+    const junction = family.isCouple
+      ? baseJunction
+      : isHorizontal
+        ? { ...baseJunction, y: roundCoord(baseJunction.y + (family.stemOffset || 0)) }
+        : { ...baseJunction, x: roundCoord(baseJunction.x + (family.stemOffset || 0)) };
 
     return {
       ...link,
       familyKey: family.familyKey,
       laneIndex: family.laneIndex,
+      laneOffsetX: family.stemOffset || 0,
       busMode: 'gap',
       junction,
       bus: isHorizontal ? { x: busX, y: null } : { x: null, y: busY },
       points: routeFamilyParentChild(family, source, target, isHorizontal),
     };
   });
+}
 
+/**
+ * Rebuild link polylines from final node coordinates.
+ * Call only after nodes are placed; never mutates people / trees.data.
+ */
+export function routeLayoutLinks(layout, { orientation = 'vertical' } = {}) {
+  const isHorizontal = orientation === 'horizontal';
+  const families = assignFamilyLanes(buildParentFamilies(layout), isHorizontal);
+  for (const family of families) family.stemOffset = 0;
+
+  // Pass 1: natural family-junction routes (horizontal bus lanes already assigned).
+  let routed = buildRoutedLinks(layout, families, isHorizontal);
+
+  // Pass 2: separate coincident / near-collinear unrelated generation corridors.
+  const offsets = assignParallelVerticalLanes(routed, {
+    gap: VERTICAL_LANE_GAP,
+    orientation: isHorizontal ? 'horizontal' : 'vertical',
+  });
+  if (offsets.size) {
+    for (const family of families) {
+      family.stemOffset = offsets.get(family.familyKey) || 0;
+    }
+    routed = buildRoutedLinks(layout, families, isHorizontal);
+  }
+
+  // Pass 3: line-jumps only for remaining true H×V crossings.
   return annotateLineJumps(routed);
 }
 
@@ -741,6 +787,10 @@ export function routingMetrics(links) {
 export function findExteriorParentChildDetours(layout) {
   const byId = new Map((layout.nodes || []).map((node) => [String(node.id), node]));
   const hits = [];
+  const isHorizontal = (layout.links || []).some(
+    (link) => link.type === 'parent-child' && link.bus && link.bus.x != null && link.bus.y == null,
+  );
+
   for (const link of layout.links || []) {
     if (link.type !== 'parent-child') continue;
     if (link.busMode && link.busMode !== 'gap') {
@@ -753,6 +803,52 @@ export function findExteriorParentChildDetours(layout) {
     const parent = byId.get(String(link.source));
     const child = byId.get(String(link.target));
     if (!parent || !child) continue;
+
+    if (isHorizontal) {
+      const childFar = child.x + half(child, 'x');
+      const childLeft = child.x - half(child, 'x');
+      for (const point of link.points || []) {
+        const x = point[0];
+        if (x > childFar + EPS) {
+          hits.push({
+            link: `${link.source}->${link.target}`,
+            reason: 'point-beyond-child-row',
+            x,
+            childFar,
+          });
+          break;
+        }
+        if (child.x >= parent.x && x < parent.x - half(parent, 'x') - LANE_GAP) {
+          hits.push({
+            link: `${link.source}->${link.target}`,
+            reason: 'point-before-parent-row',
+            x,
+          });
+          break;
+        }
+      }
+      const points = link.points || [];
+      for (let i = 0; i < points.length - 1; i += 1) {
+        const a = points[i];
+        const b = points[i + 1];
+        if (!almostEq(a[0], b[0])) continue;
+        const x = a[0];
+        const span = Math.abs(b[1] - a[1]);
+        if (span < half(child, 'y')) continue;
+        // Vertical bus corridor must stay left of child attach (generation gap).
+        if (child.x >= parent.x && x > childLeft + EPS) {
+          hits.push({
+            link: `${link.source}->${link.target}`,
+            reason: 'vertical-bus-past-child-left',
+            x,
+            childLeft,
+          });
+          break;
+        }
+      }
+      continue;
+    }
+
     const childFar = child.y + half(child, 'y');
     const childTop = child.y - half(child, 'y');
     for (const point of link.points || []) {

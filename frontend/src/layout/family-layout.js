@@ -2,9 +2,19 @@
  * Household-based layout prototype for Family Archive.
  * Preview-wired via ?layout=prototype (PrototypeFamilyTreeChart).
  * Does not use Family Chart private APIs. Never writes coords to trees.data.
+ *
+ * Placement pipeline:
+ *   household blocks → multi-candidate ordering (spouse-side + family affinity)
+ *   → routing → parallel lanes → line-jumps for unavoidable crossings
  */
 
 import { routeLayoutLinks } from './link-routing.js';
+import { buildPlacementCandidates, compareCandidateScores } from './placement-optimizer.js';
+import {
+  collectPlacementMetrics,
+  householdOrderingByGeneration,
+  summarizeCandidateRow,
+} from './placement-metrics.js';
 
 function unique(ids) {
   return [...new Set((ids || []).map(String).filter(Boolean))];
@@ -202,100 +212,7 @@ export function buildHouseholds(people) {
   return households.sort((left, right) => left.id.localeCompare(right.id));
 }
 
-function placeCross(index, cardSize, gap) {
-  return index * (cardSize + gap);
-}
-
-/**
- * Household-first layout. Coordinates are final before links are built.
- */
-export function layoutFamilyTree(
-  people,
-  {
-    centerId,
-    cardWidth = 184,
-    cardHeight = 170,
-    orientation = 'vertical',
-    nodeSeparation = 236,
-    levelSeparation = 224,
-    ancestryDepth = 8,
-    progenyDepth = 8,
-  } = {},
-) {
-  if (!Array.isArray(people) || !people.length) {
-    return { nodes: [], links: [], households: [], meta: { centerId, orientation } };
-  }
-
-  const visible = selectVisiblePeople(people, centerId, { ancestryDepth, progenyDepth });
-  const generation = assignGenerations(visible, centerId);
-  const households = buildHouseholds(visible);
-  const householdByMember = new Map();
-  for (const household of households) {
-    for (const memberId of household.memberIds) householdByMember.set(memberId, household);
-  }
-
-  const isHorizontal = orientation === 'horizontal';
-  const crossStep = isHorizontal ? levelSeparation : nodeSeparation;
-  const generationStep = isHorizontal ? nodeSeparation : levelSeparation;
-  const cardCross = isHorizontal ? cardHeight : cardWidth;
-  const gap = Math.max(0, crossStep - cardCross);
-
-  const householdsByGeneration = new Map();
-  for (const household of households) {
-    const g = Math.min(...household.memberIds.map((id) => generation.get(id) ?? 0));
-    if (!householdsByGeneration.has(g)) householdsByGeneration.set(g, []);
-    householdsByGeneration.get(g).push(household);
-  }
-
-  const nodePositions = new Map();
-
-  for (const g of [...householdsByGeneration.keys()].sort((left, right) => left - right)) {
-    const row = householdsByGeneration.get(g);
-    // Stable order: households with a blood child toward center first, then id.
-    row.sort((left, right) => left.id.localeCompare(right.id));
-
-    const widths = row.map((household) => household.size * cardCross + (household.size - 1) * gap);
-    const total = widths.reduce((sum, width) => sum + width, 0) + Math.max(0, row.length - 1) * gap;
-    let cursor = -total / 2;
-
-    for (let index = 0; index < row.length; index += 1) {
-      const household = row[index];
-      const width = widths[index];
-      const start = cursor;
-      household.memberIds.forEach((memberId, memberIndex) => {
-        const cross = start + placeCross(memberIndex, cardCross, gap) + cardCross / 2;
-        const genAxis = g * generationStep;
-        if (isHorizontal) {
-          nodePositions.set(memberId, { x: genAxis, y: cross });
-        } else {
-          nodePositions.set(memberId, { x: cross, y: genAxis });
-        }
-      });
-      household.x0 = start;
-      household.x1 = start + width;
-      household.generation = g;
-      cursor += width + gap;
-    }
-  }
-
-  const nodes = visible
-    .map((person) => {
-      const position = nodePositions.get(person.id) || { x: 0, y: 0 };
-      const household = householdByMember.get(person.id);
-      return {
-        id: person.id,
-        x: position.x,
-        y: position.y,
-        generation: generation.get(person.id) ?? 0,
-        householdId: household?.id,
-        gender: person.data?.gender || '',
-        width: cardWidth,
-        height: cardHeight,
-      };
-    })
-    .sort((left, right) => left.id.localeCompare(right.id));
-
-  const nodeById = new Map(nodes.map((node) => [node.id, node]));
+function buildDraftLinks(visible, nodeById) {
   const draftLinks = [];
   const spouseSeen = new Set();
   const parentSeen = new Set();
@@ -332,18 +249,147 @@ export function layoutFamilyTree(
     const rightKey = `${right.type}:${right.source}:${right.target}`;
     return leftKey.localeCompare(rightKey);
   });
+  return draftLinks;
+}
 
-  // Placement is final; routing never moves nodes.
-  const links = routeLayoutLinks({ nodes, links: draftLinks, households }, { orientation });
+function materializeCandidateLayout({
+  visible,
+  generation,
+  candidate,
+  cardWidth,
+  cardHeight,
+  orientation,
+}) {
+  const householdByMember = new Map();
+  for (const household of candidate.households) {
+    for (const memberId of household.memberIds) householdByMember.set(memberId, household);
+  }
+
+  const nodes = visible
+    .map((person) => {
+      const position = candidate.nodePositions.get(person.id) || { x: 0, y: 0 };
+      const household = householdByMember.get(person.id);
+      return {
+        id: person.id,
+        x: position.x,
+        y: position.y,
+        generation: generation.get(person.id) ?? 0,
+        householdId: household?.id,
+        gender: person.data?.gender || '',
+        width: cardWidth,
+        height: cardHeight,
+      };
+    })
+    .sort((left, right) => left.id.localeCompare(right.id));
+
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
+  const draftLinks = buildDraftLinks(visible, nodeById);
+  const links = routeLayoutLinks(
+    { nodes, links: draftLinks, households: candidate.households },
+    { orientation },
+  );
 
   return {
     nodes,
     links,
-    households: households.map((household) => ({
+    households: candidate.households,
+    spouseSide: candidate.spouseSide,
+    candidateId: candidate.candidateId,
+    generationOrders: candidate.generationOrders,
+  };
+}
+
+/**
+ * Household-first layout with multi-candidate placement optimization.
+ * Coordinates are final before links are built; routing never moves nodes.
+ */
+export function layoutFamilyTree(
+  people,
+  {
+    centerId,
+    cardWidth = 184,
+    cardHeight = 170,
+    orientation = 'vertical',
+    nodeSeparation = 236,
+    levelSeparation = 224,
+    ancestryDepth = 8,
+    progenyDepth = 8,
+    returnCandidates = false,
+  } = {},
+) {
+  if (!Array.isArray(people) || !people.length) {
+    return { nodes: [], links: [], households: [], meta: { centerId, orientation } };
+  }
+
+  const visible = selectVisiblePeople(people, centerId, { ancestryDepth, progenyDepth });
+  const generation = assignGenerations(visible, centerId);
+  const households = buildHouseholds(visible);
+  const peopleById = personMap(visible);
+
+  const isHorizontal = orientation === 'horizontal';
+  const crossStep = isHorizontal ? levelSeparation : nodeSeparation;
+  const generationStep = isHorizontal ? nodeSeparation : levelSeparation;
+  const cardCross = isHorizontal ? cardHeight : cardWidth;
+  const gap = Math.max(0, crossStep - cardCross);
+
+  const candidates = buildPlacementCandidates({
+    households,
+    generationMap: generation,
+    peopleById,
+    centerId,
+    cardCross,
+    gap,
+    generationStep,
+    isHorizontal,
+  });
+
+  const expectedVisibleIds = visible.map((person) => person.id);
+  const canonicalOrderKey = [...households]
+    .sort((a, b) => a.id.localeCompare(b.id))
+    .map((household) => household.id)
+    .join('|');
+
+  const scored = [];
+  for (const candidate of candidates) {
+    const layout = materializeCandidateLayout({
+      visible,
+      generation,
+      candidate,
+      cardWidth,
+      cardHeight,
+      orientation,
+    });
+    const metrics = collectPlacementMetrics(people, layout, {
+      expectedVisibleIds,
+      households: layout.households,
+      canonicalOrderKey,
+    });
+    metrics.spouseSide = candidate.spouseSide;
+    metrics.candidateId = candidate.candidateId;
+    scored.push({ candidate, layout, metrics });
+  }
+
+  scored.sort((left, right) =>
+    compareCandidateScores(
+      { ...left.metrics, candidateId: left.candidate.candidateId },
+      { ...right.metrics, candidateId: right.candidate.candidateId },
+    ),
+  );
+
+  const winner = scored[0];
+  const nodes = winner.layout.nodes;
+  const links = winner.layout.links;
+  const placedHouseholds = winner.layout.households;
+
+  const result = {
+    nodes,
+    links,
+    households: placedHouseholds.map((household) => ({
       id: household.id,
       memberIds: household.memberIds,
       size: household.size,
       generation: household.generation,
+      side: household.side,
       x0: household.x0,
       x1: household.x1,
     })),
@@ -356,6 +402,25 @@ export function layoutFamilyTree(
       levelSeparation,
       visibleCount: nodes.length,
       inputCount: people.length,
+      spouseSide: winner.candidate.spouseSide,
+      candidateId: winner.candidate.candidateId,
+      generationOrders: winner.candidate.generationOrders,
+      householdOrdering: householdOrderingByGeneration(placedHouseholds),
+      placementCost: winner.metrics.totalCost,
+      hardViolations: winner.metrics.hardViolations,
+      crossings: winner.metrics.crossings,
+      jumps: winner.metrics.jumps,
     },
   };
+
+  if (returnCandidates) {
+    result.meta.candidates = scored.map((entry) =>
+      summarizeCandidateRow(entry.candidate.candidateId, {
+        ...entry.metrics,
+        spouseSide: entry.candidate.spouseSide,
+      }),
+    );
+  }
+
+  return result;
 }

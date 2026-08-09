@@ -34,7 +34,6 @@ import {
   findUnrelatedLinkIntersections,
   findZeroLengthSegments,
   layoutRouteSignature,
-  uniqueRenderedJumpPoints,
   uniqueUnrelatedCrossingPoints,
 } from '../src/layout/layout-validators.js';
 import {
@@ -432,26 +431,31 @@ test('family-junction routing attaches child bus to spouse junction', async () =
 
   const crossings = findUnrelatedLinkIntersections(layout);
   const metrics = routingMetrics(layout.links);
-  assert.ok(crossings.length > 0, 'full p010 graph is expected to have unrelated crossings');
-  assert.ok(metrics.lineJumpCount > 0, 'horizontal buses receive line-jumps at crossings');
+  // Placement optimizer should prefer family-side order that removes the old
+  // p001+p002 × p004+p005 tangle; jumps remain only for unavoidable crossings.
+  assert.equal(crossings.length, 0, 'optimized p010 placement should avoid unrelated crossings');
+  assert.equal(metrics.uniqueRenderedJumps, 0);
+  assert.equal(layout.meta.spouseSide, 'left');
+  assert.equal(layout.meta.candidateId, 'spouse-left');
 
-  // before (parallel parent-bottom magistral): 33 PC segments, bounds height 54
   const before = {
     parentChildSegments: 33,
     familyJunctions: 3,
-    crossings: 8,
-    jumps: 4,
+    crossings: 1,
+    jumps: 1,
     missedJumps: 0,
     maxBends: 3,
-    routingBounds: { width: 944, height: 54 },
+    note: 'id-sorted household rows before placement optimizer',
   };
   const after = {
     parentChildSegments: countParentChildSegments(layout.links),
     familyJunctions: countFamilyJunctions(layout.links),
     crossings: crossings.length,
-    jumps: metrics.lineJumpCount,
+    jumps: metrics.uniqueRenderedJumps,
     missedJumps: findUnrelatedCrossingsWithoutJump(layout).length,
     maxBends: metrics.maxBendsPerParentChild,
+    spouseSide: layout.meta.spouseSide,
+    candidateId: layout.meta.candidateId,
     routingBounds: metrics.routingBounds,
   };
 
@@ -470,6 +474,7 @@ test('family-junction routing attaches child bus to spouse junction', async () =
         parentChildLinks: parentLinks.length,
         spouseLinks: spouseLinks.length,
         familyKeys: [...familyKeys].sort(),
+        householdOrdering: layout.meta.householdOrdering,
       },
       null,
       2,
@@ -480,6 +485,7 @@ test('family-junction routing attaches child bus to spouse junction', async () =
     after.parentChildSegments < before.parentChildSegments,
     'unified junction should reduce parent-child segments',
   );
+  assert.ok(after.crossings < before.crossings, 'optimizer should reduce crossings vs id-sort');
 });
 
 test('regression: exclusive detector missed bend/endpoint crossings (root cause)', () => {
@@ -543,36 +549,20 @@ test('regression: exclusive detector missed bend/endpoint crossings (root cause)
   assert.match(pointsToSvgPath(over.points, over.jumps), /A/);
 });
 
-test('regression: live p001+p002 × p004+p005 crossing has jump (p003/p010)', async () => {
+test('regression: optimizer removes p001+p002 × p004+p005 tangle for couple centers', async () => {
   const fixture = await loadFixture();
   const people = loadStructuralPeople(fixture);
   for (const centerId of ['p010', 'p003']) {
-    const layout = layoutFamilyTree(people, { centerId });
+    const layout = layoutFamilyTree(people, { centerId, returnCandidates: true });
     const sites = uniqueUnrelatedCrossingPoints(layout.links).filter((site) => {
       const keys = [site.horizontalFamilyKey, site.verticalFamilyKey].sort();
       return keys[0] === 'fam:p001+p002' && keys[1] === 'fam:p004+p005';
     });
-    assert.ok(sites.length > 0, `${centerId}: live family pair must cross`);
-
-    const report = sites.map((site) => ({
-      centerId,
-      horizontalFamilyKey: site.horizontalFamilyKey,
-      verticalFamilyKey: site.verticalFamilyKey,
-      horizontalSegId: site.horizontalSegId,
-      verticalSegId: site.verticalSegId,
-      intersection: { x: site.x, y: site.y },
-      kind: site.kind,
-      classification: site.classification,
-    }));
-    console.log('\nLIVE CROSSING DIAGNOSTIC\n', JSON.stringify(report, null, 2));
-
-    for (const site of sites) {
-      assert.equal(site.classification, 'crossing');
-      const hasJump = uniqueRenderedJumpPoints(layout.links).some(
-        (jump) => Math.abs(jump.x - site.x) < 1.5 && Math.abs(jump.y - site.y) < 1.5,
-      );
-      assert.ok(hasJump, `${centerId}: missing jump at (${site.x},${site.y}) kind=${site.kind}`);
-    }
+    assert.equal(
+      sites.length,
+      0,
+      `${centerId}: family-side placement should avoid this historic crossing`,
+    );
 
     const parity = assertCrossingJumpParity(layout);
     assert.equal(parity.missedJumps, 0, `${centerId} missedJumps`);
@@ -582,8 +572,31 @@ test('regression: live p001+p002 × p004+p005 crossing has jump (p003/p010)', as
       parity.renderedLineJumps,
       `${centerId} parity`,
     );
+    assert.equal(layout.meta.hardViolations, 0);
+    assert.equal(layout.meta.crossings, 0);
 
-    // Every horizontal over-path that crosses must render an arc.
+    // Geometric order keeps spouse continuity: p003 left of p010 for both centers.
+    const x = Object.fromEntries(layout.nodes.map((node) => [node.id, node.x]));
+    assert.ok(x.p003 < x.p010, `${centerId}: p003 should stay left of p010`);
+
+    console.log(
+      '\nCOUPLE CENTER PLACEMENT\n',
+      JSON.stringify(
+        {
+          centerId,
+          spouseSide: layout.meta.spouseSide,
+          candidateId: layout.meta.candidateId,
+          candidates: layout.meta.candidates,
+          householdOrdering: layout.meta.householdOrdering,
+          crossings: layout.meta.crossings,
+          jumps: layout.meta.jumps,
+        },
+        null,
+        2,
+      ),
+    );
+
+    // If a future topology reintroduces a true H×V crossing, jumps must still render.
     for (const link of layout.links) {
       if (!(link.jumps || []).length) continue;
       assert.match(

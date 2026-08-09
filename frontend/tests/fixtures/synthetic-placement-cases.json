@@ -1,0 +1,586 @@
+{
+  "version": 1,
+  "kind": "synthetic-placement-cases",
+  "cases": [
+    {
+      "id": "couple-both-parents",
+      "description": "center + spouse + both parent couples",
+      "centerId": "c001",
+      "people": [
+        {
+          "id": "c001",
+          "data": { "gender": "M" },
+          "rels": { "parents": ["c003", "c004"], "spouses": ["c002"], "children": [] }
+        },
+        {
+          "id": "c002",
+          "data": { "gender": "F" },
+          "rels": { "parents": ["c005", "c006"], "spouses": ["c001"], "children": [] }
+        },
+        {
+          "id": "c003",
+          "data": { "gender": "M" },
+          "rels": { "parents": [], "spouses": ["c004"], "children": ["c001"] }
+        },
+        {
+          "id": "c004",
+          "data": { "gender": "F" },
+          "rels": { "parents": [], "spouses": ["c003"], "children": ["c001"] }
+        },
+        {
+          "id": "c005",
+          "data": { "gender": "M" },
+          "rels": { "parents": [], "spouses": ["c006"], "children": ["c002"] }
+        },
+        {
+          "id": "c006",
+          "data": { "gender": "F" },
+          "rels": { "parents": [], "spouses": ["c005"], "children": ["c002"] }
+        }
+      ]
+    },
+    {
+      "id": "siblings-with-spouses",
+      "description": "center with sibling households that include spouses",
+      "centerId": "s001",
+      "people": [
+        {
+          "id": "s001",
+          "data": { "gender": "M" },
+          "rels": { "parents": ["s010", "s011"], "spouses": ["s002"], "children": [] }
+        },
+        {
+          "id": "s002",
+          "data": { "gender": "F" },
+          "rels": { "parents": [], "spouses": ["s001"], "children": [] }
+        },
+        {
+          "id": "s003",
+          "data": { "gender": "M" },
+          "rels": { "parents": ["s010", "s011"], "spouses": ["s004"], "children": [] }
+        },
+        {
+          "id": "s004",
+          "data": { "gender": "F" },
+          "rels": { "parents": [], "spouses": ["s003"], "children": [] }
+        },
+        {
+          "id": "s005",
+          "data": { "gender": "F" },
+          "rels": { "parents": ["s010", "s011"], "spouses": ["s006"], "children": [] }
+        },
+        {
+          "id": "s006",
+          "data": { "gender": "M" },
+          "rels": { "parents": [], "spouses": ["s005"], "children": [] }
+        },
+        {
+          "id": "s010",
+          "data": { "gender": "M" },
+          "rels": { "parents": [], "spouses": ["s011"], "children": ["s001", "s003", "s005"] }
+        },
+        {
+          "id": "s011",
+          "data": { "gender": "F" },
+          "rels": { "parents": [], "spouses": ["s010"], "children": ["s001", "s003", "s005"] }
+        }
+      ]
+    },
+    {
+      "id": "sibling-spouse-parent",
+      "description": "sibling spouse plus that spouse's direct parent",
+      "centerId": "i001",
+      "people": [
+        {
+          "id": "i001",
+          "data": { "gender": "M" },
+          "rels": { "parents": ["i010", "i011"], "spouses": [], "children": [] }
+        },
+        {
+          "id": "i002",
+          "data": { "gender": "M" },
+          "rels": { "parents": ["i010", "i011"], "spouses": ["i003"], "children": [] }
+        },
+        {
+          "id": "i003",
+          "data": { "gender": "F" },
+          "rels": { "parents": ["i020"], "spouses": ["i002"], "children": [] }
+        },
+        {
+          "id": "i010",
+          "data": { "gender": "M" },
+          "rels": { "parents": [], "spouses": ["i011"], "children": ["i001", "i002"] }
+        },
+        {
+          "id": "i011",
+          "data": { "gender": "F" },
+          "rels": { "parents": [], "spouses": ["i010"], "children": ["i001", "i002"] }
+        },
+        {
+          "id": "i020",
+          "data": { "gender": "M" },
+          "rels": { "parents": [], "spouses": [], "children": ["i003"] }
+        }
+      ]
+    },
+    {
+      "id": "crossing-prone-branches",
+      "description": "two family branches that cross under naive id order",
+      "centerId": "x001",
+      "people": [
+        {
+          "id": "x001",
+          "data": { "gender": "M" },
+          "rels": { "parents": ["x010", "x011"], "spouses": ["x002"], "children": [] }
+        },
+        {
+          "id": "x002",
+          "data": { "gender": "F" },
+          "rels": { "parents": ["x020", "x021"], "spouses": ["x001"], "children": [] }
+        },
+        {
+          "id": "x003",
+          "data": { "gender": "M" },
+          "rels": { "parents": ["x010", "x011"], "spouses": [], "children": [] }
+        },
+        {
+          "id": "x004",
+          "data": { "gender": "F" },
+          "rels": { "parents": ["x020", "x021"], "spouses": [], "children": [] }
+        },
+        {
+          "id": "x010",
+          "data": { "gender": "M" },
+          "rels": { "parents": [], "spouses": ["x011"], "children": ["x001", "x003"] }
+        },
+        {
+          "id": "x011",
+          "data": { "gender": "F" },
+          "rels": { "parents": [], "spouses": ["x010"], "children": ["x001", "x003"] }
+        },
+        {
+          "id": "x020",
+          "data": { "gender": "M" },
+          "rels": { "parents": [], "spouses": ["x021"], "children": ["x002", "x004"] }
+        },
+        {
+          "id": "x021",
+          "data": { "gender": "F" },
+          "rels": { "parents": [], "spouses": ["x020"], "children": ["x002", "x004"] }
+        }
+      ]
+    },
+    {
+      "id": "coincident-verticals",
+      "description": "unrelated single-parent stems that can share X under poor placement",
+      "centerId": "v001",
+      "people": [
+        {
+          "id": "v001",
+          "data": { "gender": "M" },
+          "rels": { "parents": ["v010"], "spouses": ["v002"], "children": [] }
+        },
+        {
+          "id": "v002",
+          "data": { "gender": "F" },
+          "rels": { "parents": ["v020"], "spouses": ["v001"], "children": [] }
+        },
+        {
+          "id": "v010",
+          "data": { "gender": "M" },
+          "rels": { "parents": [], "spouses": [], "children": ["v001"] }
+        },
+        {
+          "id": "v020",
+          "data": { "gender": "M" },
+          "rels": { "parents": [], "spouses": [], "children": ["v002"] }
+        }
+      ]
+    },
+    {
+      "id": "near-collinear-verticals",
+      "description": "near-collinear unrelated vertical corridors",
+      "centerId": "n001",
+      "people": [
+        {
+          "id": "n001",
+          "data": { "gender": "M" },
+          "rels": { "parents": ["n010", "n011"], "spouses": ["n002"], "children": ["n003"] }
+        },
+        {
+          "id": "n002",
+          "data": { "gender": "F" },
+          "rels": { "parents": ["n020"], "spouses": ["n001"], "children": ["n003"] }
+        },
+        {
+          "id": "n003",
+          "data": { "gender": "M" },
+          "rels": { "parents": ["n001", "n002"], "spouses": [], "children": [] }
+        },
+        {
+          "id": "n010",
+          "data": { "gender": "M" },
+          "rels": { "parents": [], "spouses": ["n011"], "children": ["n001"] }
+        },
+        {
+          "id": "n011",
+          "data": { "gender": "F" },
+          "rels": { "parents": [], "spouses": ["n010"], "children": ["n001"] }
+        },
+        {
+          "id": "n020",
+          "data": { "gender": "M" },
+          "rels": { "parents": [], "spouses": [], "children": ["n002"] }
+        }
+      ]
+    },
+    {
+      "id": "true-hv-crossing",
+      "description": "topology that can still force a true H×V crossing",
+      "centerId": "t001",
+      "people": [
+        {
+          "id": "t001",
+          "data": { "gender": "M" },
+          "rels": { "parents": ["t010", "t011"], "spouses": ["t002"], "children": ["t003", "t004"] }
+        },
+        {
+          "id": "t002",
+          "data": { "gender": "F" },
+          "rels": { "parents": ["t020", "t021"], "spouses": ["t001"], "children": ["t003", "t004"] }
+        },
+        {
+          "id": "t003",
+          "data": { "gender": "M" },
+          "rels": { "parents": ["t001", "t002"], "spouses": [], "children": [] }
+        },
+        {
+          "id": "t004",
+          "data": { "gender": "F" },
+          "rels": { "parents": ["t001", "t002"], "spouses": [], "children": [] }
+        },
+        {
+          "id": "t005",
+          "data": { "gender": "M" },
+          "rels": { "parents": ["t010", "t011"], "spouses": ["t006"], "children": [] }
+        },
+        {
+          "id": "t006",
+          "data": { "gender": "F" },
+          "rels": { "parents": ["t020", "t021"], "spouses": ["t005"], "children": [] }
+        },
+        {
+          "id": "t010",
+          "data": { "gender": "M" },
+          "rels": { "parents": [], "spouses": ["t011"], "children": ["t001", "t005"] }
+        },
+        {
+          "id": "t011",
+          "data": { "gender": "F" },
+          "rels": { "parents": [], "spouses": ["t010"], "children": ["t001", "t005"] }
+        },
+        {
+          "id": "t020",
+          "data": { "gender": "M" },
+          "rels": { "parents": [], "spouses": ["t021"], "children": ["t002", "t006"] }
+        },
+        {
+          "id": "t021",
+          "data": { "gender": "F" },
+          "rels": { "parents": [], "spouses": ["t020"], "children": ["t002", "t006"] }
+        }
+      ]
+    },
+    {
+      "id": "three-vertical-lanes",
+      "description": "three unrelated single-parent stems competing for corridors",
+      "centerId": "l001",
+      "people": [
+        {
+          "id": "l001",
+          "data": { "gender": "M" },
+          "rels": { "parents": ["l010"], "spouses": ["l002"], "children": [] }
+        },
+        {
+          "id": "l002",
+          "data": { "gender": "F" },
+          "rels": { "parents": ["l020"], "spouses": ["l001"], "children": [] }
+        },
+        {
+          "id": "l003",
+          "data": { "gender": "M" },
+          "rels": { "parents": ["l030"], "spouses": [], "children": [] }
+        },
+        {
+          "id": "l010",
+          "data": { "gender": "M" },
+          "rels": { "parents": [], "spouses": [], "children": ["l001"] }
+        },
+        {
+          "id": "l020",
+          "data": { "gender": "M" },
+          "rels": { "parents": [], "spouses": [], "children": ["l002"] }
+        },
+        {
+          "id": "l030",
+          "data": { "gender": "M" },
+          "rels": { "parents": [], "spouses": [], "children": ["l003"] }
+        }
+      ]
+    },
+    {
+      "id": "multiple-spouses",
+      "description": "center with two spouses",
+      "centerId": "m001",
+      "people": [
+        {
+          "id": "m001",
+          "data": { "gender": "M" },
+          "rels": { "parents": ["m010", "m011"], "spouses": ["m002", "m003"], "children": ["m004"] }
+        },
+        {
+          "id": "m002",
+          "data": { "gender": "F" },
+          "rels": { "parents": [], "spouses": ["m001"], "children": ["m004"] }
+        },
+        {
+          "id": "m003",
+          "data": { "gender": "F" },
+          "rels": { "parents": [], "spouses": ["m001"], "children": [] }
+        },
+        {
+          "id": "m004",
+          "data": { "gender": "M" },
+          "rels": { "parents": ["m001", "m002"], "spouses": [], "children": [] }
+        },
+        {
+          "id": "m010",
+          "data": { "gender": "M" },
+          "rels": { "parents": [], "spouses": ["m011"], "children": ["m001"] }
+        },
+        {
+          "id": "m011",
+          "data": { "gender": "F" },
+          "rels": { "parents": [], "spouses": ["m010"], "children": ["m001"] }
+        }
+      ]
+    },
+    {
+      "id": "half-siblings",
+      "description": "half-siblings sharing one parent",
+      "centerId": "h001",
+      "people": [
+        {
+          "id": "h001",
+          "data": { "gender": "M" },
+          "rels": { "parents": ["h010", "h011"], "spouses": [], "children": [] }
+        },
+        {
+          "id": "h002",
+          "data": { "gender": "F" },
+          "rels": { "parents": ["h010", "h012"], "spouses": [], "children": [] }
+        },
+        {
+          "id": "h010",
+          "data": { "gender": "M" },
+          "rels": { "parents": [], "spouses": ["h011", "h012"], "children": ["h001", "h002"] }
+        },
+        {
+          "id": "h011",
+          "data": { "gender": "F" },
+          "rels": { "parents": [], "spouses": ["h010"], "children": ["h001"] }
+        },
+        {
+          "id": "h012",
+          "data": { "gender": "F" },
+          "rels": { "parents": [], "spouses": ["h010"], "children": ["h002"] }
+        }
+      ]
+    },
+    {
+      "id": "competing-barycenters",
+      "description": "several generations with competing barycenter pulls",
+      "centerId": "b001",
+      "people": [
+        {
+          "id": "b001",
+          "data": { "gender": "M" },
+          "rels": { "parents": ["b010", "b011"], "spouses": ["b002"], "children": ["b003", "b004"] }
+        },
+        {
+          "id": "b002",
+          "data": { "gender": "F" },
+          "rels": { "parents": ["b020", "b021"], "spouses": ["b001"], "children": ["b003", "b004"] }
+        },
+        {
+          "id": "b003",
+          "data": { "gender": "M" },
+          "rels": { "parents": ["b001", "b002"], "spouses": ["b005"], "children": [] }
+        },
+        {
+          "id": "b004",
+          "data": { "gender": "F" },
+          "rels": { "parents": ["b001", "b002"], "spouses": [], "children": [] }
+        },
+        {
+          "id": "b005",
+          "data": { "gender": "F" },
+          "rels": { "parents": ["b030"], "spouses": ["b003"], "children": [] }
+        },
+        {
+          "id": "b010",
+          "data": { "gender": "M" },
+          "rels": { "parents": [], "spouses": ["b011"], "children": ["b001", "b012"] }
+        },
+        {
+          "id": "b011",
+          "data": { "gender": "F" },
+          "rels": { "parents": [], "spouses": ["b010"], "children": ["b001", "b012"] }
+        },
+        {
+          "id": "b012",
+          "data": { "gender": "M" },
+          "rels": { "parents": ["b010", "b011"], "spouses": [], "children": [] }
+        },
+        {
+          "id": "b020",
+          "data": { "gender": "M" },
+          "rels": { "parents": [], "spouses": ["b021"], "children": ["b002", "b022"] }
+        },
+        {
+          "id": "b021",
+          "data": { "gender": "F" },
+          "rels": { "parents": [], "spouses": ["b020"], "children": ["b002", "b022"] }
+        },
+        {
+          "id": "b022",
+          "data": { "gender": "F" },
+          "rels": { "parents": ["b020", "b021"], "spouses": [], "children": [] }
+        },
+        {
+          "id": "b030",
+          "data": { "gender": "M" },
+          "rels": { "parents": [], "spouses": [], "children": ["b005"] }
+        }
+      ]
+    },
+    {
+      "id": "large-synthetic",
+      "description": "larger tree for performance / non-exhaustive path",
+      "centerId": "g001",
+      "people": [
+        {
+          "id": "g001",
+          "data": { "gender": "M" },
+          "rels": {
+            "parents": ["g010", "g011"],
+            "spouses": ["g002"],
+            "children": ["g101", "g102", "g103"]
+          }
+        },
+        {
+          "id": "g002",
+          "data": { "gender": "F" },
+          "rels": {
+            "parents": ["g020", "g021"],
+            "spouses": ["g001"],
+            "children": ["g101", "g102", "g103"]
+          }
+        },
+        {
+          "id": "g003",
+          "data": { "gender": "M" },
+          "rels": { "parents": ["g010", "g011"], "spouses": ["g004"], "children": [] }
+        },
+        {
+          "id": "g004",
+          "data": { "gender": "F" },
+          "rels": { "parents": [], "spouses": ["g003"], "children": [] }
+        },
+        {
+          "id": "g005",
+          "data": { "gender": "F" },
+          "rels": { "parents": ["g010", "g011"], "spouses": ["g006"], "children": [] }
+        },
+        {
+          "id": "g006",
+          "data": { "gender": "M" },
+          "rels": { "parents": [], "spouses": ["g005"], "children": [] }
+        },
+        {
+          "id": "g007",
+          "data": { "gender": "M" },
+          "rels": { "parents": ["g010", "g011"], "spouses": [], "children": [] }
+        },
+        {
+          "id": "g008",
+          "data": { "gender": "F" },
+          "rels": { "parents": ["g020", "g021"], "spouses": ["g009"], "children": [] }
+        },
+        {
+          "id": "g009",
+          "data": { "gender": "M" },
+          "rels": { "parents": [], "spouses": ["g008"], "children": [] }
+        },
+        {
+          "id": "g010",
+          "data": { "gender": "M" },
+          "rels": {
+            "parents": [],
+            "spouses": ["g011"],
+            "children": ["g001", "g003", "g005", "g007"]
+          }
+        },
+        {
+          "id": "g011",
+          "data": { "gender": "F" },
+          "rels": {
+            "parents": [],
+            "spouses": ["g010"],
+            "children": ["g001", "g003", "g005", "g007"]
+          }
+        },
+        {
+          "id": "g020",
+          "data": { "gender": "M" },
+          "rels": { "parents": [], "spouses": ["g021"], "children": ["g002", "g008"] }
+        },
+        {
+          "id": "g021",
+          "data": { "gender": "F" },
+          "rels": { "parents": [], "spouses": ["g020"], "children": ["g002", "g008"] }
+        },
+        {
+          "id": "g101",
+          "data": { "gender": "M" },
+          "rels": { "parents": ["g001", "g002"], "spouses": ["g111"], "children": [] }
+        },
+        {
+          "id": "g102",
+          "data": { "gender": "F" },
+          "rels": { "parents": ["g001", "g002"], "spouses": [], "children": [] }
+        },
+        {
+          "id": "g103",
+          "data": { "gender": "M" },
+          "rels": { "parents": ["g001", "g002"], "spouses": ["g112"], "children": [] }
+        },
+        {
+          "id": "g111",
+          "data": { "gender": "F" },
+          "rels": { "parents": ["g120"], "spouses": ["g101"], "children": [] }
+        },
+        {
+          "id": "g112",
+          "data": { "gender": "F" },
+          "rels": { "parents": [], "spouses": ["g103"], "children": [] }
+        },
+        {
+          "id": "g120",
+          "data": { "gender": "M" },
+          "rels": { "parents": [], "spouses": [], "children": ["g111"] }
+        }
+      ]
+    }
+  ]
+}
