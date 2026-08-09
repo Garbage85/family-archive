@@ -1,0 +1,330 @@
+{
+  "version": 1,
+  "kind": "structural-topology",
+  "personCount": 25,
+  "idPrefix": "p",
+  "people": [
+    {
+      "id": "p001",
+      "data": {
+        "gender": "F"
+      },
+      "rels": {
+        "parents": [],
+        "spouses": ["p022"],
+        "children": ["p010"]
+      }
+    },
+    {
+      "id": "p002",
+      "data": {
+        "gender": "M"
+      },
+      "rels": {
+        "parents": ["p011", "p016"],
+        "spouses": ["p003"],
+        "children": ["p017"]
+      }
+    },
+    {
+      "id": "p003",
+      "data": {
+        "gender": "F"
+      },
+      "rels": {
+        "parents": [],
+        "spouses": ["p002"],
+        "children": ["p017"]
+      }
+    },
+    {
+      "id": "p004",
+      "data": {
+        "gender": "M"
+      },
+      "rels": {
+        "parents": ["p011", "p016"],
+        "spouses": ["p005", "p006"],
+        "children": []
+      }
+    },
+    {
+      "id": "p005",
+      "data": {
+        "gender": "F"
+      },
+      "rels": {
+        "parents": [],
+        "spouses": ["p004"],
+        "children": []
+      }
+    },
+    {
+      "id": "p006",
+      "data": {
+        "gender": "F"
+      },
+      "rels": {
+        "parents": [],
+        "spouses": ["p004"],
+        "children": []
+      }
+    },
+    {
+      "id": "p007",
+      "data": {
+        "gender": "M"
+      },
+      "rels": {
+        "parents": ["p011", "p016"],
+        "spouses": ["p009"],
+        "children": ["p008", "p019"]
+      }
+    },
+    {
+      "id": "p008",
+      "data": {
+        "gender": "M"
+      },
+      "rels": {
+        "parents": ["p007", "p009"],
+        "spouses": [],
+        "children": []
+      }
+    },
+    {
+      "id": "p009",
+      "data": {
+        "gender": "F"
+      },
+      "rels": {
+        "parents": ["p023", "p024"],
+        "spouses": ["p007"],
+        "children": ["p019", "p025"]
+      }
+    },
+    {
+      "id": "p010",
+      "data": {
+        "gender": "F"
+      },
+      "rels": {
+        "parents": ["p001", "p022"],
+        "spouses": [],
+        "children": []
+      }
+    },
+    {
+      "id": "p011",
+      "data": {
+        "gender": "M"
+      },
+      "rels": {
+        "parents": ["p012", "p014"],
+        "spouses": ["p016"],
+        "children": ["p002", "p004", "p007", "p020"]
+      }
+    },
+    {
+      "id": "p012",
+      "data": {
+        "gender": "M"
+      },
+      "rels": {
+        "parents": [],
+        "spouses": ["p014"],
+        "children": ["p011", "p022"]
+      }
+    },
+    {
+      "id": "p013",
+      "data": {
+        "gender": "M"
+      },
+      "rels": {
+        "parents": [],
+        "spouses": ["p015"],
+        "children": ["p016"]
+      }
+    },
+    {
+      "id": "p014",
+      "data": {
+        "gender": "F"
+      },
+      "rels": {
+        "parents": [],
+        "spouses": ["p012"],
+        "children": ["p011", "p022"]
+      }
+    },
+    {
+      "id": "p015",
+      "data": {
+        "gender": "F"
+      },
+      "rels": {
+        "parents": [],
+        "spouses": ["p013"],
+        "children": ["p016"]
+      }
+    },
+    {
+      "id": "p016",
+      "data": {
+        "gender": "F"
+      },
+      "rels": {
+        "parents": ["p013", "p015"],
+        "spouses": ["p011"],
+        "children": ["p002", "p004", "p007", "p020"]
+      }
+    },
+    {
+      "id": "p017",
+      "data": {
+        "gender": "M"
+      },
+      "rels": {
+        "parents": ["p002", "p003"],
+        "spouses": [],
+        "children": []
+      }
+    },
+    {
+      "id": "p018",
+      "data": {
+        "gender": "F"
+      },
+      "rels": {
+        "parents": ["p020", "p021"],
+        "spouses": [],
+        "children": []
+      }
+    },
+    {
+      "id": "p019",
+      "data": {
+        "gender": "F"
+      },
+      "rels": {
+        "parents": ["p007", "p009"],
+        "spouses": [],
+        "children": []
+      }
+    },
+    {
+      "id": "p020",
+      "data": {
+        "gender": "F"
+      },
+      "rels": {
+        "parents": ["p011", "p016"],
+        "spouses": ["p021"],
+        "children": ["p018"]
+      }
+    },
+    {
+      "id": "p021",
+      "data": {
+        "gender": "M"
+      },
+      "rels": {
+        "parents": [],
+        "spouses": ["p020"],
+        "children": ["p018"]
+      }
+    },
+    {
+      "id": "p022",
+      "data": {
+        "gender": "M"
+      },
+      "rels": {
+        "parents": ["p012", "p014"],
+        "spouses": ["p001"],
+        "children": ["p010"]
+      }
+    },
+    {
+      "id": "p023",
+      "data": {
+        "gender": "M"
+      },
+      "rels": {
+        "parents": [],
+        "spouses": ["p024"],
+        "children": ["p009"]
+      }
+    },
+    {
+      "id": "p024",
+      "data": {
+        "gender": "F"
+      },
+      "rels": {
+        "parents": [],
+        "spouses": ["p023"],
+        "children": ["p009"]
+      }
+    },
+    {
+      "id": "p025",
+      "data": {
+        "gender": "M"
+      },
+      "rels": {
+        "parents": ["p009"],
+        "spouses": [],
+        "children": []
+      }
+    }
+  ],
+  "meta": {
+    "strippedFields": [
+      "first_name",
+      "last_name",
+      "middle_name",
+      "maiden_name",
+      "birth_date",
+      "death_date",
+      "birth_place",
+      "occupation",
+      "notes",
+      "avatar"
+    ],
+    "spouseEdgeCount": 10,
+    "parentChildEdgeCount": 27,
+    "generationHints": {
+      "p001": 0,
+      "p002": 2,
+      "p003": 0,
+      "p004": 2,
+      "p005": 0,
+      "p006": 0,
+      "p007": 2,
+      "p008": 3,
+      "p009": 1,
+      "p010": 1,
+      "p011": 1,
+      "p012": 0,
+      "p013": 0,
+      "p014": 0,
+      "p015": 0,
+      "p016": 1,
+      "p017": 1,
+      "p018": 1,
+      "p019": 2,
+      "p020": 2,
+      "p021": 0,
+      "p022": 1,
+      "p023": 0,
+      "p024": 0,
+      "p025": 2
+    },
+    "defaultCenterId": "p002",
+    "source": "synthetic-structural-topology: production trees.data was not available in the agent VM; topology encodes multi-generation sibling-spouse ADR-008 structure for layout prototyping. Replace via extract-structural-fixture.mjs when a read-only dump is provided.",
+    "extractedAt": "2026-08-09T05:08:27.865Z",
+    "productionDumpAvailable": false
+  }
+}
