@@ -1,7 +1,7 @@
 {
   "version": 1,
   "kind": "structural-topology",
-  "personCount": 13,
+  "personCount": 17,
   "idPrefix": "p",
   "people": [
     {
@@ -17,7 +17,7 @@
       "id": "p002",
       "data": { "gender": "F" },
       "rels": {
-        "parents": [],
+        "parents": ["p014", "p015"],
         "spouses": ["p001"],
         "children": ["p006", "p007", "p010"]
       }
@@ -120,6 +120,42 @@
         "spouses": [],
         "children": ["p012"]
       }
+    },
+    {
+      "id": "p014",
+      "data": { "gender": "F" },
+      "rels": {
+        "parents": [],
+        "spouses": ["p015"],
+        "children": ["p002", "p016"]
+      }
+    },
+    {
+      "id": "p015",
+      "data": { "gender": "M" },
+      "rels": {
+        "parents": [],
+        "spouses": ["p014"],
+        "children": ["p002", "p016"]
+      }
+    },
+    {
+      "id": "p016",
+      "data": { "gender": "F" },
+      "rels": {
+        "parents": ["p014", "p015"],
+        "spouses": ["p017"],
+        "children": []
+      }
+    },
+    {
+      "id": "p017",
+      "data": { "gender": "M" },
+      "rels": {
+        "parents": [],
+        "spouses": ["p016"],
+        "children": []
+      }
     }
   ],
   "meta": {
@@ -135,8 +171,8 @@
       "notes",
       "avatar"
     ],
-    "spouseEdgeCount": 5,
-    "parentChildEdgeCount": 12,
+    "spouseEdgeCount": 7,
+    "parentChildEdgeCount": 16,
     "generationHints": {
       "p001": 0,
       "p002": 0,
@@ -150,15 +186,25 @@
       "p010": 1,
       "p011": 1,
       "p012": 1,
-      "p013": 0
+      "p013": 0,
+      "p014": -1,
+      "p015": -1,
+      "p016": 0,
+      "p017": 0
     },
     "defaultCenterId": "p010",
+    "parentSiblingBranch": {
+      "motherId": "p002",
+      "maternalGrandparents": ["p014", "p015"],
+      "maternalAuntId": "p016",
+      "maternalAuntSpouseId": "p017"
+    },
     "growth": {
       "spouseSisterId": "p011",
       "newPersonIds": ["p012", "p013"],
       "snapshots": "structural-tree-growth.json"
     },
     "source": "/home/garbage/family-archive-0.2/local/production-trees.data.json",
-    "extractedAt": "2026-08-09T08:40:00.000Z"
+    "extractedAt": "2026-08-09T10:50:00.000Z"
   }
 }

@@ -1,15 +1,17 @@
 {
   "version": 1,
   "kind": "structural-growth-snapshots",
-  "description": "Anonymized production growth: spouse sister present, then +2 relatives on her branch",
+  "description": "Anonymized production growth: maternal aunt branch + spouse sister present, then +2 relatives on spouse-sister branch",
   "idPrefix": "p",
   "defaultCenterId": "p010",
   "BEFORE_ADD": {
-    "personCount": 11,
+    "personCount": 15,
     "people": [
       {
         "id": "p001",
-        "data": { "gender": "M" },
+        "data": {
+          "gender": "M"
+        },
         "rels": {
           "parents": [],
           "spouses": ["p002"],
@@ -18,16 +20,20 @@
       },
       {
         "id": "p002",
-        "data": { "gender": "F" },
+        "data": {
+          "gender": "F"
+        },
         "rels": {
-          "parents": [],
+          "parents": ["p014", "p015"],
           "spouses": ["p001"],
           "children": ["p006", "p007", "p010"]
         }
       },
       {
         "id": "p003",
-        "data": { "gender": "F" },
+        "data": {
+          "gender": "F"
+        },
         "rels": {
           "parents": ["p004", "p005"],
           "spouses": ["p010"],
@@ -36,7 +42,9 @@
       },
       {
         "id": "p004",
-        "data": { "gender": "F" },
+        "data": {
+          "gender": "F"
+        },
         "rels": {
           "parents": [],
           "spouses": ["p005"],
@@ -45,7 +53,9 @@
       },
       {
         "id": "p005",
-        "data": { "gender": "M" },
+        "data": {
+          "gender": "M"
+        },
         "rels": {
           "parents": [],
           "spouses": ["p004"],
@@ -54,12 +64,20 @@
       },
       {
         "id": "p006",
-        "data": { "gender": "M" },
-        "rels": { "parents": ["p001", "p002"], "spouses": [], "children": [] }
+        "data": {
+          "gender": "M"
+        },
+        "rels": {
+          "parents": ["p001", "p002"],
+          "spouses": [],
+          "children": []
+        }
       },
       {
         "id": "p007",
-        "data": { "gender": "M" },
+        "data": {
+          "gender": "M"
+        },
         "rels": {
           "parents": ["p001", "p002"],
           "spouses": ["p008"],
@@ -68,7 +86,9 @@
       },
       {
         "id": "p008",
-        "data": { "gender": "F" },
+        "data": {
+          "gender": "F"
+        },
         "rels": {
           "parents": ["p009"],
           "spouses": ["p007"],
@@ -77,12 +97,20 @@
       },
       {
         "id": "p009",
-        "data": { "gender": "M" },
-        "rels": { "parents": [], "spouses": [], "children": ["p008"] }
+        "data": {
+          "gender": "M"
+        },
+        "rels": {
+          "parents": [],
+          "spouses": [],
+          "children": ["p008"]
+        }
       },
       {
         "id": "p010",
-        "data": { "gender": "M" },
+        "data": {
+          "gender": "M"
+        },
         "rels": {
           "parents": ["p001", "p002"],
           "spouses": ["p003"],
@@ -91,10 +119,56 @@
       },
       {
         "id": "p011",
-        "data": { "gender": "F" },
+        "data": {
+          "gender": "F"
+        },
         "rels": {
           "parents": ["p004", "p005"],
           "spouses": [],
+          "children": []
+        }
+      },
+      {
+        "id": "p014",
+        "data": {
+          "gender": "F"
+        },
+        "rels": {
+          "parents": [],
+          "spouses": ["p015"],
+          "children": ["p002", "p016"]
+        }
+      },
+      {
+        "id": "p015",
+        "data": {
+          "gender": "M"
+        },
+        "rels": {
+          "parents": [],
+          "spouses": ["p014"],
+          "children": ["p002", "p016"]
+        }
+      },
+      {
+        "id": "p016",
+        "data": {
+          "gender": "F"
+        },
+        "rels": {
+          "parents": ["p014", "p015"],
+          "spouses": ["p017"],
+          "children": []
+        }
+      },
+      {
+        "id": "p017",
+        "data": {
+          "gender": "M"
+        },
+        "rels": {
+          "parents": [],
+          "spouses": ["p016"],
           "children": []
         }
       }
@@ -102,15 +176,18 @@
     "meta": {
       "note": "Readable layout baseline: spouse sister p011 on spouse-family side",
       "newPersonIds": [],
-      "spouseSisterId": "p011"
+      "spouseSisterId": "p011",
+      "maternalAuntId": "p016"
     }
   },
   "AFTER_ADD": {
-    "personCount": 13,
+    "personCount": 17,
     "people": [
       {
         "id": "p001",
-        "data": { "gender": "M" },
+        "data": {
+          "gender": "M"
+        },
         "rels": {
           "parents": [],
           "spouses": ["p002"],
@@ -119,16 +196,20 @@
       },
       {
         "id": "p002",
-        "data": { "gender": "F" },
+        "data": {
+          "gender": "F"
+        },
         "rels": {
-          "parents": [],
+          "parents": ["p014", "p015"],
           "spouses": ["p001"],
           "children": ["p006", "p007", "p010"]
         }
       },
       {
         "id": "p003",
-        "data": { "gender": "F" },
+        "data": {
+          "gender": "F"
+        },
         "rels": {
           "parents": ["p004", "p005"],
           "spouses": ["p010"],
@@ -137,7 +218,9 @@
       },
       {
         "id": "p004",
-        "data": { "gender": "F" },
+        "data": {
+          "gender": "F"
+        },
         "rels": {
           "parents": [],
           "spouses": ["p005"],
@@ -146,7 +229,9 @@
       },
       {
         "id": "p005",
-        "data": { "gender": "M" },
+        "data": {
+          "gender": "M"
+        },
         "rels": {
           "parents": [],
           "spouses": ["p004"],
@@ -155,12 +240,20 @@
       },
       {
         "id": "p006",
-        "data": { "gender": "M" },
-        "rels": { "parents": ["p001", "p002"], "spouses": [], "children": [] }
+        "data": {
+          "gender": "M"
+        },
+        "rels": {
+          "parents": ["p001", "p002"],
+          "spouses": [],
+          "children": []
+        }
       },
       {
         "id": "p007",
-        "data": { "gender": "M" },
+        "data": {
+          "gender": "M"
+        },
         "rels": {
           "parents": ["p001", "p002"],
           "spouses": ["p008"],
@@ -169,7 +262,9 @@
       },
       {
         "id": "p008",
-        "data": { "gender": "F" },
+        "data": {
+          "gender": "F"
+        },
         "rels": {
           "parents": ["p009"],
           "spouses": ["p007"],
@@ -178,12 +273,20 @@
       },
       {
         "id": "p009",
-        "data": { "gender": "M" },
-        "rels": { "parents": [], "spouses": [], "children": ["p008"] }
+        "data": {
+          "gender": "M"
+        },
+        "rels": {
+          "parents": [],
+          "spouses": [],
+          "children": ["p008"]
+        }
       },
       {
         "id": "p010",
-        "data": { "gender": "M" },
+        "data": {
+          "gender": "M"
+        },
         "rels": {
           "parents": ["p001", "p002"],
           "spouses": ["p003"],
@@ -192,7 +295,9 @@
       },
       {
         "id": "p011",
-        "data": { "gender": "F" },
+        "data": {
+          "gender": "F"
+        },
         "rels": {
           "parents": ["p004", "p005"],
           "spouses": ["p012"],
@@ -201,7 +306,9 @@
       },
       {
         "id": "p012",
-        "data": { "gender": "M" },
+        "data": {
+          "gender": "M"
+        },
         "rels": {
           "parents": ["p013"],
           "spouses": ["p011"],
@@ -210,11 +317,57 @@
       },
       {
         "id": "p013",
-        "data": { "gender": "M" },
+        "data": {
+          "gender": "M"
+        },
         "rels": {
           "parents": [],
           "spouses": [],
           "children": ["p012"]
+        }
+      },
+      {
+        "id": "p014",
+        "data": {
+          "gender": "F"
+        },
+        "rels": {
+          "parents": [],
+          "spouses": ["p015"],
+          "children": ["p002", "p016"]
+        }
+      },
+      {
+        "id": "p015",
+        "data": {
+          "gender": "M"
+        },
+        "rels": {
+          "parents": [],
+          "spouses": ["p014"],
+          "children": ["p002", "p016"]
+        }
+      },
+      {
+        "id": "p016",
+        "data": {
+          "gender": "F"
+        },
+        "rels": {
+          "parents": ["p014", "p015"],
+          "spouses": ["p017"],
+          "children": []
+        }
+      },
+      {
+        "id": "p017",
+        "data": {
+          "gender": "M"
+        },
+        "rels": {
+          "parents": [],
+          "spouses": ["p016"],
+          "children": []
         }
       }
     ],
@@ -222,7 +375,8 @@
       "note": "Growth: p012 spouse of sister + p013 direct parent of that spouse",
       "newPersonIds": ["p012", "p013"],
       "spouseSisterId": "p011",
-      "insertedIntoBranchAnchor": "p011"
+      "insertedIntoBranchAnchor": "p011",
+      "maternalAuntId": "p016"
     }
   }
 }

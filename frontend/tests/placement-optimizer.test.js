@@ -72,6 +72,12 @@ function hardGate(people, layout, label) {
   assert.equal(findZeroLengthSegments(layout).length, 0, `${label} zeroLen`);
   assert.equal(layout.meta.familySideViolations ?? 0, 0, `${label} familySide`);
   assert.equal(layout.meta.branchIntegrityViolations ?? 0, 0, `${label} branch`);
+  assert.equal(
+    layout.meta.parentSiblingBranchSideViolations ?? 0,
+    0,
+    `${label} parentSiblingBranchSide`,
+  );
+  assert.equal(layout.meta.parallelLaneOverlap ?? 0, 0, `${label} parallelLaneOverlap`);
   assert.equal(layout.meta.hardViolations ?? 0, 0, `${label} hard`);
   const parity = assertCrossingJumpParity(layout);
   assert.equal(parity.missedJumps, 0, `${label} missedJumps`);
@@ -197,10 +203,16 @@ test('production all-centers placement gate + BEFORE/AFTER report', async () => 
     assert.equal(layoutRouteSignature(first), layoutRouteSignature(second), `${centerId} routes`);
     assert.equal(first.meta.spouseSide, second.meta.spouseSide);
 
+    const householdToBranch = new Map(
+      (layout.meta.branches || []).flatMap((branch) =>
+        (branch.householdIds || []).map((id) => [id, branch]),
+      ),
+    );
     const metrics = collectPlacementMetrics(people, layout, {
       expectedVisibleIds: selectVisiblePeople(people, centerId).map((person) => person.id),
       households: layout.households,
       spouseSide: layout.meta.spouseSide,
+      householdToBranch,
     });
     rows.push({
       centerId,
@@ -218,6 +230,8 @@ test('production all-centers placement gate + BEFORE/AFTER report', async () => 
       ambiguousShared: metrics.ambiguousSharedSegments,
       familySideViolations: metrics.familySideViolations,
       branchIntegrityViolations: metrics.branchIntegrityViolations,
+      parentSiblingBranchSideViolations: metrics.parentSiblingBranchSideViolations,
+      parallelLaneOverlap: metrics.parallelLaneOverlap,
       parallelLanes: metrics.parallelLanes,
       crossings: metrics.crossings,
       jumps: metrics.jumps,
@@ -235,6 +249,12 @@ test('production all-centers placement gate + BEFORE/AFTER report', async () => 
     assert.equal(row.hardViolations, 0, `${row.centerId} hardViolations`);
     assert.equal(row.familySideViolations, 0, `${row.centerId} familySide`);
     assert.equal(row.branchIntegrityViolations, 0, `${row.centerId} branch`);
+    assert.equal(
+      row.parentSiblingBranchSideViolations,
+      0,
+      `${row.centerId} parentSiblingBranchSide`,
+    );
+    assert.equal(row.parallelLaneOverlap, 0, `${row.centerId} parallelLaneOverlap`);
   }
 
   const p010 = rows.find((row) => row.centerId === 'p010');

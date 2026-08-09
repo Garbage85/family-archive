@@ -313,6 +313,8 @@ export class PrototypeFamilyTreeChart {
   _computeLayout() {
     // Always layout from a clone so source workingData / trees.data stay untouched.
     const people = cloneTree(this.data);
+    // Canonical layout from topology only. Do not pass previousLayout into
+    // geometry selection — cold reload and warm relayout must match.
     const layout = layoutFamilyTree(people, {
       centerId: this.rootPersonId,
       orientation: this.orientation,
@@ -320,8 +322,6 @@ export class PrototypeFamilyTreeChart {
       cardHeight: CARD_HEIGHT,
       nodeSeparation: CARD_X_SPACING,
       levelSeparation: CARD_Y_SPACING,
-      // In-memory hysteresis only — never written to trees.data.
-      previousLayout: this.layout || null,
     });
     layout.links = routeLayoutLinks(layout, { orientation: this.orientation });
     return layout;

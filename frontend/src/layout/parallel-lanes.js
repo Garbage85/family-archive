@@ -188,3 +188,11 @@ export function countParallelLaneFamilies(offsetByFamily) {
   }
   return count;
 }
+
+/**
+ * Residual hard overlaps: unrelated corridors still on (nearly) the same axis
+ * after lane assignment. Uses a tight epsilon — not the clustering threshold.
+ */
+export function findParallelLaneOverlaps(links, { orientation = 'vertical', eps = 0.51 } = {}) {
+  return findVerticalLaneConflicts(links, { threshold: eps, orientation });
+}

@@ -12,6 +12,8 @@ import {
   findLinksThroughForeignCards,
   findMissingVisibleParentChildLinks,
   findMissingVisibleSpouseLinks,
+  coldWarmSignatureMismatch,
+  layoutGeometrySignature,
   layoutRouteSignature,
 } from '../src/layout/layout-validators.js';
 import { findExteriorParentChildDetours } from '../src/layout/link-routing.js';
@@ -39,6 +41,12 @@ function hardGate(people, layout, label) {
   assert.equal(findExteriorParentChildDetours(layout).length, 0, `${label} exterior`);
   assert.equal(layout.meta.familySideViolations, 0, `${label} familySide`);
   assert.equal(layout.meta.branchIntegrityViolations, 0, `${label} branch`);
+  assert.equal(
+    layout.meta.parentSiblingBranchSideViolations ?? 0,
+    0,
+    `${label} parentSiblingBranchSide`,
+  );
+  assert.equal(layout.meta.parallelLaneOverlap ?? 0, 0, `${label} parallelLaneOverlap`);
   assert.equal(layout.meta.hardViolations, 0, `${label} hard`);
   const parity = assertCrossingJumpParity(layout);
   assert.equal(parity.missedJumps, 0, `${label} missedJumps`);
@@ -89,7 +97,10 @@ test('AFTER_ADD expands spouse sister branch without flipping existing sides', a
   hardGate(afterPeople, after, 'AFTER_ADD');
   assert.equal(after.meta.existingHouseholdsSideChanges, 0);
   assert.equal(after.meta.existingBranchOrderInversions, 0);
-  assert.equal(after.meta.unexpectedCoupleFlip, 0);
+  // Couple orientation is canonical for the new topology; flip vs BEFORE is allowed
+  // only as a cost win, never as previous-state hysteresis.
+  const afterCold = layoutFamilyTree(afterPeople, { centerId: 'p010' });
+  assert.equal(coldWarmSignatureMismatch(afterCold, after), 0);
 
   assert.equal(householdSide(after, 'p011'), 'spouse');
   assert.equal(householdSide(after, 'p012'), 'spouse');
@@ -148,12 +159,17 @@ test('cold reload AFTER_ADD is deterministic and keeps family-side integrity', a
   const people = growth.AFTER_ADD.people;
   const first = layoutFamilyTree(people, { centerId: 'p010' });
   const second = layoutFamilyTree(people, { centerId: 'p010' });
+  const warm = layoutFamilyTree(people, { centerId: 'p010', previousLayout: first });
   hardGate(people, first, 'cold1');
   hardGate(people, second, 'cold2');
+  hardGate(people, warm, 'warm');
   assert.equal(layoutRouteSignature(first), layoutRouteSignature(second));
+  assert.equal(coldWarmSignatureMismatch(first, warm), 0);
+  assert.equal(layoutGeometrySignature(first), layoutGeometrySignature(warm));
   assert.equal(first.meta.spouseSide, second.meta.spouseSide);
   assert.deepEqual(first.meta.generationOrders, second.meta.generationOrders);
   assert.equal(householdSide(first, 'p011'), 'spouse');
+  assert.equal(householdSide(first, 'p016'), 'center');
 });
 
 test('growth stress: add relatives one-by-one without reshuffling family sides', async () => {
@@ -210,16 +226,16 @@ test('growth stress: add relatives one-by-one without reshuffling family sides',
       assert.equal(householdSide(layout, 'p006'), 'center');
     }
     if (previous) {
+      // Classifier sides for existing people must stay stable; couple orientation
+      // may change when topology cost prefers the other side (canonical, not hysteresis).
       assert.equal(layout.meta.existingHouseholdsSideChanges, 0, 'no side changes while growing');
-      assert.equal(layout.meta.unexpectedCoupleFlip, 0, 'no couple flip while growing');
     }
 
-    // Cold reload canonical check at this step.
+    // Cold reload / warm with previousLayout must match for this topology.
     const cold = layoutFamilyTree(people, { centerId: 'p010' });
-    assert.equal(
-      layoutRouteSignature(cold),
-      layoutRouteSignature(layoutFamilyTree(people, { centerId: 'p010' })),
-    );
+    const warm = layoutFamilyTree(people, { centerId: 'p010', previousLayout: layout });
+    assert.equal(coldWarmSignatureMismatch(cold, warm), 0, 'cold===warm at growth step');
+    assert.equal(layoutGeometrySignature(cold), layoutGeometrySignature(layout));
     assert.equal(cold.meta.familySideViolations, 0);
     assert.equal(cold.meta.branchIntegrityViolations, 0);
 

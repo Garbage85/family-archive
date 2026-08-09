@@ -61,14 +61,17 @@ function closeUnderMarriage(visible, byId) {
  * 1) Couple core = center ∪ direct spouses(center).
  * 2) For each core person: ancestry + progeny + siblings.
  * 3) Close under marriage (spouses of everyone already visible).
- * 4) For each displayed sibling of the couple core, include direct parents
- *    of that sibling's displayed spouses (one parent level only — not
- *    grandparents, not that spouse's siblings).
- * 5) Close under marriage again for newly added parents.
- * 6) Deduplicate by id.
+ * 4) Parent-sibling collateral (depth 1): for each displayed direct parent of
+ *    the couple core, include that parent's direct siblings (aunts/uncles).
+ *    Do NOT auto-include their children, cousins, or parents of their spouses.
+ * 5) Close under marriage (spouses of newly added aunts/uncles).
+ * 6) For each displayed sibling of the couple core, include direct parents
+ *    of that sibling's displayed spouses (one parent level only).
+ * 7) Close under marriage again for newly added parents.
+ * 8) Deduplicate by id.
  *
  * Switching center between spouses keeps the same couple core, so the same
- * sibling households and the same one-level in-law parents are included.
+ * sibling / parent-sibling households are included.
  */
 export function selectVisiblePeople(
   people,
@@ -114,6 +117,20 @@ export function selectVisiblePeople(
 
   const coupleCore = unique([String(centerId), ...spouseIds(center)]);
   for (const id of coupleCore) addPersonalFamilyArea(id);
+  closeUnderMarriage(visible, byId);
+
+  // Parent-sibling collateral (depth 1): siblings of direct parents of couple core.
+  for (const coreId of coupleCore) {
+    for (const parentId of parentIds(byId.get(coreId))) {
+      if (!visible.has(parentId)) continue;
+      for (const grandparentId of parentIds(byId.get(parentId))) {
+        for (const auntUncleId of childIds(byId.get(grandparentId))) {
+          if (auntUncleId === parentId) continue;
+          if (byId.has(auntUncleId)) visible.add(auntUncleId);
+        }
+      }
+    }
+  }
   closeUnderMarriage(visible, byId);
 
   // Sibling-spouse direct parents (one level): e.g. p010 → sibling p007 → spouse p008 → father p009.
@@ -319,6 +336,8 @@ export function layoutFamilyTree(
     ancestryDepth = 8,
     progenyDepth = 8,
     returnCandidates = false,
+    // previousLayout is accepted for optional stability *reporting* only.
+    // Canonical geometry/routing must ignore it so cold === warm.
     previousLayout = null,
   } = {},
 ) {
@@ -330,6 +349,7 @@ export function layoutFamilyTree(
   const generation = assignGenerations(visible, centerId);
   const households = buildHouseholds(visible);
   const peopleById = personMap(visible);
+  // Snapshot kept only for post-hoc stability metrics — never feeds placement.
   const previousSnapshot = previousLayout ? extractPlacementSnapshot(previousLayout) : null;
 
   const isHorizontal = orientation === 'horizontal';
@@ -347,7 +367,6 @@ export function layoutFamilyTree(
     gap,
     generationStep,
     isHorizontal,
-    previousSnapshot,
   });
 
   const expectedVisibleIds = visible.map((person) => person.id);
@@ -371,32 +390,23 @@ export function layoutFamilyTree(
       spouseSide: candidate.spouseSide,
       branchOrderByGeneration: candidate.branchOrderByGeneration,
     };
+    // Ranking metrics are canonical (no previousSnapshot) so cold === warm.
     const metrics = collectPlacementMetrics(people, layout, {
       expectedVisibleIds,
       households: layout.households,
       canonicalOrderKey,
       spouseSide: candidate.spouseSide,
       householdToBranch: candidate.householdToBranch,
-      previousSnapshot,
     });
     metrics.spouseSide = candidate.spouseSide;
     metrics.candidateId = candidate.candidateId;
-    metrics.preferredSideMatch = candidate.preferredSideMatch;
     scored.push({ candidate, layout, metrics });
   }
 
   scored.sort((left, right) =>
     compareCandidateScores(
-      {
-        ...left.metrics,
-        candidateId: left.candidate.candidateId,
-        preferredSideMatch: left.candidate.preferredSideMatch,
-      },
-      {
-        ...right.metrics,
-        candidateId: right.candidate.candidateId,
-        preferredSideMatch: right.candidate.preferredSideMatch,
-      },
+      { ...left.metrics, candidateId: left.candidate.candidateId },
+      { ...right.metrics, candidateId: right.candidate.candidateId },
     ),
   );
 
@@ -407,6 +417,30 @@ export function layoutFamilyTree(
     ...household,
     branchId: winner.candidate.householdToBranch?.get(household.id)?.id || null,
   }));
+
+  // Optional stability report vs previousLayout — never used for selection.
+  const stabilityReport = previousSnapshot
+    ? collectPlacementMetrics(
+        people,
+        {
+          nodes,
+          links,
+          households: placedHouseholds,
+          meta: {
+            centerId: String(centerId),
+            spouseSide: winner.candidate.spouseSide,
+            branchOrderByGeneration: winner.candidate.branchOrderByGeneration,
+          },
+        },
+        {
+          expectedVisibleIds,
+          households: placedHouseholds,
+          spouseSide: winner.candidate.spouseSide,
+          householdToBranch: winner.candidate.householdToBranch,
+          previousSnapshot,
+        },
+      )
+    : null;
 
   const result = {
     nodes,
@@ -443,11 +477,14 @@ export function layoutFamilyTree(
       hardViolations: winner.metrics.hardViolations,
       familySideViolations: winner.metrics.familySideViolations,
       branchIntegrityViolations: winner.metrics.branchIntegrityViolations,
-      existingHouseholdsSideChanges: winner.metrics.existingHouseholdsSideChanges,
-      existingBranchOrderInversions: winner.metrics.existingBranchOrderInversions,
-      unexpectedCoupleFlip: winner.metrics.unexpectedCoupleFlip,
+      parentSiblingBranchSideViolations: winner.metrics.parentSiblingBranchSideViolations || 0,
+      existingHouseholdsSideChanges: stabilityReport?.existingHouseholdsSideChanges || 0,
+      existingBranchOrderInversions: stabilityReport?.existingBranchOrderInversions || 0,
+      unexpectedCoupleFlip: stabilityReport?.unexpectedCoupleFlip || 0,
       crossings: winner.metrics.crossings,
       jumps: winner.metrics.jumps,
+      parallelLaneOverlap: winner.metrics.parallelLaneOverlap || 0,
+      coldWarmSignatureMismatch: 0,
     },
   };
 

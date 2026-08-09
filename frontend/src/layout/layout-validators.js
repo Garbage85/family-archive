@@ -501,6 +501,43 @@ export function layoutRouteSignature(layout) {
     .join('\n');
 }
 
+/**
+ * Full geometry/routing signature for cold===warm determinism.
+ * Includes household ordering, spouse side, node coords, lane offsets, routes, jumps.
+ */
+export function layoutGeometrySignature(layout) {
+  const nodes = (layout.nodes || [])
+    .map((node) => {
+      const x = Math.round(node.x * 1000) / 1000;
+      const y = Math.round(node.y * 1000) / 1000;
+      return `${node.id}@${x},${y}`;
+    })
+    .sort()
+    .join('|');
+  const households = (layout.households || [])
+    .map((household) => {
+      const members = (household.memberIds || []).slice().sort().join('+');
+      return `${household.id}:${household.side || ''}:${household.generation ?? ''}:${members}`;
+    })
+    .sort()
+    .join('|');
+  const order = JSON.stringify(layout.meta?.generationOrders || {});
+  const branches = JSON.stringify(layout.meta?.branchOrderByGeneration || {});
+  return [
+    `side:${layout.meta?.spouseSide || ''}`,
+    `candidate:${layout.meta?.candidateId || ''}`,
+    `nodes:${nodes}`,
+    `households:${households}`,
+    `order:${order}`,
+    `branches:${branches}`,
+    `routes:${layoutRouteSignature(layout)}`,
+  ].join('\n');
+}
+
+export function coldWarmSignatureMismatch(coldLayout, warmLayout) {
+  return layoutGeometrySignature(coldLayout) === layoutGeometrySignature(warmLayout) ? 0 : 1;
+}
+
 export function boundingBox(nodes) {
   if (!nodes?.length) return { width: 0, height: 0, minX: 0, maxX: 0, minY: 0, maxY: 0 };
   const xs = nodes.map((node) => node.x);

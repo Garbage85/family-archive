@@ -22,12 +22,17 @@ import {
   findInvalidJunctions,
   routingMetrics,
 } from './link-routing.js';
-import { countParallelLaneFamilies, findVerticalLaneConflicts } from './parallel-lanes.js';
+import {
+  countParallelLaneFamilies,
+  findParallelLaneOverlaps,
+  findVerticalLaneConflicts,
+} from './parallel-lanes.js';
 import { scorePlacementCandidate } from './placement-cost.js';
 import {
   compareGrowthStability,
   countBranchIntegrityViolations,
   countFamilySideViolations,
+  countParentSiblingBranchSideViolations,
 } from './placement-optimizer.js';
 
 function unique(ids) {
@@ -128,6 +133,13 @@ export function collectPlacementMetrics(
     usedHouseholds,
     householdToBranch,
   );
+  const parentSiblingBranchSideViolations = countParentSiblingBranchSideViolations(
+    usedHouseholds,
+    householdToBranch,
+    side,
+  );
+  // Residual hard overlaps after lane assignment (tight eps, not cluster threshold).
+  const parallelLaneOverlap = findParallelLaneOverlaps(layout.links).length;
 
   const growth = compareGrowthStability(
     previousSnapshot,
@@ -157,6 +169,9 @@ export function collectPlacementMetrics(
     exteriorDetours: exterior.length,
     familySideViolations,
     branchIntegrityViolations,
+    parentSiblingBranchSideViolations,
+    parallelLaneOverlap,
+    coldWarmSignatureMismatch: 0,
     existingHouseholdsSideChanges: growth.existingHouseholdsSideChanges,
     existingBranchOrderInversions: growth.existingBranchOrderInversions,
     unexpectedCoupleFlip: growth.unexpectedCoupleFlip,
@@ -218,6 +233,8 @@ export function summarizeCandidateRow(candidateId, metrics) {
     spouseSide: metrics.spouseSide,
     familySideViolations: metrics.familySideViolations,
     branchIntegrityViolations: metrics.branchIntegrityViolations,
+    parentSiblingBranchSideViolations: metrics.parentSiblingBranchSideViolations,
+    parallelLaneOverlap: metrics.parallelLaneOverlap,
     existingHouseholdsSideChanges: metrics.existingHouseholdsSideChanges,
     existingBranchOrderInversions: metrics.existingBranchOrderInversions,
     unexpectedCoupleFlip: metrics.unexpectedCoupleFlip,

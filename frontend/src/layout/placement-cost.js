@@ -6,7 +6,7 @@
 export const HARD = 1_000_000;
 
 export const SOFT_WEIGHTS = {
-  // Stability of existing blocks when previous layout is known.
+  // Growth stability report-only softs (never feed geometry selection).
   existingHouseholdsSideChanges: 50000,
   existingBranchOrderInversions: 12000,
   unexpectedCoupleFlip: 80000,
@@ -44,7 +44,10 @@ export function scorePlacementCandidate(metrics) {
     (metrics.falseJumps || 0) +
     (metrics.exteriorDetours || 0) +
     (metrics.familySideViolations || 0) +
-    (metrics.branchIntegrityViolations || 0);
+    (metrics.branchIntegrityViolations || 0) +
+    (metrics.parentSiblingBranchSideViolations || 0) +
+    (metrics.parallelLaneOverlap || 0) +
+    (metrics.coldWarmSignatureMismatch || 0);
 
   const soft = {
     // Stability is soft but very expensive vs routing — never tear family sides.
@@ -77,10 +80,6 @@ export function compareCandidateScores(left, right) {
     return left.hardViolations - right.hardViolations;
   }
   if (left.totalCost !== right.totalCost) return left.totalCost - right.totalCost;
-  // Prefer candidate matching previous spouse side when costs tie.
-  if (left.preferredSideMatch !== right.preferredSideMatch) {
-    if (left.preferredSideMatch === true) return -1;
-    if (right.preferredSideMatch === true) return 1;
-  }
+  // Canonical tie-break only — previous layout must not influence ranking.
   return String(left.candidateId || '').localeCompare(String(right.candidateId || ''));
 }

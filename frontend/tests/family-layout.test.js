@@ -284,12 +284,21 @@ test('regression: spouse-symmetric visible set is identical for p010 and spouse 
     'p011',
     'p012',
     'p013',
+    'p014',
+    'p015',
+    'p016',
+    'p017',
   ]);
   // Sibling-spouse direct parent (p009 father of p008) is included — one level only.
   assert.equal(fromHusband.includes('p009'), true);
   // Spouse sister + her spouse + that spouse's parent stay in the couple-symmetric set.
   assert.equal(fromHusband.includes('p011'), true);
   assert.equal(fromHusband.includes('p013'), true);
+  // Mother's sister (maternal aunt) + spouse via household closure.
+  assert.equal(fromHusband.includes('p016'), true);
+  assert.equal(fromHusband.includes('p017'), true);
+  assert.equal(fromHusband.includes('p014'), true);
+  assert.equal(fromHusband.includes('p015'), true);
 
   for (const centerId of ['p010', 'p003']) {
     const layout = layoutFamilyTree(people, { centerId });
@@ -305,7 +314,7 @@ test('regression: spouse-symmetric visible set is identical for p010 and spouse 
   );
 });
 
-test('gate: prototype centers p001..p013 have no lost nodes, overlaps, or missing visible links', async () => {
+test('gate: prototype centers p001..p017 have no lost nodes, overlaps, or missing visible links', async () => {
   const fixture = await loadFixture();
   const people = loadStructuralPeople(fixture);
   const centerIds = Array.from(
@@ -322,7 +331,7 @@ test('gate: prototype centers p001..p013 have no lost nodes, overlaps, or missin
   );
 
   console.log(
-    '\nPROTOTYPE CENTER SCAN p001..p013\n',
+    '\nPROTOTYPE CENTER SCAN p001..p017\n',
     JSON.stringify(
       {
         rows,

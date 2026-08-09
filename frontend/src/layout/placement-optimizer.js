@@ -56,6 +56,8 @@ export function classifyFamilyMembership(peopleById, centerId) {
   const spouseSiblings = new Set();
   const centerSiblingSpouseParents = new Set();
   const spouseSiblingSpouseParents = new Set();
+  const centerParentSiblings = new Set();
+  const spouseParentSiblings = new Set();
 
   function walkAncestors(seedIds, into, depth = 8) {
     let frontier = [...seedIds];
@@ -100,13 +102,31 @@ export function classifyFamilyMembership(peopleById, centerId) {
   addSiblingSpouseParents(centerSiblings, centerSiblingSpouseParents);
   addSiblingSpouseParents(spouseSiblings, spouseSiblingSpouseParents);
 
+  // Direct siblings of direct parents (aunts/uncles), depth 1.
+  function addParentSiblings(seedIds, into) {
+    for (const seedId of seedIds) {
+      for (const parentId of parentIds(peopleById.get(seedId))) {
+        for (const grandparentId of parentIds(peopleById.get(parentId))) {
+          for (const auntUncleId of childIds(peopleById.get(grandparentId))) {
+            if (auntUncleId === parentId || coreIds.has(auntUncleId)) continue;
+            if (peopleById.has(auntUncleId)) into.add(auntUncleId);
+          }
+        }
+      }
+    }
+  }
+
+  addParentSiblings([center], centerParentSiblings);
+  for (const spouseId of spouseOnly) addParentSiblings([spouseId], spouseParentSiblings);
+
   const sideOfPerson = new Map();
   for (const id of coreIds) sideOfPerson.set(id, 'core');
   for (const id of spouseAncestors) sideOfPerson.set(id, 'spouse');
   for (const id of spouseSiblings) sideOfPerson.set(id, 'spouse');
   for (const id of spouseSiblingSpouseParents) sideOfPerson.set(id, 'spouse');
-  // Spouses of spouse-siblings are spouse-side.
-  for (const siblingId of spouseSiblings) {
+  for (const id of spouseParentSiblings) sideOfPerson.set(id, 'spouse');
+  // Spouses of spouse-siblings / spouse-parent-siblings are spouse-side.
+  for (const siblingId of [...spouseSiblings, ...spouseParentSiblings]) {
     for (const sid of spouseIds(peopleById.get(siblingId))) {
       if (!sideOfPerson.has(sid)) sideOfPerson.set(sid, 'spouse');
     }
@@ -118,7 +138,8 @@ export function classifyFamilyMembership(peopleById, centerId) {
   for (const id of centerSiblingSpouseParents) {
     if (!sideOfPerson.has(id)) sideOfPerson.set(id, 'center');
   }
-  for (const siblingId of centerSiblings) {
+  for (const id of centerParentSiblings) sideOfPerson.set(id, 'center');
+  for (const siblingId of [...centerSiblings, ...centerParentSiblings]) {
     for (const sid of spouseIds(peopleById.get(siblingId))) {
       if (!sideOfPerson.has(sid)) sideOfPerson.set(sid, 'center');
     }
@@ -141,6 +162,8 @@ export function classifyFamilyMembership(peopleById, centerId) {
     spouseSiblings,
     centerSiblingSpouseParents,
     spouseSiblingSpouseParents,
+    centerParentSiblings,
+    spouseParentSiblings,
     sideOfPerson,
   };
 }
@@ -150,7 +173,14 @@ export function classifyFamilyMembership(peopleById, centerId) {
  */
 export function classifyHouseholdSides(households, peopleById, centerId) {
   const membership = classifyFamilyMembership(peopleById, centerId);
-  const { sideOfPerson, coreIds, centerSiblings, spouseSiblings } = membership;
+  const {
+    sideOfPerson,
+    coreIds,
+    centerSiblings,
+    spouseSiblings,
+    centerParentSiblings,
+    spouseParentSiblings,
+  } = membership;
 
   return households.map((household) => {
     const members = household.memberIds;
@@ -164,8 +194,13 @@ export function classifyHouseholdSides(households, peopleById, centerId) {
 
     let anchorId = members.includes(String(centerId))
       ? String(centerId)
-      : members.find((id) => centerSiblings.has(id) || spouseSiblings.has(id)) ||
-        members.slice().sort((a, b) => a.localeCompare(b))[0];
+      : members.find(
+          (id) =>
+            centerSiblings.has(id) ||
+            spouseSiblings.has(id) ||
+            centerParentSiblings.has(id) ||
+            spouseParentSiblings.has(id),
+        ) || members.slice().sort((a, b) => a.localeCompare(b))[0];
 
     return {
       ...household,
@@ -247,7 +282,7 @@ export function buildFamilyBranchBlocks(households, peopleById, centerId, genera
     });
   }
 
-  function siblingBranches(side, siblings) {
+  function siblingBranches(side, siblings, kind, keyRank) {
     for (const siblingId of [...siblings].sort((a, b) => a.localeCompare(b))) {
       const list = [];
       const siblingHh = hhByMember.get(siblingId);
@@ -255,24 +290,30 @@ export function buildFamilyBranchBlocks(households, peopleById, centerId, genera
       for (const sid of spouseIds(peopleById.get(siblingId))) {
         const spouseHh = hhByMember.get(sid);
         if (spouseHh && spouseHh.id !== siblingHh?.id) list.push(spouseHh);
-        for (const parentId of parentIds(peopleById.get(sid))) {
-          const parentHh = hhByMember.get(parentId);
-          if (parentHh && parentHh.side === side) list.push(parentHh);
+        // Only for couple-core siblings: include in-law parents. Not for aunts/uncles.
+        if (kind === 'sibling') {
+          for (const parentId of parentIds(peopleById.get(sid))) {
+            const parentHh = hhByMember.get(parentId);
+            if (parentHh && parentHh.side === side) list.push(parentHh);
+          }
         }
       }
       pushBranch({
-        id: `branch:${side}-sibling:${siblingId}`,
+        id: `branch:${side}-${kind}:${siblingId}`,
         side,
-        kind: 'sibling',
+        kind,
         anchorId: siblingId,
         householdList: list,
-        canonicalKey: `2:${side}:sibling:${siblingId}`,
+        canonicalKey: `${keyRank}:${side}:${kind}:${siblingId}`,
       });
     }
   }
 
-  siblingBranches('spouse', membership.spouseSiblings);
-  siblingBranches('center', membership.centerSiblings);
+  // Parent-sibling (aunt/uncle) blocks stay with the parent's family side.
+  siblingBranches('spouse', membership.spouseParentSiblings, 'parent-sibling', '1.5');
+  siblingBranches('center', membership.centerParentSiblings, 'parent-sibling', '1.5');
+  siblingBranches('spouse', membership.spouseSiblings, 'sibling', '2');
+  siblingBranches('center', membership.centerSiblings, 'sibling', '2');
 
   // Any leftover households become singleton branches on their side.
   for (const household of sortedById(classified)) {
@@ -584,29 +625,15 @@ function canonicalBranchOrder(branches, side, spouseSide) {
   return list;
 }
 
-function optimizeBranchList(
-  branches,
-  { generation, generationMap, peopleById, neighborRows, previousBranchOrder = [] },
-) {
+function optimizeBranchList(branches, { generation, generationMap, peopleById, neighborRows }) {
   if (branches.length <= 1) return branches.slice();
 
+  // Canonical: topology crossing proxy only. Previous layout must not bias order.
   const scoreBranches = (order) => {
     const households = order.flatMap((branch) =>
       householdsForBranchInGeneration(branch, generation, generationMap),
     );
-    let cost = rowCrossingProxy(households, generationMap, peopleById, neighborRows);
-    // Stability: prefer previous relative branch order.
-    if (previousBranchOrder.length) {
-      const prevIndex = new Map(previousBranchOrder.map((id, index) => [id, index]));
-      for (let i = 0; i < order.length; i += 1) {
-        for (let j = i + 1; j < order.length; j += 1) {
-          const a = prevIndex.get(order[i].id);
-          const b = prevIndex.get(order[j].id);
-          if (a != null && b != null && a > b) cost += 50;
-        }
-      }
-    }
-    return cost;
+    return rowCrossingProxy(households, generationMap, peopleById, neighborRows);
   };
 
   let best = branches.slice().sort((a, b) => a.canonicalKey.localeCompare(b.canonicalKey));
@@ -631,25 +658,9 @@ function optimizeBranchList(
   return best;
 }
 
-function optimizeHouseholdsInsideBranch(
-  households,
-  { generationMap, peopleById, neighborRows, previousHouseholdOrder = [] },
-) {
+function optimizeHouseholdsInsideBranch(households, { generationMap, peopleById, neighborRows }) {
   if (households.length <= 1) return households.slice();
-  const score = (order) => {
-    let cost = rowCrossingProxy(order, generationMap, peopleById, neighborRows);
-    if (previousHouseholdOrder.length) {
-      const prevIndex = new Map(previousHouseholdOrder.map((id, index) => [id, index]));
-      for (let i = 0; i < order.length; i += 1) {
-        for (let j = i + 1; j < order.length; j += 1) {
-          const a = prevIndex.get(order[i].id);
-          const b = prevIndex.get(order[j].id);
-          if (a != null && b != null && a > b) cost += 20;
-        }
-      }
-    }
-    return cost;
-  };
+  const score = (order) => rowCrossingProxy(order, generationMap, peopleById, neighborRows);
   let best = households.slice().sort((a, b) => a.id.localeCompare(b.id));
   if (households.length <= EXHAUSTIVE_BLOCK_LIMIT) {
     let bestScore = score(best);
@@ -671,15 +682,7 @@ function optimizeHouseholdsInsideBranch(
  */
 export function optimizeGenerationOrder(
   households,
-  {
-    generation,
-    generationMap,
-    peopleById,
-    neighborRows,
-    spouseSide,
-    householdToBranch,
-    previousSnapshot = null,
-  },
+  { generation, generationMap, peopleById, neighborRows, spouseSide, householdToBranch },
 ) {
   if (!households.length) return [];
 
@@ -708,30 +711,20 @@ export function optimizeGenerationOrder(
     }
     // Include only branches that still have households in this generation.
     const active = sideBranches.filter((branch) => branch.households.length);
-    const prevBranchOrder =
-      previousSnapshot?.branchOrderByGeneration?.[generation]?.filter((id) =>
-        active.some((branch) => branch.id === id),
-      ) || [];
     const orderedBranches = optimizeBranchList(canonicalBranchOrder(active, side, spouseSide), {
       generation,
       generationMap,
       peopleById,
       neighborRows,
-      previousBranchOrder: prevBranchOrder,
     });
 
     const out = [];
     for (const branch of orderedBranches) {
-      const prevHh =
-        previousSnapshot?.householdOrderByGeneration?.[generation]?.filter((id) =>
-          branch.households.some((household) => household.id === id),
-        ) || [];
       out.push(
         ...optimizeHouseholdsInsideBranch(branch.households, {
           generationMap,
           peopleById,
           neighborRows,
-          previousHouseholdOrder: prevHh,
         }),
       );
     }
@@ -757,7 +750,7 @@ export function optimizeGenerationOrder(
 
 export function optimizeAllGenerations(
   householdsByGeneration,
-  { generationMap, peopleById, spouseSide, householdToBranch, previousSnapshot = null },
+  { generationMap, peopleById, spouseSide, householdToBranch },
 ) {
   const gens = [...householdsByGeneration.keys()].sort((a, b) => a - b);
   const orders = new Map();
@@ -771,7 +764,6 @@ export function optimizeAllGenerations(
         neighborRows: [],
         spouseSide,
         householdToBranch,
-        previousSnapshot,
       }),
     );
   }
@@ -798,7 +790,6 @@ export function optimizeAllGenerations(
             neighborRows: neighbors,
             spouseSide,
             householdToBranch,
-            previousSnapshot,
           }),
         );
       }
@@ -1015,6 +1006,44 @@ export function compareGrowthStability(
   };
 }
 
+/**
+ * Hard: parent-sibling (aunt/uncle) branches must stay on their parent's family
+ * side of the couple core — never jump across the core.
+ */
+export function countParentSiblingBranchSideViolations(
+  orderedHouseholds,
+  householdToBranch,
+  spouseSide,
+) {
+  if (!orderedHouseholds?.length || !householdToBranch || !spouseSide) return 0;
+  const byGen = new Map();
+  for (const household of orderedHouseholds) {
+    const g = household.generation ?? 0;
+    if (!byGen.has(g)) byGen.set(g, []);
+    byGen.get(g).push(household);
+  }
+  let violations = 0;
+  for (const row of byGen.values()) {
+    const coreIndex = row.findIndex((household) => household.side === 'core');
+    for (let i = 0; i < row.length; i += 1) {
+      const household = row[i];
+      const branch = householdToBranch.get(household.id);
+      if (!branch || branch.kind !== 'parent-sibling') continue;
+      if (household.side !== branch.side) violations += 1;
+      if (coreIndex < 0) continue;
+      if (branch.side === 'spouse') {
+        if (spouseSide === 'left' && i > coreIndex) violations += 1;
+        if (spouseSide === 'right' && i < coreIndex) violations += 1;
+      }
+      if (branch.side === 'center') {
+        if (spouseSide === 'left' && i < coreIndex) violations += 1;
+        if (spouseSide === 'right' && i > coreIndex) violations += 1;
+      }
+    }
+  }
+  return violations;
+}
+
 export function buildPlacementCandidates({
   households,
   generationMap,
@@ -1024,7 +1053,6 @@ export function buildPlacementCandidates({
   gap,
   generationStep,
   isHorizontal,
-  previousSnapshot = null,
 }) {
   const { branches, classified, householdToBranch } = buildFamilyBranchBlocks(
     households,
@@ -1039,9 +1067,6 @@ export function buildPlacementCandidates({
     byGen.get(g).push(household);
   }
 
-  const preferredSide =
-    previousSnapshot?.centerId === String(centerId) ? previousSnapshot.spouseSide : null;
-
   const candidates = [];
   for (const spouseSide of ['left', 'right']) {
     const orders = optimizeAllGenerations(byGen, {
@@ -1049,7 +1074,6 @@ export function buildPlacementCandidates({
       peopleById,
       spouseSide,
       householdToBranch,
-      previousSnapshot,
     });
     const material = materializePlacement({
       ordersByGeneration: orders,
@@ -1081,7 +1105,6 @@ export function buildPlacementCandidates({
     candidates.push({
       candidateId: `spouse-${spouseSide}`,
       spouseSide,
-      preferredSideMatch: preferredSide ? spouseSide === preferredSide : null,
       ...material,
       generationOrders: Object.fromEntries(
         [...orders.entries()].map(([g, list]) => [g, list.map((h) => h.id)]),
