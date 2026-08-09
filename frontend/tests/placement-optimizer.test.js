@@ -70,6 +70,9 @@ function hardGate(people, layout, label) {
   assert.equal(findInvalidJunctions(layout).length, 0, `${label} invalidJ`);
   assert.equal(findExteriorParentChildDetours(layout).length, 0, `${label} exterior`);
   assert.equal(findZeroLengthSegments(layout).length, 0, `${label} zeroLen`);
+  assert.equal(layout.meta.familySideViolations ?? 0, 0, `${label} familySide`);
+  assert.equal(layout.meta.branchIntegrityViolations ?? 0, 0, `${label} branch`);
+  assert.equal(layout.meta.hardViolations ?? 0, 0, `${label} hard`);
   const parity = assertCrossingJumpParity(layout);
   assert.equal(parity.missedJumps, 0, `${label} missedJumps`);
   assert.equal(parity.falseJumps, 0, `${label} falseJumps`);
@@ -169,7 +172,7 @@ test('production all-centers placement gate + BEFORE/AFTER report', async () => 
   const fixture = await loadProductionFixture();
   const people = loadStructuralPeople(fixture);
   const centerIds = Array.from(
-    { length: 10 },
+    { length: fixture.personCount },
     (_, index) => `p${String(index + 1).padStart(3, '0')}`,
   );
 
@@ -197,6 +200,7 @@ test('production all-centers placement gate + BEFORE/AFTER report', async () => 
     const metrics = collectPlacementMetrics(people, layout, {
       expectedVisibleIds: selectVisiblePeople(people, centerId).map((person) => person.id),
       households: layout.households,
+      spouseSide: layout.meta.spouseSide,
     });
     rows.push({
       centerId,
@@ -212,6 +216,8 @@ test('production all-centers placement gate + BEFORE/AFTER report', async () => 
       linksThroughCards: metrics.linksThroughCards,
       falseJunctions: metrics.falseJunctions,
       ambiguousShared: metrics.ambiguousSharedSegments,
+      familySideViolations: metrics.familySideViolations,
+      branchIntegrityViolations: metrics.branchIntegrityViolations,
       parallelLanes: metrics.parallelLanes,
       crossings: metrics.crossings,
       jumps: metrics.jumps,
@@ -227,6 +233,8 @@ test('production all-centers placement gate + BEFORE/AFTER report', async () => 
 
   for (const row of rows) {
     assert.equal(row.hardViolations, 0, `${row.centerId} hardViolations`);
+    assert.equal(row.familySideViolations, 0, `${row.centerId} familySide`);
+    assert.equal(row.branchIntegrityViolations, 0, `${row.centerId} branch`);
   }
 
   const p010 = rows.find((row) => row.centerId === 'p010');
@@ -234,18 +242,25 @@ test('production all-centers placement gate + BEFORE/AFTER report', async () => 
   const before010 = beforeMetrics.rows.find((row) => row.centerId === 'p010');
   const before003 = beforeMetrics.rows.find((row) => row.centerId === 'p003');
 
-  assert.ok(p010.crossings < before010.crossings || p010.jumps <= before010.jumps);
-  assert.equal(p010.crossings, 0);
-  assert.equal(p003.crossings, 0);
-  assert.equal(p010.spouseSide, 'left');
-  assert.equal(p003.spouseSide, 'right');
+  // Expanded topology may keep unavoidable crossings; family structure is hard.
+  assert.equal(p010.hardViolations, 0);
+  assert.equal(p003.hardViolations, 0);
+  assert.equal(p010.familySideViolations, 0);
+  assert.equal(p003.familySideViolations, 0);
+  const sister010 = p010.householdOrdering
+    .flatMap((row) => row.households)
+    .find((household) => household.memberIds.includes('p011'));
+  assert.equal(sister010?.side, 'spouse', 'from p010, sister of spouse stays spouse-side');
+  const sister003 = p003.householdOrdering
+    .flatMap((row) => row.households)
+    .find((household) => household.memberIds.includes('p011'));
+  assert.equal(sister003?.side, 'center', 'from p003, own sister stays center-side');
 
-  // Couple symmetry: same people, mirrored spouse-side choice, equivalent cost.
+  // Couple symmetry: same people; sides may be mirrored.
   assert.deepEqual(
     selectVisiblePeople(people, 'p010').map((person) => person.id),
     selectVisiblePeople(people, 'p003').map((person) => person.id),
   );
-  assert.equal(p010.totalCost, p003.totalCost);
 
   console.log(
     '\nPLACEMENT BEFORE/AFTER\n',

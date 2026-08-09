@@ -24,6 +24,11 @@ import {
 } from './link-routing.js';
 import { countParallelLaneFamilies, findVerticalLaneConflicts } from './parallel-lanes.js';
 import { scorePlacementCandidate } from './placement-cost.js';
+import {
+  compareGrowthStability,
+  countBranchIntegrityViolations,
+  countFamilySideViolations,
+} from './placement-optimizer.js';
 
 function unique(ids) {
   return [...new Set((ids || []).map(String).filter(Boolean))];
@@ -73,9 +78,17 @@ function generationOrderKey(households) {
 export function collectPlacementMetrics(
   people,
   layout,
-  { expectedVisibleIds = null, households = null, canonicalOrderKey = '' } = {},
+  {
+    expectedVisibleIds = null,
+    households = null,
+    canonicalOrderKey = '',
+    spouseSide = null,
+    householdToBranch = null,
+    previousSnapshot = null,
+  } = {},
 ) {
   const expected = expectedVisibleIds || (layout.nodes || []).map((node) => String(node.id));
+  const usedHouseholds = households || layout.households;
   const lostNodes = findLostVisiblePeople(expected, layout);
   const overlaps = findCardOverlaps(layout.nodes);
   const missingPC = findMissingVisibleParentChildLinks(people, layout);
@@ -94,9 +107,37 @@ export function collectPlacementMetrics(
   const route = routingMetrics(layout.links);
   const laneConflicts = findVerticalLaneConflicts(layout.links);
   const bounds = boundingBox(layout.nodes);
-  const orderKey = generationOrderKey(households || layout.households);
+  const orderKey = generationOrderKey(usedHouseholds);
   const orderingInstability =
     canonicalOrderKey && orderKey && orderKey !== canonicalOrderKey ? 1 : 0;
+
+  const side = spouseSide || layout.meta?.spouseSide || null;
+  let familySideViolations = 0;
+  if (side) {
+    const byGen = new Map();
+    for (const household of usedHouseholds || []) {
+      const g = household.generation ?? 0;
+      if (!byGen.has(g)) byGen.set(g, []);
+      byGen.get(g).push(household);
+    }
+    for (const row of byGen.values()) {
+      familySideViolations += countFamilySideViolations(row, side);
+    }
+  }
+  const branchIntegrityViolations = countBranchIntegrityViolations(
+    usedHouseholds,
+    householdToBranch,
+  );
+
+  const growth = compareGrowthStability(
+    previousSnapshot,
+    { ...layout, households: usedHouseholds, meta: { ...(layout.meta || {}), spouseSide: side } },
+    householdToBranch,
+    {
+      centerId: layout.meta?.centerId || previousSnapshot?.centerId || null,
+      spouseSide: side,
+    },
+  );
 
   const metrics = {
     overlaps: overlaps.length,
@@ -114,6 +155,11 @@ export function collectPlacementMetrics(
     missingRequiredJumps: parity.missedJumps,
     falseJumps: parity.falseJumps,
     exteriorDetours: exterior.length,
+    familySideViolations,
+    branchIntegrityViolations,
+    existingHouseholdsSideChanges: growth.existingHouseholdsSideChanges,
+    existingBranchOrderInversions: growth.existingBranchOrderInversions,
+    unexpectedCoupleFlip: growth.unexpectedCoupleFlip,
     crossings: crossings.length,
     jumps: route.uniqueRenderedJumps,
     nearCollinear: laneConflicts.length,
@@ -125,15 +171,15 @@ export function collectPlacementMetrics(
       ),
     ),
     parallelLaneConflicts: laneConflicts.length,
-    familyInterleave: familyInterleaveFromHouseholds(households || layout.households),
+    familyInterleave: familyInterleaveFromHouseholds(usedHouseholds),
     bends: route.maxBendsPerParentChild,
     routeLength: route.totalParentChildLength,
     width: bounds.width,
     height: bounds.height,
     orderingInstability,
     displayedCount: layout.nodes?.length || 0,
-    householdCount: (households || layout.households || []).length,
-    spouseSide: layout.meta?.spouseSide || null,
+    householdCount: (usedHouseholds || []).length,
+    spouseSide: side,
     boundingBox: bounds,
     routingBounds: route.routingBounds,
     orderKey,
@@ -144,7 +190,7 @@ export function collectPlacementMetrics(
   return { ...metrics, ...score };
 }
 
-export function householdOrderingByGeneration(households) {
+export function householdOrderingByGeneration(households, branchOrderByGeneration = null) {
   const byGen = new Map();
   for (const household of households || []) {
     const g = household.generation ?? 0;
@@ -153,6 +199,7 @@ export function householdOrderingByGeneration(households) {
       id: household.id,
       memberIds: household.memberIds,
       side: household.side || null,
+      branchId: household.branchId || null,
     });
   }
   return [...byGen.keys()]
@@ -161,6 +208,7 @@ export function householdOrderingByGeneration(households) {
       generation: g,
       households: byGen.get(g),
       memberOrder: byGen.get(g).flatMap((household) => household.memberIds),
+      branchOrder: branchOrderByGeneration?.[g] || [],
     }));
 }
 
@@ -168,6 +216,11 @@ export function summarizeCandidateRow(candidateId, metrics) {
   return {
     candidate: candidateId,
     spouseSide: metrics.spouseSide,
+    familySideViolations: metrics.familySideViolations,
+    branchIntegrityViolations: metrics.branchIntegrityViolations,
+    existingHouseholdsSideChanges: metrics.existingHouseholdsSideChanges,
+    existingBranchOrderInversions: metrics.existingBranchOrderInversions,
+    unexpectedCoupleFlip: metrics.unexpectedCoupleFlip,
     crossings: metrics.crossings,
     jumps: metrics.jumps,
     parallelConflicts: metrics.parallelLaneConflicts,

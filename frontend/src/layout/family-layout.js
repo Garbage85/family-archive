@@ -9,7 +9,11 @@
  */
 
 import { routeLayoutLinks } from './link-routing.js';
-import { buildPlacementCandidates, compareCandidateScores } from './placement-optimizer.js';
+import {
+  buildPlacementCandidates,
+  compareCandidateScores,
+  extractPlacementSnapshot,
+} from './placement-optimizer.js';
 import {
   collectPlacementMetrics,
   householdOrderingByGeneration,
@@ -315,6 +319,7 @@ export function layoutFamilyTree(
     ancestryDepth = 8,
     progenyDepth = 8,
     returnCandidates = false,
+    previousLayout = null,
   } = {},
 ) {
   if (!Array.isArray(people) || !people.length) {
@@ -325,6 +330,7 @@ export function layoutFamilyTree(
   const generation = assignGenerations(visible, centerId);
   const households = buildHouseholds(visible);
   const peopleById = personMap(visible);
+  const previousSnapshot = previousLayout ? extractPlacementSnapshot(previousLayout) : null;
 
   const isHorizontal = orientation === 'horizontal';
   const crossStep = isHorizontal ? levelSeparation : nodeSeparation;
@@ -341,6 +347,7 @@ export function layoutFamilyTree(
     gap,
     generationStep,
     isHorizontal,
+    previousSnapshot,
   });
 
   const expectedVisibleIds = visible.map((person) => person.id);
@@ -359,27 +366,47 @@ export function layoutFamilyTree(
       cardHeight,
       orientation,
     });
+    layout.meta = {
+      centerId: String(centerId),
+      spouseSide: candidate.spouseSide,
+      branchOrderByGeneration: candidate.branchOrderByGeneration,
+    };
     const metrics = collectPlacementMetrics(people, layout, {
       expectedVisibleIds,
       households: layout.households,
       canonicalOrderKey,
+      spouseSide: candidate.spouseSide,
+      householdToBranch: candidate.householdToBranch,
+      previousSnapshot,
     });
     metrics.spouseSide = candidate.spouseSide;
     metrics.candidateId = candidate.candidateId;
+    metrics.preferredSideMatch = candidate.preferredSideMatch;
     scored.push({ candidate, layout, metrics });
   }
 
   scored.sort((left, right) =>
     compareCandidateScores(
-      { ...left.metrics, candidateId: left.candidate.candidateId },
-      { ...right.metrics, candidateId: right.candidate.candidateId },
+      {
+        ...left.metrics,
+        candidateId: left.candidate.candidateId,
+        preferredSideMatch: left.candidate.preferredSideMatch,
+      },
+      {
+        ...right.metrics,
+        candidateId: right.candidate.candidateId,
+        preferredSideMatch: right.candidate.preferredSideMatch,
+      },
     ),
   );
 
   const winner = scored[0];
   const nodes = winner.layout.nodes;
   const links = winner.layout.links;
-  const placedHouseholds = winner.layout.households;
+  const placedHouseholds = winner.layout.households.map((household) => ({
+    ...household,
+    branchId: winner.candidate.householdToBranch?.get(household.id)?.id || null,
+  }));
 
   const result = {
     nodes,
@@ -390,6 +417,7 @@ export function layoutFamilyTree(
       size: household.size,
       generation: household.generation,
       side: household.side,
+      branchId: household.branchId,
       x0: household.x0,
       x1: household.x1,
     })),
@@ -405,9 +433,19 @@ export function layoutFamilyTree(
       spouseSide: winner.candidate.spouseSide,
       candidateId: winner.candidate.candidateId,
       generationOrders: winner.candidate.generationOrders,
-      householdOrdering: householdOrderingByGeneration(placedHouseholds),
+      branchOrderByGeneration: winner.candidate.branchOrderByGeneration,
+      branches: winner.candidate.branches,
+      householdOrdering: householdOrderingByGeneration(
+        placedHouseholds,
+        winner.candidate.branchOrderByGeneration,
+      ),
       placementCost: winner.metrics.totalCost,
       hardViolations: winner.metrics.hardViolations,
+      familySideViolations: winner.metrics.familySideViolations,
+      branchIntegrityViolations: winner.metrics.branchIntegrityViolations,
+      existingHouseholdsSideChanges: winner.metrics.existingHouseholdsSideChanges,
+      existingBranchOrderInversions: winner.metrics.existingBranchOrderInversions,
+      unexpectedCoupleFlip: winner.metrics.unexpectedCoupleFlip,
       crossings: winner.metrics.crossings,
       jumps: winner.metrics.jumps,
     },
@@ -424,3 +462,5 @@ export function layoutFamilyTree(
 
   return result;
 }
+
+export { extractPlacementSnapshot };

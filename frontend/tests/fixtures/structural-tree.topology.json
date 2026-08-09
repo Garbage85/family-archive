@@ -1,14 +1,12 @@
 {
   "version": 1,
   "kind": "structural-topology",
-  "personCount": 10,
+  "personCount": 13,
   "idPrefix": "p",
   "people": [
     {
       "id": "p001",
-      "data": {
-        "gender": "M"
-      },
+      "data": { "gender": "M" },
       "rels": {
         "parents": [],
         "spouses": ["p002"],
@@ -17,9 +15,7 @@
     },
     {
       "id": "p002",
-      "data": {
-        "gender": "F"
-      },
+      "data": { "gender": "F" },
       "rels": {
         "parents": [],
         "spouses": ["p001"],
@@ -28,9 +24,7 @@
     },
     {
       "id": "p003",
-      "data": {
-        "gender": "F"
-      },
+      "data": { "gender": "F" },
       "rels": {
         "parents": ["p004", "p005"],
         "spouses": ["p010"],
@@ -39,31 +33,25 @@
     },
     {
       "id": "p004",
-      "data": {
-        "gender": "F"
-      },
+      "data": { "gender": "F" },
       "rels": {
         "parents": [],
         "spouses": ["p005"],
-        "children": ["p003"]
+        "children": ["p003", "p011"]
       }
     },
     {
       "id": "p005",
-      "data": {
-        "gender": "M"
-      },
+      "data": { "gender": "M" },
       "rels": {
         "parents": [],
         "spouses": ["p004"],
-        "children": ["p003"]
+        "children": ["p003", "p011"]
       }
     },
     {
       "id": "p006",
-      "data": {
-        "gender": "M"
-      },
+      "data": { "gender": "M" },
       "rels": {
         "parents": ["p001", "p002"],
         "spouses": [],
@@ -72,9 +60,7 @@
     },
     {
       "id": "p007",
-      "data": {
-        "gender": "M"
-      },
+      "data": { "gender": "M" },
       "rels": {
         "parents": ["p001", "p002"],
         "spouses": ["p008"],
@@ -83,9 +69,7 @@
     },
     {
       "id": "p008",
-      "data": {
-        "gender": "F"
-      },
+      "data": { "gender": "F" },
       "rels": {
         "parents": ["p009"],
         "spouses": ["p007"],
@@ -94,9 +78,7 @@
     },
     {
       "id": "p009",
-      "data": {
-        "gender": "M"
-      },
+      "data": { "gender": "M" },
       "rels": {
         "parents": [],
         "spouses": [],
@@ -105,13 +87,38 @@
     },
     {
       "id": "p010",
-      "data": {
-        "gender": "M"
-      },
+      "data": { "gender": "M" },
       "rels": {
         "parents": ["p001", "p002"],
         "spouses": ["p003"],
         "children": []
+      }
+    },
+    {
+      "id": "p011",
+      "data": { "gender": "F" },
+      "rels": {
+        "parents": ["p004", "p005"],
+        "spouses": ["p012"],
+        "children": []
+      }
+    },
+    {
+      "id": "p012",
+      "data": { "gender": "M" },
+      "rels": {
+        "parents": ["p013"],
+        "spouses": ["p011"],
+        "children": []
+      }
+    },
+    {
+      "id": "p013",
+      "data": { "gender": "M" },
+      "rels": {
+        "parents": [],
+        "spouses": [],
+        "children": ["p012"]
       }
     }
   ],
@@ -128,8 +135,8 @@
       "notes",
       "avatar"
     ],
-    "spouseEdgeCount": 4,
-    "parentChildEdgeCount": 9,
+    "spouseEdgeCount": 5,
+    "parentChildEdgeCount": 12,
     "generationHints": {
       "p001": 0,
       "p002": 0,
@@ -140,10 +147,18 @@
       "p007": 1,
       "p008": 1,
       "p009": 0,
-      "p010": 1
+      "p010": 1,
+      "p011": 1,
+      "p012": 1,
+      "p013": 0
     },
     "defaultCenterId": "p010",
+    "growth": {
+      "spouseSisterId": "p011",
+      "newPersonIds": ["p012", "p013"],
+      "snapshots": "structural-tree-growth.json"
+    },
     "source": "/home/garbage/family-archive-0.2/local/production-trees.data.json",
-    "extractedAt": "2026-08-09T05:23:00.449Z"
+    "extractedAt": "2026-08-09T08:40:00.000Z"
   }
 }

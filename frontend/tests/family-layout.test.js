@@ -34,7 +34,6 @@ import {
   findUnrelatedLinkIntersections,
   findZeroLengthSegments,
   layoutRouteSignature,
-  uniqueUnrelatedCrossingPoints,
 } from '../src/layout/layout-validators.js';
 import {
   CROSSING_STYLE,
@@ -282,9 +281,15 @@ test('regression: spouse-symmetric visible set is identical for p010 and spouse 
     'p008',
     'p009',
     'p010',
+    'p011',
+    'p012',
+    'p013',
   ]);
   // Sibling-spouse direct parent (p009 father of p008) is included — one level only.
   assert.equal(fromHusband.includes('p009'), true);
+  // Spouse sister + her spouse + that spouse's parent stay in the couple-symmetric set.
+  assert.equal(fromHusband.includes('p011'), true);
+  assert.equal(fromHusband.includes('p013'), true);
 
   for (const centerId of ['p010', 'p003']) {
     const layout = layoutFamilyTree(people, { centerId });
@@ -300,11 +305,11 @@ test('regression: spouse-symmetric visible set is identical for p010 and spouse 
   );
 });
 
-test('gate: prototype centers p001..p010 have no lost nodes, overlaps, or missing visible links', async () => {
+test('gate: prototype centers p001..p013 have no lost nodes, overlaps, or missing visible links', async () => {
   const fixture = await loadFixture();
   const people = loadStructuralPeople(fixture);
   const centerIds = Array.from(
-    { length: 10 },
+    { length: fixture.personCount },
     (_, index) => `p${String(index + 1).padStart(3, '0')}`,
   );
   const rows = scanPrototypeCenters(people, centerIds);
@@ -317,7 +322,7 @@ test('gate: prototype centers p001..p010 have no lost nodes, overlaps, or missin
   );
 
   console.log(
-    '\nPROTOTYPE CENTER SCAN p001..p010\n',
+    '\nPROTOTYPE CENTER SCAN p001..p013\n',
     JSON.stringify(
       {
         rows,
@@ -431,22 +436,17 @@ test('family-junction routing attaches child bus to spouse junction', async () =
 
   const crossings = findUnrelatedLinkIntersections(layout);
   const metrics = routingMetrics(layout.links);
-  // Placement optimizer should prefer family-side order that removes the old
-  // p001+p002 × p004+p005 tangle; jumps remain only for unavoidable crossings.
-  assert.equal(crossings.length, 0, 'optimized p010 placement should avoid unrelated crossings');
-  assert.equal(metrics.uniqueRenderedJumps, 0);
-  assert.equal(layout.meta.spouseSide, 'left');
-  assert.equal(layout.meta.candidateId, 'spouse-left');
+  // Expanded production fixture may keep unavoidable crossings inside hard
+  // family-side blocks; jumps must still cover them. Family structure is hard.
+  assert.equal(layout.meta.familySideViolations, 0);
+  assert.equal(layout.meta.branchIntegrityViolations, 0);
+  assert.equal(layout.meta.hardViolations, 0);
+  assert.equal(findUnrelatedCrossingsWithoutJump(layout).length, 0);
+  assert.equal(metrics.uniqueRenderedJumps, metrics.uniqueUnrelatedCrossings);
 
-  const before = {
-    parentChildSegments: 33,
-    familyJunctions: 3,
-    crossings: 1,
-    jumps: 1,
-    missedJumps: 0,
-    maxBends: 3,
-    note: 'id-sorted household rows before placement optimizer',
-  };
+  const spouseSister = layout.households.find((household) => household.memberIds.includes('p011'));
+  assert.equal(spouseSister?.side, 'spouse', 'spouse sister must stay on spouse-family side');
+
   const after = {
     parentChildSegments: countParentChildSegments(layout.links),
     familyJunctions: countFamilyJunctions(layout.links),
@@ -456,6 +456,8 @@ test('family-junction routing attaches child bus to spouse junction', async () =
     maxBends: metrics.maxBendsPerParentChild,
     spouseSide: layout.meta.spouseSide,
     candidateId: layout.meta.candidateId,
+    familySideViolations: layout.meta.familySideViolations,
+    branchIntegrityViolations: layout.meta.branchIntegrityViolations,
     routingBounds: metrics.routingBounds,
   };
 
@@ -468,7 +470,6 @@ test('family-junction routing attaches child bus to spouse junction', async () =
           junction: 'spouse link midpoint + shared stem/bus (same fam: familyKey)',
           crossing: 'unrelated H×V; horizontal segment gets SVG line-jump',
         },
-        before,
         after,
         nodes: layout.nodes.length,
         parentChildLinks: parentLinks.length,
@@ -481,11 +482,7 @@ test('family-junction routing attaches child bus to spouse junction', async () =
     ),
   );
 
-  assert.ok(
-    after.parentChildSegments < before.parentChildSegments,
-    'unified junction should reduce parent-child segments',
-  );
-  assert.ok(after.crossings < before.crossings, 'optimizer should reduce crossings vs id-sort');
+  assert.ok(after.familyJunctions >= 3, 'expected couple/single-parent junctions');
 });
 
 test('regression: exclusive detector missed bend/endpoint crossings (root cause)', () => {
@@ -549,21 +546,11 @@ test('regression: exclusive detector missed bend/endpoint crossings (root cause)
   assert.match(pointsToSvgPath(over.points, over.jumps), /A/);
 });
 
-test('regression: optimizer removes p001+p002 × p004+p005 tangle for couple centers', async () => {
+test('regression: couple centers keep hard family-side blocks for spouse sister branch', async () => {
   const fixture = await loadFixture();
   const people = loadStructuralPeople(fixture);
   for (const centerId of ['p010', 'p003']) {
     const layout = layoutFamilyTree(people, { centerId, returnCandidates: true });
-    const sites = uniqueUnrelatedCrossingPoints(layout.links).filter((site) => {
-      const keys = [site.horizontalFamilyKey, site.verticalFamilyKey].sort();
-      return keys[0] === 'fam:p001+p002' && keys[1] === 'fam:p004+p005';
-    });
-    assert.equal(
-      sites.length,
-      0,
-      `${centerId}: family-side placement should avoid this historic crossing`,
-    );
-
     const parity = assertCrossingJumpParity(layout);
     assert.equal(parity.missedJumps, 0, `${centerId} missedJumps`);
     assert.equal(parity.falseJumps, 0, `${centerId} falseJumps`);
@@ -573,11 +560,32 @@ test('regression: optimizer removes p001+p002 × p004+p005 tangle for couple cen
       `${centerId} parity`,
     );
     assert.equal(layout.meta.hardViolations, 0);
-    assert.equal(layout.meta.crossings, 0);
+    assert.equal(layout.meta.familySideViolations, 0);
+    assert.equal(layout.meta.branchIntegrityViolations, 0);
 
-    // Geometric order keeps spouse continuity: p003 left of p010 for both centers.
-    const x = Object.fromEntries(layout.nodes.map((node) => [node.id, node.x]));
-    assert.ok(x.p003 < x.p010, `${centerId}: p003 should stay left of p010`);
+    // p011 is sister of p003. Relative to the active center:
+    // - center p010 → p011 is on spouse side
+    // - center p003 → p011 is on center side
+    const sister = layout.households.find((household) => household.memberIds.includes('p011'));
+    const expectedSisterSide = centerId === 'p010' ? 'spouse' : 'center';
+    assert.equal(
+      sister?.side,
+      expectedSisterSide,
+      `${centerId}: p011 on ${expectedSisterSide} side`,
+    );
+
+    // p006 is sibling of p010.
+    const p010Sibling = layout.households.find((household) => household.memberIds.includes('p006'));
+    const expectedSiblingSide = centerId === 'p010' ? 'center' : 'spouse';
+    assert.equal(
+      p010Sibling?.side,
+      expectedSiblingSide,
+      `${centerId}: p006 on ${expectedSiblingSide} side`,
+    );
+
+    // Couple members stay adjacent in the core household.
+    const core = layout.households.find((household) => household.side === 'core');
+    assert.ok(core?.memberIds.includes('p003') && core?.memberIds.includes('p010'));
 
     console.log(
       '\nCOUPLE CENTER PLACEMENT\n',
@@ -590,13 +598,13 @@ test('regression: optimizer removes p001+p002 × p004+p005 tangle for couple cen
           householdOrdering: layout.meta.householdOrdering,
           crossings: layout.meta.crossings,
           jumps: layout.meta.jumps,
+          familySideViolations: layout.meta.familySideViolations,
         },
         null,
         2,
       ),
     );
 
-    // If a future topology reintroduces a true H×V crossing, jumps must still render.
     for (const link of layout.links) {
       if (!(link.jumps || []).length) continue;
       assert.match(

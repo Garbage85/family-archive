@@ -1,12 +1,16 @@
 /**
  * Cost function for prototype household placement candidates.
- * Hard violations dominate; soft terms prefer fewer crossings/jumps
- * over slightly wider trees.
+ * Family structure is HARD; routing quality is SOFT.
  */
 
 export const HARD = 1_000_000;
 
 export const SOFT_WEIGHTS = {
+  // Stability of existing blocks when previous layout is known.
+  existingHouseholdsSideChanges: 50000,
+  existingBranchOrderInversions: 12000,
+  unexpectedCoupleFlip: 80000,
+  // Routing quality — never outweighs family structure.
   crossings: 5000,
   jumps: 4000,
   nearCollinear: 2500,
@@ -38,9 +42,17 @@ export function scorePlacementCandidate(metrics) {
     (metrics.selfIntersections || 0) +
     (metrics.missingRequiredJumps || 0) +
     (metrics.falseJumps || 0) +
-    (metrics.exteriorDetours || 0);
+    (metrics.exteriorDetours || 0) +
+    (metrics.familySideViolations || 0) +
+    (metrics.branchIntegrityViolations || 0);
 
   const soft = {
+    // Stability is soft but very expensive vs routing — never tear family sides.
+    existingHouseholdsSideChanges:
+      (metrics.existingHouseholdsSideChanges || 0) * SOFT_WEIGHTS.existingHouseholdsSideChanges,
+    existingBranchOrderInversions:
+      (metrics.existingBranchOrderInversions || 0) * SOFT_WEIGHTS.existingBranchOrderInversions,
+    unexpectedCoupleFlip: (metrics.unexpectedCoupleFlip || 0) * SOFT_WEIGHTS.unexpectedCoupleFlip,
     crossings: (metrics.crossings || 0) * SOFT_WEIGHTS.crossings,
     jumps: (metrics.jumps || 0) * SOFT_WEIGHTS.jumps,
     nearCollinear: (metrics.nearCollinear || 0) * SOFT_WEIGHTS.nearCollinear,
@@ -65,5 +77,10 @@ export function compareCandidateScores(left, right) {
     return left.hardViolations - right.hardViolations;
   }
   if (left.totalCost !== right.totalCost) return left.totalCost - right.totalCost;
+  // Prefer candidate matching previous spouse side when costs tie.
+  if (left.preferredSideMatch !== right.preferredSideMatch) {
+    if (left.preferredSideMatch === true) return -1;
+    if (right.preferredSideMatch === true) return 1;
+  }
   return String(left.candidateId || '').localeCompare(String(right.candidateId || ''));
 }
