@@ -10,17 +10,20 @@ export const SOFT_WEIGHTS = {
   existingHouseholdsSideChanges: 50000,
   existingBranchOrderInversions: 12000,
   unexpectedCoupleFlip: 80000,
-  // Routing quality — never outweighs family structure.
-  // Priority among softs: crossings/jumps → max lanes → routing height → bends → length → bbox.
-  crossings: 5000,
-  jumps: 4000,
-  maxLaneCountPerGap: 900,
-  requiredLaneCountTotal: 120,
-  totalRoutingGapHeight: 1.2,
+  // Priority among softs:
+  //   local family geometry → compact children → lanes/height → short routes → crossings/jumps.
+  foreignHouseholdsUnderBus: 9000,
+  busExcessLength: 25,
+  familyHorizontalSpread: 1.8,
+  maxLaneCountPerGap: 700,
+  requiredLaneCountTotal: 100,
+  totalRoutingGapHeight: 1.0,
+  routeLength: 0.2,
+  crossings: 1800,
+  jumps: 1400,
   nearCollinear: 2500,
   familyInterleave: 800,
   bends: 40,
-  routeLength: 0.15,
   width: 0.8,
   height: 0.5,
   orderingInstability: 120,
@@ -46,6 +49,9 @@ export function scorePlacementCandidate(metrics) {
     (metrics.familyStemLaneShiftViolations || 0) +
     (metrics.multipleStemsPerParentPair || 0) +
     (metrics.familyJunctionMismatch || 0) +
+    (metrics.familyBusLocalityViolations || 0) +
+    (metrics.unrelatedFamiliesSharingBusSegment || 0) +
+    (metrics.childrenBlockInterleavingViolations || 0) +
     (metrics.unrelatedCollinearOverlaps || 0) +
     (metrics.zeroLengthSegments || 0) +
     (metrics.selfIntersections || 0) +
@@ -68,6 +74,11 @@ export function scorePlacementCandidate(metrics) {
     existingBranchOrderInversions:
       (metrics.existingBranchOrderInversions || 0) * SOFT_WEIGHTS.existingBranchOrderInversions,
     unexpectedCoupleFlip: (metrics.unexpectedCoupleFlip || 0) * SOFT_WEIGHTS.unexpectedCoupleFlip,
+    foreignHouseholdsUnderBus:
+      (metrics.foreignHouseholdsUnderBus || 0) * SOFT_WEIGHTS.foreignHouseholdsUnderBus,
+    busExcessLength: (metrics.busExcessLength || 0) * SOFT_WEIGHTS.busExcessLength,
+    familyHorizontalSpread:
+      (metrics.familyHorizontalSpread || 0) * SOFT_WEIGHTS.familyHorizontalSpread,
     crossings: (metrics.crossings || 0) * SOFT_WEIGHTS.crossings,
     jumps: (metrics.jumps || 0) * SOFT_WEIGHTS.jumps,
     maxLaneCountPerGap: (metrics.maxLaneCount || 0) * SOFT_WEIGHTS.maxLaneCountPerGap,

@@ -184,12 +184,12 @@ export function collectParallelSegments(links, direction = 'vertical', nodesById
 
 /**
  * Span pad by segment direction:
- * - vertical: strict overlap only (anchored stems vs far drops must not falsely join)
- * - horizontal: visual rail join pad for generation buses
+ * Local family buses and vertical stems conflict only on true overlap.
+ * Non-overlapping local segments may share a lane (no generation-rail join).
  */
 export function spanPadForDirection(direction, override = null) {
   if (override != null) return override;
-  return direction === 'vertical' ? 0 : PARALLEL_SPAN_JOIN_PAD;
+  return 0;
 }
 
 /**

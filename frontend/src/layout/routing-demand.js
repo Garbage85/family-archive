@@ -16,14 +16,18 @@
  * Lane axis inside a corridor (generation-axis increasing toward children):
  *   corridorStart + ROUTING_EDGE_PADDING + laneIndex * ROUTING_LANE_GAP
  *
- * Conflict spans use the same join pad as parallel-lane validators so demand
- * lane counts match residual parallelGapViolations / laneConflicts checks.
+ * Lane conflicts use LOCAL bus intervals (children + stem only). Non-overlapping
+ * local buses may share a lane; overlapping unrelated buses get distinct lanes.
  */
 
-import { PARALLEL_SPAN_JOIN_PAD, spansInteract } from './parallel-lanes.js';
+import { spansInteract } from './parallel-lanes.js';
+import { computeLocalBusInterval } from './family-bus.js';
 
 export const ROUTING_LANE_GAP = 20;
 export const ROUTING_EDGE_PADDING = 24;
+
+/** Local bus intervals conflict only on true overlap (no generation-rail join pad). */
+export const LOCAL_BUS_CONFLICT_PAD = 0;
 
 const EPS = 1e-6;
 
@@ -31,7 +35,7 @@ function unique(ids) {
   return [...new Set((ids || []).map(String).filter(Boolean))];
 }
 
-function rangesOverlap(a0, a1, b0, b1, pad = PARALLEL_SPAN_JOIN_PAD) {
+function rangesOverlap(a0, a1, b0, b1, pad = LOCAL_BUS_CONFLICT_PAD) {
   return spansInteract(a0, a1, b0, b1, pad);
 }
 
@@ -63,18 +67,28 @@ function parseGapKey(key) {
 }
 
 /**
- * Cross-axis span of a parent→children bus (independent of generation-axis).
+ * Local bus cross-axis span: children + stem only (not a generation-wide rail).
  */
-function familyCrossSpan(parents, children, isHorizontal) {
+function familyLocalBusSpan(parents, children, isHorizontal) {
   const parentCross = parents.map((node) => (isHorizontal ? node.y : node.x));
   const childCross = children.map((node) => (isHorizontal ? node.y : node.x));
   const parentMid =
     parentCross.reduce((sum, value) => sum + value, 0) / Math.max(1, parentCross.length);
-  const all = [...parentCross, ...childCross, parentMid];
+  // Approximate stem at parent-pair midpoint (spouse-link mid for couples).
+  let stemCross = parentMid;
+  if (parents.length >= 2) {
+    const left = Math.min(...parentCross);
+    const right = Math.max(...parentCross);
+    // Card half-width cancel when widths equal — midpoint of visible spouse bar.
+    stemCross = (left + right) / 2;
+  } else if (parents.length === 1) {
+    stemCross = parentCross[0];
+  }
+  const local = computeLocalBusInterval({ childCross, stemCross });
   return {
-    span0: Math.min(...all),
-    span1: Math.max(...all),
-    parentMid,
+    span0: local.busStart,
+    span1: local.busEnd,
+    parentMid: stemCross,
   };
 }
 
@@ -82,7 +96,7 @@ function familyCrossSpan(parents, children, isHorizontal) {
  * Greedy deterministic graph coloring.
  * Nodes ordered by span0, then id. Lowest available color.
  */
-export function colorConflictGraph(corridors, { spanPad = PARALLEL_SPAN_JOIN_PAD } = {}) {
+export function colorConflictGraph(corridors, { spanPad = LOCAL_BUS_CONFLICT_PAD } = {}) {
   const sorted = [...corridors].sort(
     (left, right) => left.span0 - right.span0 || left.id.localeCompare(right.id),
   );
@@ -158,7 +172,7 @@ export function buildDemandFamilies(nodes, links, isHorizontal = false) {
       const childGens = children.map((node) => node.generation ?? 0);
       const fromGen = Math.max(...parentGens);
       const toGen = Math.min(...childGens);
-      const span = familyCrossSpan(parents, children, isHorizontal);
+      const span = familyLocalBusSpan(parents, children, isHorizontal);
       return {
         ...family,
         parents,

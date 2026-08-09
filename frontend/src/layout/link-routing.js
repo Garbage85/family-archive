@@ -320,10 +320,19 @@ export function singleParentJunction(parent, isHorizontal = false) {
  * single-parent card center.
  */
 export function routeFamilyParentChild(family, parent, child, isHorizontal) {
+  const singleChild = (family.children || []).length <= 1;
+
   if (isHorizontal) {
     const busX = horizontalBusX(family);
-    if (family.isCouple) {
-      const junction = coupleSpouseJunction(family, true);
+    const junction = family.isCouple
+      ? coupleSpouseJunction(family, true)
+      : singleParentJunction(parent, true);
+    // Single child under the stem: direct generation-axis segment, no bus rail.
+    if (singleChild && almostEq(junction.y, child.y)) {
+      return simplifyPoints([pt(junction.x, junction.y), pt(child.x - half(child, 'x'), child.y)]);
+    }
+    // Single child with offset: minimal elbow (stem → short bus → drop).
+    if (singleChild) {
       return simplifyPoints([
         pt(junction.x, junction.y),
         pt(busX, junction.y),
@@ -331,7 +340,6 @@ export function routeFamilyParentChild(family, parent, child, isHorizontal) {
         pt(child.x - half(child, 'x'), child.y),
       ]);
     }
-    const junction = singleParentJunction(parent, true);
     return simplifyPoints([
       pt(junction.x, junction.y),
       pt(busX, junction.y),
@@ -341,18 +349,17 @@ export function routeFamilyParentChild(family, parent, child, isHorizontal) {
   }
 
   const busY = verticalBusY(family);
-  if (family.isCouple) {
-    const junction = coupleSpouseJunction(family, false);
-    return simplifyPoints([
-      pt(junction.x, junction.y),
-      pt(junction.x, busY),
-      pt(child.x, busY),
-      pt(child.x, child.y - half(child, 'y')),
-    ]);
+  const junction = family.isCouple
+    ? coupleSpouseJunction(family, false)
+    : singleParentJunction(parent, false);
+
+  // Single child under the stem: one vertical, no horizontal magistral.
+  if (singleChild && almostEq(junction.x, child.x)) {
+    return simplifyPoints([pt(junction.x, junction.y), pt(child.x, child.y - half(child, 'y'))]);
   }
 
-  // Single parent: stem from the parent card edge center to the child bus.
-  const junction = singleParentJunction(parent, false);
+  // Local bus: stem stays on junction X; horizontal only covers stem→this child
+  // (union across siblings forms the family-local bus, never a generation rail).
   return simplifyPoints([
     pt(junction.x, junction.y),
     pt(junction.x, busY),

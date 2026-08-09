@@ -588,8 +588,10 @@ function canonicalBranchOrder(branches, side, spouseSide) {
     .filter((branch) => branch.side === side)
     .sort((a, b) => a.canonicalKey.localeCompare(b.canonicalKey));
 
-  // Prefer: extended sibling branches outer, parents closer to core.
-  const rank = { singleton: 0, sibling: 1, parents: 2, core: 3 };
+  // Prefer: extended / parent-sibling branches outer, parents closer to core.
+  // parent-sibling must not sit between core and parents — that stretches child buses
+  // under unrelated households.
+  const rank = { singleton: 0, 'parent-sibling': 0.5, sibling: 1, parents: 2, core: 3 };
   list.sort((a, b) => {
     const ra = rank[a.kind] ?? 9;
     const rb = rank[b.kind] ?? 9;
@@ -625,7 +627,29 @@ function canonicalBranchOrder(branches, side, spouseSide) {
   return list;
 }
 
-function optimizeBranchList(branches, { generation, generationMap, peopleById, neighborRows }) {
+/**
+ * Keep parent / core branches toward the couple core and extended
+ * (sibling, parent-sibling, singleton) on the outer edge of the side.
+ * Prevents child buses from running under aunt/uncle households.
+ */
+export function enforceExtendedBranchesOuter(branches, side, spouseSide) {
+  const list = branches.slice();
+  if (list.length <= 1) return list;
+  const isParentLike = (branch) => branch.kind === 'parents' || branch.kind === 'core';
+  const parents = list.filter(isParentLike);
+  const extended = list.filter((branch) => !isParentLike(branch));
+  if (!parents.length || !extended.length) return list;
+
+  const sideOnRight =
+    (side === 'center' && spouseSide === 'left') || (side === 'spouse' && spouseSide === 'right');
+  // Right of core: [parents … extended]. Left of core: [extended … parents].
+  return sideOnRight ? [...parents, ...extended] : [...extended, ...parents];
+}
+
+function optimizeBranchList(
+  branches,
+  { generation, generationMap, peopleById, neighborRows, side = null, spouseSide = null },
+) {
   if (branches.length <= 1) return branches.slice();
 
   // Canonical: topology crossing proxy only. Previous layout must not bias order.
@@ -655,6 +679,9 @@ function optimizeBranchList(branches, { generation, generationMap, peopleById, n
   }
 
   best = adjacentSwapOptimize(best, scoreBranches);
+  if (side && spouseSide) {
+    best = enforceExtendedBranchesOuter(best, side, spouseSide);
+  }
   return best;
 }
 
@@ -716,6 +743,8 @@ export function optimizeGenerationOrder(
       generationMap,
       peopleById,
       neighborRows,
+      side,
+      spouseSide,
     });
 
     const out = [];

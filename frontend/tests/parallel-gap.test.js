@@ -14,7 +14,7 @@ import {
   findMissingVisibleParentChildLinks,
   findMissingVisibleSpouseLinks,
 } from '../src/layout/layout-validators.js';
-import { routeLayoutLinks, routingMetrics } from '../src/layout/link-routing.js';
+import { routingMetrics } from '../src/layout/link-routing.js';
 import {
   assignParallelLanes,
   centeredSymmetricOffsets,
@@ -163,7 +163,7 @@ test('same familyKey may share a corridor', () => {
   assert.equal(offsetYByFamily.size, 0);
 });
 
-test('production regression: collinear generation buses get MIN_PARALLEL_GAP (p010/p003)', async () => {
+test('production regression: local buses keep MIN_PARALLEL_GAP (p010/p003)', async () => {
   const fixture = await loadProduction();
   const people = loadStructuralPeople(fixture);
   const report = {};
@@ -171,22 +171,8 @@ test('production regression: collinear generation buses get MIN_PARALLEL_GAP (p0
   for (const centerId of ['p010', 'p003']) {
     const layout = layoutFamilyTree(people, { centerId, orientation: 'vertical' });
     const nodesById = new Map(layout.nodes.map((node) => [String(node.id), node]));
-    const draft = layout.links.map((link) => ({
-      type: link.type,
-      source: link.source,
-      target: link.target,
-      points: [],
-      jumps: [],
-    }));
-    const before = routeLayoutLinks(
-      { nodes: layout.nodes, links: draft, households: layout.households },
-      { orientation: 'vertical', applyParallelLanes: false },
-    );
-    const after = layout.links;
-    const beforeGaps = measureUnrelatedParallelGaps(before, { nodesById });
-    const afterGaps = measureUnrelatedParallelGaps(after, { nodesById });
-    const beforeRoute = routingMetrics(before);
-    const afterRoute = routingMetrics(after);
+    const afterGaps = measureUnrelatedParallelGaps(layout.links, { nodesById });
+    const afterRoute = routingMetrics(layout.links);
 
     hardParallelGate(people, layout, centerId);
     assert.equal(afterGaps.parallelGapViolations, 0, `${centerId} after violations`);
@@ -194,43 +180,31 @@ test('production regression: collinear generation buses get MIN_PARALLEL_GAP (p0
       afterGaps.minUnrelatedParallelGap >= MIN_PARALLEL_GAP - 1e-6,
       `${centerId} after min gap`,
     );
+    // Local-bus model: non-overlapping family segments may share a lane.
+    assert.equal(layout.meta.unrelatedFamiliesSharingBusSegment ?? 0, 0, `${centerId} shared bus`);
+    assert.equal(layout.meta.familyBusLocalityViolations ?? 0, 0, `${centerId} bus locality`);
 
     const warm = layoutFamilyTree(people, { centerId, previousLayout: layout });
     assert.equal(coldWarmSignatureMismatch(layout, warm), 0);
 
     report[centerId] = {
-      before: {
-        minUnrelatedParallelGap: beforeGaps.minUnrelatedParallelGap,
-        parallelGapViolations: beforeGaps.parallelGapViolations,
-        crossings: beforeRoute.uniqueRenderedJumps,
-        jumps: beforeRoute.uniqueRenderedJumps,
-        maxBends: beforeRoute.maxBendsPerParentChild,
-        routeLength: beforeRoute.totalParentChildLength,
-        routingBounds: beforeRoute.routingBounds,
-      },
-      after: {
-        minUnrelatedParallelGap: afterGaps.minUnrelatedParallelGap,
-        parallelGapViolations: afterGaps.parallelGapViolations,
-        crossings: layout.meta.crossings,
-        jumps: layout.meta.jumps,
-        maxBends: afterRoute.maxBendsPerParentChild,
-        routeLength: afterRoute.totalParentChildLength,
-        routingBounds: afterRoute.routingBounds,
-      },
+      maxLaneCount: layout.meta.maxLaneCount,
+      requiredLaneCountByGap: layout.meta.requiredLaneCountByGap,
+      minUnrelatedParallelGap: afterGaps.minUnrelatedParallelGap,
+      parallelGapViolations: afterGaps.parallelGapViolations,
+      crossings: layout.meta.crossings,
+      jumps: layout.meta.jumps,
+      maxBends: afterRoute.maxBendsPerParentChild,
+      routeLength: afterRoute.totalParentChildLength,
+      routingBounds: afterRoute.routingBounds,
     };
-
-    assert.ok(
-      beforeGaps.parallelGapViolations > 0,
-      `${centerId}: expected BEFORE parallel gap violations on shared generation buses`,
-    );
-    assert.ok(beforeGaps.minUnrelatedParallelGap < MIN_PARALLEL_GAP);
 
     // Mobile-scale readability: at 0.95 scale, layout gap 16 → ~15.2 CSS px.
     const mobileScaledGap = afterGaps.minUnrelatedParallelGap * 0.95;
     assert.ok(mobileScaledGap >= 15, `${centerId} mobile scaled gap ${mobileScaledGap}`);
   }
 
-  console.log('\nPARALLEL GAP BEFORE/AFTER\n', JSON.stringify(report, null, 2));
+  console.log('\nPARALLEL GAP LOCAL-BUS REPORT\n', JSON.stringify(report, null, 2));
 });
 
 test('all-centers parallel gap gate', async () => {

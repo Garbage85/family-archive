@@ -18,6 +18,13 @@ import {
   boundingBox,
 } from './layout-validators.js';
 import {
+  findChildrenBlockInterleavingViolations,
+  findFamilyBusLocalityViolations,
+  findUnrelatedFamiliesSharingBusSegment,
+  measureFamilyBuses,
+  summarizeBusMetrics,
+} from './family-bus.js';
+import {
   countAnchoredStemViolations,
   findExteriorParentChildDetours,
   findInvalidJunctions,
@@ -160,6 +167,14 @@ export function collectPlacementMetrics(
     minGap: ROUTING_LANE_GAP,
   });
   const outsideGap = findRoutingOutsideGenerationGap(layout, { orientation });
+  const busRows = measureFamilyBuses(layout, { orientation, people });
+  const busSummary = summarizeBusMetrics(busRows);
+  const busLocality = findFamilyBusLocalityViolations(layout, { orientation, people });
+  const sharedBus = findUnrelatedFamiliesSharingBusSegment(layout, { orientation });
+  const childrenInterleave = findChildrenBlockInterleavingViolations(layout, {
+    orientation,
+    people,
+  });
   const plan = routingPlan || {
     requiredLaneCountByGap: layout.meta?.requiredLaneCountByGap,
     routingGapHeightByGap: layout.meta?.routingGapHeightByGap,
@@ -193,6 +208,15 @@ export function collectPlacementMetrics(
     familyStemLaneShiftViolations: anchored.familyStemLaneShiftViolations,
     multipleStemsPerParentPair: anchored.multipleStemsPerParentPair,
     familyJunctionMismatch: anchored.familyJunctionMismatch,
+    familyBusLocalityViolations: busLocality.length,
+    unrelatedFamiliesSharingBusSegment: sharedBus.length,
+    childrenBlockInterleavingViolations: childrenInterleave.length,
+    foreignHouseholdsUnderBus: busSummary.foreignHouseholdsUnderBus,
+    busExcessLength: busSummary.busExcessLength,
+    maxBusExcessLength: busSummary.maxBusExcessLength,
+    familyHorizontalSpread: busSummary.familyHorizontalSpread,
+    maxBusLength: busSummary.maxBusLength,
+    familyBusReport: busRows,
     unrelatedCollinearOverlaps: collinear.length,
     zeroLengthSegments: zeroLen.length,
     selfIntersections: selfHits.length,
@@ -282,6 +306,11 @@ export function summarizeCandidateRow(candidateId, metrics) {
     maxLaneCount: metrics.maxLaneCount,
     totalLaneCount: metrics.totalLaneCount,
     totalRoutingGapHeight: metrics.totalRoutingGapHeight,
+    foreignHouseholdsUnderBus: metrics.foreignHouseholdsUnderBus,
+    busExcessLength: metrics.busExcessLength,
+    maxBusLength: metrics.maxBusLength,
+    familyBusLocalityViolations: metrics.familyBusLocalityViolations,
+    childrenBlockInterleavingViolations: metrics.childrenBlockInterleavingViolations,
     existingHouseholdsSideChanges: metrics.existingHouseholdsSideChanges,
     existingBranchOrderInversions: metrics.existingBranchOrderInversions,
     unexpectedCoupleFlip: metrics.unexpectedCoupleFlip,
