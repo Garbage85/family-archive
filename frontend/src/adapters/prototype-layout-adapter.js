@@ -14,7 +14,7 @@
 
 import { createFamilyChartCardHtml } from '../family-chart-card.js';
 import { layoutFamilyTree } from '../layout/family-layout.js';
-import { routeLayoutLinks } from '../layout/link-routing.js';
+import { pointsToSvgPath, routeLayoutLinks } from '../layout/link-routing.js';
 import {
   CARD_HEIGHT,
   CARD_WIDTH,
@@ -46,11 +46,8 @@ function escapeAttr(value = '') {
     .replaceAll("'", '&#039;');
 }
 
-function pointsToPath(points) {
-  if (!points?.length) return '';
-  return points
-    .map((point, index) => `${index === 0 ? 'M' : 'L'}${point[0]},${point[1]}`)
-    .join(' ');
+function pointsToPath(points, jumps) {
+  return pointsToSvgPath(points, jumps);
 }
 
 export class PrototypeFamilyTreeChart {
@@ -342,7 +339,7 @@ export class PrototypeFamilyTreeChart {
           link.type === 'spouse'
             ? 'prototype-link prototype-link-spouse'
             : 'prototype-link prototype-link-parent-child';
-        return `<path class="${className}" d="${escapeAttr(pointsToPath(link.points))}" fill="none" />`;
+        return `<path class="${className}" d="${escapeAttr(pointsToPath(link.points, link.jumps))}" fill="none" />`;
       })
       .join('');
 

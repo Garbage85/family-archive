@@ -384,6 +384,11 @@ export function findAmbiguousSharedLanes(layout) {
   });
 }
 
+/** Alias used by routing gates — shared ambiguous trunks, not ordinary crossings. */
+export function findAmbiguousSharedSegments(layout) {
+  return findAmbiguousSharedLanes(layout);
+}
+
 /** Proper crossings between unrelated link polylines (not endpoint-touching). */
 export function findUnrelatedLinkIntersections(layout) {
   const segments = (layout.links || []).flatMap(linkSegments);
@@ -476,7 +481,10 @@ export function layoutRouteSignature(layout) {
           return `${Math.round(x * 1000) / 1000},${Math.round(y * 1000) / 1000}`;
         })
         .join(';');
-      return `${link.type}|${link.source}->${link.target}|${link.familyKey || ''}|${pts}`;
+      const jumps = (link.jumps || [])
+        .map((jump) => `${Math.round(jump.x * 1000) / 1000},${Math.round(jump.y * 1000) / 1000}`)
+        .join(';');
+      return `${link.type}|${link.source}->${link.target}|${link.familyKey || ''}|${pts}|j:${jumps}`;
     })
     .sort()
     .join('\n');
@@ -508,6 +516,10 @@ export function summarizeLayout(people, layout) {
   const selfIntersections = findSelfIntersectingPolylines(layout);
   const spouseLinks = (layout.links || []).filter((link) => link.type === 'spouse').length;
   const parentLinks = (layout.links || []).filter((link) => link.type === 'parent-child').length;
+  const lineJumpCount = (layout.links || []).reduce(
+    (sum, link) => sum + ((link.jumps && link.jumps.length) || 0),
+    0,
+  );
   return {
     inputCount: people.length,
     displayedCount: layout.nodes?.length || 0,
@@ -527,7 +539,10 @@ export function summarizeLayout(people, layout) {
     linksThroughCards: lineHits.length,
     overlappingCollinearUnrelated: collinearUnrelated.length,
     ambiguousSharedLanes: ambiguousLanes.length,
+    ambiguousSharedSegments: ambiguousLanes.length,
+    // Informational: crossings are allowed and are not a hard gate failure.
     unrelatedLinkIntersections: unrelatedCrossings.length,
+    lineJumpCount,
     zeroLengthSegments: zeroLength.length,
     selfIntersectingPolylines: selfIntersections.length,
     routeSignature: layoutRouteSignature(layout),
