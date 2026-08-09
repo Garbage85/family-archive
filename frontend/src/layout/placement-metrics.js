@@ -18,6 +18,7 @@ import {
   boundingBox,
 } from './layout-validators.js';
 import {
+  countAnchoredStemViolations,
   findExteriorParentChildDetours,
   findInvalidJunctions,
   routingMetrics,
@@ -112,6 +113,7 @@ export function collectPlacementMetrics(
   const collinear = findOverlappingCollinearUnrelatedSegments(layout);
   const falseJunctions = findFalseJunctionsBetweenUnrelatedFamilies(layout);
   const invalidJunctions = findInvalidJunctions(layout);
+  const anchored = countAnchoredStemViolations(layout);
   const exterior = findExteriorParentChildDetours(layout);
   const zeroLen = findZeroLengthSegments(layout);
   const selfHits = findSelfIntersectingPolylines(layout);
@@ -186,6 +188,11 @@ export function collectPlacementMetrics(
     falseJunctions: falseJunctions.length,
     ambiguousSharedSegments: ambiguous.length,
     invalidFamilyJunctions: invalidJunctions.length,
+    twoParentStemAnchoredToSpouseMidpoint: anchored.twoParentStemAnchoredToSpouseMidpoint,
+    singleParentStemAnchoredToCardCenter: anchored.singleParentStemAnchoredToCardCenter,
+    familyStemLaneShiftViolations: anchored.familyStemLaneShiftViolations,
+    multipleStemsPerParentPair: anchored.multipleStemsPerParentPair,
+    familyJunctionMismatch: anchored.familyJunctionMismatch,
     unrelatedCollinearOverlaps: collinear.length,
     zeroLengthSegments: zeroLen.length,
     selfIntersections: selfHits.length,

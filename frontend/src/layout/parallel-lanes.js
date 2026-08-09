@@ -5,11 +5,15 @@
  * different familyKey + interacting spans + cross-axis gap < MIN_PARALLEL_GAP
  *   → must receive separated lanes
  *
- * Segment roles:
- *   - vertical stem  (movable via stemOffset / offset X)
- *   - vertical drop  (immovable — locked to child card X)
- *   - horizontal bus (movable via busOffset / offset Y)
- *   - short stubs    (ignored for conflict detection)
+ * Segment roles / priority (high → low):
+ *   1. anchored-stem (two-parent spouse midpoint) — IMMUTABLE
+ *   2. anchored-stem (single-parent card edge)    — IMMUTABLE
+ *   3. drop (child card approach)                 — IMMUTABLE
+ *   4. bus / other routing verticals              — movable
+ *
+ * Anchored family stems are never lane-shifted. Conflicting lower-priority
+ * routes move away. Vertical conflicts use strict Y/X overlap; horizontal
+ * buses still use PARALLEL_SPAN_JOIN_PAD for visual rail grouping.
  *
  * Offsets for N movable lanes are centered:
  *   N=2: -g/2, +g/2
@@ -66,6 +70,50 @@ export function spansInteract(a0, a1, b0, b1, joinPad = PARALLEL_SPAN_JOIN_PAD) 
  * @param {'vertical'|'horizontal'} direction
  * @param {Map<string,{x:number,y:number}>|null} nodesById
  */
+function anchoredStemPriority(junction) {
+  if (!junction) return 0;
+  if (junction.kind === 'spouse-junction') return 1;
+  if (junction.kind === 'single-parent-junction') return 2;
+  return 0;
+}
+
+function classifyParallelSegment({ direction, axis, link, target }) {
+  const junction = link.junction;
+  const anchorPriority = anchoredStemPriority(junction);
+  const isAnchoredAxis =
+    Boolean(junction) &&
+    (direction === 'vertical' ? almostEq(axis, junction.x) : almostEq(axis, junction.y));
+
+  if (direction === 'horizontal') {
+    const isChildRail = Boolean(target && almostEq(axis, target.y));
+    if (isChildRail) {
+      return { role: 'drop', movable: false, priority: 3 };
+    }
+    if (anchorPriority && isAnchoredAxis) {
+      return { role: 'anchored-stem', movable: false, priority: anchorPriority };
+    }
+    return { role: 'bus', movable: true, priority: 4 };
+  }
+
+  // vertical segments
+  const isChildDrop = Boolean(target && almostEq(axis, target.x));
+  if (anchorPriority && isAnchoredAxis && !isChildDrop) {
+    return { role: 'anchored-stem', movable: false, priority: anchorPriority };
+  }
+  if (isChildDrop) {
+    // Child under an anchored junction shares X with the stem; keep drop role
+    // but still immovable. Same familyKey skips self-conflicts.
+    if (anchorPriority && isAnchoredAxis) {
+      return { role: 'drop', movable: false, priority: 3 };
+    }
+    return { role: 'drop', movable: false, priority: 3 };
+  }
+  if (anchorPriority && isAnchoredAxis) {
+    return { role: 'anchored-stem', movable: false, priority: anchorPriority };
+  }
+  return { role: 'stem', movable: true, priority: 4 };
+}
+
 export function collectParallelSegments(links, direction = 'vertical', nodesById = null) {
   const segs = [];
   for (const link of links || []) {
@@ -83,15 +131,21 @@ export function collectParallelSegments(links, direction = 'vertical', nodesById
         const length = span1 - span0;
         if (length < SHORT_STUB_MAX) continue; // junction→stem stubs
         const axis = a[1];
-        // In horizontal trees the child approach sits on child.y (immovable).
-        // In vertical trees long horizontals are buses (movable).
-        const isChildRail = Boolean(target && almostEq(axis, target.y));
+        const classified = classifyParallelSegment({
+          direction,
+          axis,
+          span0,
+          span1,
+          link,
+          target,
+        });
         segs.push({
           link,
           familyKey: familyKeyOf(link),
           direction,
-          role: isChildRail ? 'drop' : 'bus',
-          movable: !isChildRail,
+          role: classified.role,
+          movable: classified.movable,
+          priority: classified.priority,
           axis,
           span0,
           span1,
@@ -102,19 +156,21 @@ export function collectParallelSegments(links, direction = 'vertical', nodesById
         const span0 = Math.min(a[1], b[1]);
         const span1 = Math.max(a[1], b[1]);
         const axis = a[0];
-        let role = 'stem';
-        let movable = true;
-        if (target && almostEq(axis, target.x)) {
-          // Child drop locked to card X — cannot be lane-shifted.
-          role = 'drop';
-          movable = false;
-        }
+        const classified = classifyParallelSegment({
+          direction,
+          axis,
+          span0,
+          span1,
+          link,
+          target,
+        });
         segs.push({
           link,
           familyKey: familyKeyOf(link),
           direction,
-          role,
-          movable,
+          role: classified.role,
+          movable: classified.movable,
+          priority: classified.priority,
           axis,
           span0,
           span1,
@@ -127,32 +183,38 @@ export function collectParallelSegments(links, direction = 'vertical', nodesById
 }
 
 /**
+ * Span pad by segment direction:
+ * - vertical: strict overlap only (anchored stems vs far drops must not falsely join)
+ * - horizontal: visual rail join pad for generation buses
+ */
+export function spanPadForDirection(direction, override = null) {
+  if (override != null) return override;
+  return direction === 'vertical' ? 0 : PARALLEL_SPAN_JOIN_PAD;
+}
+
+/**
  * Unrelated parallel segment pairs closer than minGap on the cross-axis
  * with interacting spans on the main axis.
  */
 export function findParallelGapConflicts(
   links,
-  {
-    minGap = MIN_PARALLEL_GAP,
-    spanPad = PARALLEL_SPAN_JOIN_PAD,
-    direction = null,
-    nodesById = null,
-  } = {},
+  { minGap = MIN_PARALLEL_GAP, spanPad = null, direction = null, nodesById = null } = {},
 ) {
   const directions = direction ? [direction] : ['vertical', 'horizontal'];
   const conflicts = [];
   for (const dir of directions) {
+    const pad = spanPadForDirection(dir, spanPad);
     const segs = collectParallelSegments(links, dir, nodesById);
     for (let i = 0; i < segs.length; i += 1) {
       for (let j = i + 1; j < segs.length; j += 1) {
         const a = segs[i];
         const b = segs[j];
         if (a.familyKey === b.familyKey) continue;
-        // Two immovable drops cannot be separated without moving cards; skip.
+        // Two immovable segments cannot be separated without moving cards/anchors.
         if (!a.movable && !b.movable) continue;
         const cross = Math.abs(a.axis - b.axis);
         if (cross + FLOAT_EPS >= minGap) continue;
-        if (!spansInteract(a.span0, a.span1, b.span0, b.span1, spanPad)) continue;
+        if (!spansInteract(a.span0, a.span1, b.span0, b.span1, pad)) continue;
         conflicts.push({ a, b, cross, direction: dir });
       }
     }
@@ -165,12 +227,7 @@ export function findParallelGapConflicts(
  */
 export function findVerticalLaneConflicts(
   links,
-  {
-    threshold = MIN_PARALLEL_GAP,
-    orientation = 'vertical',
-    spanPad = PARALLEL_SPAN_JOIN_PAD,
-    nodesById = null,
-  } = {},
+  { threshold = MIN_PARALLEL_GAP, orientation = 'vertical', spanPad = null, nodesById = null } = {},
 ) {
   return findParallelGapConflicts(links, {
     minGap: threshold,
@@ -497,7 +554,7 @@ export function assignParallelVerticalLanes(
  */
 export function measureUnrelatedParallelGaps(
   links,
-  { minGap = MIN_PARALLEL_GAP, spanPad = PARALLEL_SPAN_JOIN_PAD, nodesById = null } = {},
+  { minGap = MIN_PARALLEL_GAP, spanPad = null, nodesById = null } = {},
 ) {
   let minUnrelatedParallelGap = Number.POSITIVE_INFINITY;
   let parallelGapViolations = 0;
@@ -505,15 +562,16 @@ export function measureUnrelatedParallelGaps(
   const violationPairs = [];
 
   for (const direction of ['vertical', 'horizontal']) {
+    const pad = spanPadForDirection(direction, spanPad);
     const segs = collectParallelSegments(links, direction, nodesById);
     for (let i = 0; i < segs.length; i += 1) {
       for (let j = i + 1; j < segs.length; j += 1) {
         const a = segs[i];
         const b = segs[j];
         if (a.familyKey === b.familyKey) continue;
-        // Immovable drop–drop pairs are card-aligned columns; not lane-fixable.
+        // Immovable pairs (anchored stems / drops) are not lane-fixable.
         if (!a.movable && !b.movable) continue;
-        if (!spansInteract(a.span0, a.span1, b.span0, b.span1, spanPad)) continue;
+        if (!spansInteract(a.span0, a.span1, b.span0, b.span1, pad)) continue;
         interactingPairs += 1;
         const cross = Math.abs(a.axis - b.axis);
         if (cross < minUnrelatedParallelGap) minUnrelatedParallelGap = cross;
@@ -581,12 +639,7 @@ export function countParallelLaneFamilies(offsetByFamily) {
  */
 export function findParallelLaneOverlaps(
   links,
-  {
-    orientation = null,
-    minGap = MIN_PARALLEL_GAP,
-    spanPad = PARALLEL_SPAN_JOIN_PAD,
-    nodesById = null,
-  } = {},
+  { orientation = null, minGap = MIN_PARALLEL_GAP, spanPad = null, nodesById = null } = {},
 ) {
   if (orientation === 'vertical' || orientation === 'horizontal') {
     return findParallelGapConflicts(links, {

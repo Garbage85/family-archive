@@ -241,18 +241,51 @@ export function simplifyPoints(points) {
   return out;
 }
 
-function routeSpouse(source, target) {
-  const left = source.x <= target.x ? source : target;
-  const right = source.x <= target.x ? target : source;
+/**
+ * Visible spouse-link endpoints between two parent cards (card-edge to card-edge).
+ * Vertical trees: horizontal spouse bar. Horizontal trees: vertical spouse bar.
+ */
+export function visibleSpouseLinkEndpoints(parentA, parentB, isHorizontal = false) {
+  if (isHorizontal) {
+    const top = parentA.y <= parentB.y ? parentA : parentB;
+    const bottom = parentA.y <= parentB.y ? parentB : parentA;
+    const x = (top.x + bottom.x) / 2;
+    return {
+      start: pt(x, top.y + half(top, 'y')),
+      end: pt(x, bottom.y - half(bottom, 'y')),
+    };
+  }
+  const left = parentA.x <= parentB.x ? parentA : parentB;
+  const right = parentA.x <= parentB.x ? parentB : parentA;
   const y = (left.y + right.y) / 2;
-  return simplifyPoints([pt(left.x + half(left, 'x'), y), pt(right.x - half(right, 'x'), y)]);
+  return {
+    start: pt(left.x + half(left, 'x'), y),
+    end: pt(right.x - half(right, 'x'), y),
+  };
+}
+
+function routeSpouse(source, target, isHorizontal = false) {
+  const { start, end } = visibleSpouseLinkEndpoints(source, target, isHorizontal);
+  return simplifyPoints([start, end]);
 }
 
 /**
- * Spouse-junction for a couple: midpoint of the short spouse link.
- * Stem and child bus hang from this point — not from a parallel parent-bottom magistral.
+ * Spouse-junction for a couple: geometric midpoint of the visible spouse-link.
+ * Anchored family stem starts here — never at a lane-shifted X/Y.
  */
-export function coupleSpouseJunction(family) {
+export function coupleSpouseJunction(family, isHorizontal = false) {
+  if ((family.parents || []).length >= 2) {
+    const { start, end } = visibleSpouseLinkEndpoints(
+      family.parents[0],
+      family.parents[1],
+      isHorizontal,
+    );
+    return {
+      x: roundCoord((start[0] + end[0]) / 2),
+      y: roundCoord((start[1] + end[1]) / 2),
+      kind: 'spouse-junction',
+    };
+  }
   return {
     x: roundCoord(family.parentMidX),
     y: roundCoord(family.parentMidY),
@@ -261,29 +294,47 @@ export function coupleSpouseJunction(family) {
 }
 
 /**
+ * Single-parent junction: center of the parent card edge facing children.
+ */
+export function singleParentJunction(parent, isHorizontal = false) {
+  if (isHorizontal) {
+    return {
+      x: roundCoord(parent.x + half(parent, 'x')),
+      y: roundCoord(parent.y),
+      kind: 'single-parent-junction',
+    };
+  }
+  return {
+    x: roundCoord(parent.x),
+    y: roundCoord(parent.y + half(parent, 'y')),
+    kind: 'single-parent-junction',
+  };
+}
+
+/**
  * Parent-child polyline for one edge. Couple edges start at the shared spouse
  * junction (not at each parent card), so parents connect through the spouse link.
+ *
+ * Anchored family stem (junction → bus) keeps the junction cross-axis forever.
+ * Parallel-lane offsets must never bend this stem off the spouse midpoint /
+ * single-parent card center.
  */
 export function routeFamilyParentChild(family, parent, child, isHorizontal) {
-  const stemOffset = family.stemOffset || 0;
-
   if (isHorizontal) {
     const busX = horizontalBusX(family);
-    const corridorY = roundCoord((family.isCouple ? family.parentMidY : parent.y) + stemOffset);
     if (family.isCouple) {
-      const junction = coupleSpouseJunction(family);
+      const junction = coupleSpouseJunction(family, true);
       return simplifyPoints([
         pt(junction.x, junction.y),
-        pt(junction.x, corridorY),
-        pt(busX, corridorY),
+        pt(busX, junction.y),
         pt(busX, child.y),
         pt(child.x - half(child, 'x'), child.y),
       ]);
     }
+    const junction = singleParentJunction(parent, true);
     return simplifyPoints([
-      pt(parent.x + half(parent, 'x'), parent.y),
-      pt(parent.x + half(parent, 'x'), corridorY),
-      pt(busX, corridorY),
+      pt(junction.x, junction.y),
+      pt(busX, junction.y),
       pt(busX, child.y),
       pt(child.x - half(child, 'x'), child.y),
     ]);
@@ -291,23 +342,20 @@ export function routeFamilyParentChild(family, parent, child, isHorizontal) {
 
   const busY = verticalBusY(family);
   if (family.isCouple) {
-    const junction = coupleSpouseJunction(family);
-    const stemX = roundCoord(junction.x + stemOffset);
+    const junction = coupleSpouseJunction(family, false);
     return simplifyPoints([
       pt(junction.x, junction.y),
-      pt(stemX, junction.y),
-      pt(stemX, busY),
+      pt(junction.x, busY),
       pt(child.x, busY),
       pt(child.x, child.y - half(child, 'y')),
     ]);
   }
 
-  // Single parent: stem from the parent card to the child bus.
-  const stemX = roundCoord(parent.x + stemOffset);
+  // Single parent: stem from the parent card edge center to the child bus.
+  const junction = singleParentJunction(parent, false);
   return simplifyPoints([
-    pt(parent.x, parent.y + half(parent, 'y')),
-    pt(stemX, parent.y + half(parent, 'y')),
-    pt(stemX, busY),
+    pt(junction.x, junction.y),
+    pt(junction.x, busY),
     pt(child.x, busY),
     pt(child.x, child.y - half(child, 'y')),
   ]);
@@ -635,14 +683,15 @@ function buildRoutedLinks(layout, families, isHorizontal) {
 
     if (link.type === 'spouse') {
       const couple = familyByCoupleKey.get(pairKey([link.source, link.target]));
-      const points = routeSpouse(source, target);
+      const points = routeSpouse(source, target, isHorizontal);
       if (couple?.isCouple) {
-        const junction = coupleSpouseJunction(couple);
+        const junction = coupleSpouseJunction(couple, isHorizontal);
         return {
           ...link,
           familyKey: couple.familyKey,
           laneIndex: couple.laneIndex,
-          laneOffsetX: couple.stemOffset || 0,
+          laneOffsetX: 0,
+          anchoredStem: true,
           junction,
           points,
         };
@@ -675,30 +724,17 @@ function buildRoutedLinks(layout, families, isHorizontal) {
     const busY = isHorizontal ? null : verticalBusY(family);
     const busX = isHorizontal ? horizontalBusX(family) : null;
     const singleParent = family.parents[0];
-    const baseJunction = family.isCouple
-      ? coupleSpouseJunction(family)
-      : isHorizontal
-        ? {
-            x: busX,
-            y: roundCoord(singleParent.y),
-            kind: 'single-parent-junction',
-          }
-        : {
-            x: roundCoord(singleParent.x),
-            y: roundCoord(singleParent.y + half(singleParent, 'y')),
-            kind: 'single-parent-junction',
-          };
     const junction = family.isCouple
-      ? baseJunction
-      : isHorizontal
-        ? { ...baseJunction, y: roundCoord(baseJunction.y + (family.stemOffset || 0)) }
-        : { ...baseJunction, x: roundCoord(baseJunction.x + (family.stemOffset || 0)) };
+      ? coupleSpouseJunction(family, isHorizontal)
+      : singleParentJunction(singleParent, isHorizontal);
 
     return {
       ...link,
       familyKey: family.familyKey,
       laneIndex: family.laneIndex,
-      laneOffsetX: family.stemOffset || 0,
+      // Anchored family stems never receive lane offsets.
+      laneOffsetX: 0,
+      anchoredStem: true,
       busMode: 'gap',
       junction,
       bus: isHorizontal ? { x: busX, y: null } : { x: null, y: busY },
@@ -734,11 +770,12 @@ export function routeLayoutLinks(
   }
 
   // Pass 1: family-junction routes (bus Y/X from routingPlan when present).
+  // Anchored stems are baked in at spouse-midpoint / parent-edge center.
   let routed = buildRoutedLinks(layout, families, isHorizontal);
 
-  // Pass 2: separate near-parallel unrelated VERTICAL stems/drops.
-  // Horizontal buses are already assigned structured lanes via routingPlan;
-  // do not re-pack them into a fixed gap.
+  // Pass 2: separate near-parallel unrelated corridors.
+  // Anchored family stems are immovable obstacles — only lower-priority
+  // routes may receive offsets. Never apply stemOffset to parent families.
   if (applyParallelLanes) {
     const nodesById = new Map((layout.nodes || []).map((node) => [String(node.id), node]));
     const { offsetXByFamily, offsetYByFamily } = assignParallelLanes(routed, {
@@ -746,40 +783,18 @@ export function routeLayoutLinks(
       nodesById,
     });
 
-    // With a routingPlan, only apply stem (generation-crossing) offsets on the
-    // cross-axis of vertical/horizontal stems — never override planned bus axes.
-    let changed = false;
+    // Drop any offsets that would shift an anchored family stem. Parent
+    // families always keep stemOffset = 0 (hard semantic rule).
     for (const family of families) {
-      if (isHorizontal) {
-        const stem = offsetYByFamily.get(family.familyKey);
-        if (stem) {
-          family.stemOffset = stem;
-          changed = true;
-        }
-        if (!routingPlan) {
-          const bus = offsetXByFamily.get(family.familyKey);
-          if (bus) {
-            family.busOffset = bus;
-            changed = true;
-          }
-        }
-      } else {
-        const stem = offsetXByFamily.get(family.familyKey);
-        if (stem) {
-          family.stemOffset = stem;
-          changed = true;
-        }
-        if (!routingPlan) {
-          const bus = offsetYByFamily.get(family.familyKey);
-          if (bus) {
-            family.busOffset = bus;
-            changed = true;
-          }
-        }
-      }
+      family.stemOffset = 0;
+      offsetXByFamily.delete(family.familyKey);
+      offsetYByFamily.delete(family.familyKey);
     }
 
+    let changed = false;
     if (!routingPlan && (offsetXByFamily.size || offsetYByFamily.size)) {
+      // Legacy path only: pack movable horizontal buses into fixed gaps.
+      // Structured routingPlan already owns bus lanes.
       const familyGapMeta = families.map((family) =>
         isHorizontal
           ? {
@@ -799,9 +814,10 @@ export function routeLayoutLinks(
       if (fittedBus.size) {
         fittedBus = fitBusOffsetsToGenerationGaps(familyGapMeta, fittedBus, parallelGap);
         for (const family of families) {
+          // Still never shift the anchored stem; busOffset alone is legacy.
           family.busOffset = fittedBus.get(family.familyKey) || 0;
+          if (family.busOffset) changed = true;
         }
-        changed = true;
       }
     }
 
@@ -1073,11 +1089,12 @@ export function findOneFamilyJunctionPerParentPairIssues(layout) {
 
 /** Child routes of a couple must start at the shared spouse junction. */
 export function findChildBusNotAttachedToSpouseJunction(layout) {
+  const isHorizontal = layout.meta?.orientation === 'horizontal';
   const families = buildParentFamilies(layout);
   const issues = [];
   for (const family of families) {
     if (!family.isCouple) continue;
-    const junction = coupleSpouseJunction(family);
+    const junction = coupleSpouseJunction(family, isHorizontal);
     for (const link of layout.links || []) {
       if (link.type !== 'parent-child') continue;
       if (link.familyKey !== family.familyKey) continue;
@@ -1099,7 +1116,7 @@ export function findChildBusNotAttachedToSpouseJunction(layout) {
       );
       if (spouse) {
         const a = spouse.points[0];
-        const b = spouse.points[1];
+        const b = spouse.points[spouse.points.length - 1];
         if (!pointOnSegment([junction.x, junction.y], a, b, 1)) {
           issues.push({
             family: family.familyKey,
@@ -1112,6 +1129,212 @@ export function findChildBusNotAttachedToSpouseJunction(layout) {
     }
   }
   return issues;
+}
+
+function firstStemAxis(points, isHorizontal) {
+  for (let i = 0; i < (points || []).length - 1; i += 1) {
+    const a = points[i];
+    const b = points[i + 1];
+    if (isHorizontal) {
+      // Anchored stem runs along generation-axis X at constant Y = junction.y
+      if (almostEq(a[1], b[1]) && Math.abs(a[0] - b[0]) > SHORT_STUB_LEN) {
+        return { axis: a[1], a, b, index: i };
+      }
+    } else if (almostEq(a[0], b[0]) && Math.abs(a[1] - b[1]) > SHORT_STUB_LEN) {
+      return { axis: a[0], a, b, index: i };
+    }
+  }
+  return null;
+}
+
+const SHORT_STUB_LEN = 1;
+
+/**
+ * Two-parent family stem must leave the geometric midpoint of the spouse-link
+ * and keep that cross-axis through the stem (no lane-shift stub).
+ */
+export function findTwoParentStemAnchorViolations(layout) {
+  const isHorizontal = layout.meta?.orientation === 'horizontal';
+  const families = buildParentFamilies(layout);
+  const issues = [];
+  for (const family of families) {
+    if (!family.isCouple) continue;
+    const expected = coupleSpouseJunction(family, isHorizontal);
+    const childLinks = (layout.links || []).filter(
+      (link) => link.type === 'parent-child' && link.familyKey === family.familyKey,
+    );
+    for (const link of childLinks) {
+      const start = (link.points || [])[0];
+      if (!start || !almostEq(start[0], expected.x) || !almostEq(start[1], expected.y)) {
+        issues.push({
+          family: family.familyKey,
+          link: `${link.source}->${link.target}`,
+          reason: 'twoParentStemAnchoredToSpouseMidpoint',
+          expected,
+          start,
+        });
+        continue;
+      }
+      const stem = firstStemAxis(link.points, isHorizontal);
+      if (!stem) {
+        issues.push({
+          family: family.familyKey,
+          link: `${link.source}->${link.target}`,
+          reason: 'twoParentStemAnchoredToSpouseMidpoint',
+          detail: 'missing-stem-segment',
+          expected,
+        });
+        continue;
+      }
+      const expectedAxis = isHorizontal ? expected.y : expected.x;
+      if (!almostEq(stem.axis, expectedAxis)) {
+        issues.push({
+          family: family.familyKey,
+          link: `${link.source}->${link.target}`,
+          reason: 'twoParentStemAnchoredToSpouseMidpoint',
+          expectedAxis,
+          actualAxis: stem.axis,
+          delta: stem.axis - expectedAxis,
+        });
+      }
+      if (link.laneOffsetX) {
+        issues.push({
+          family: family.familyKey,
+          link: `${link.source}->${link.target}`,
+          reason: 'familyStemLaneShiftViolations',
+          laneOffsetX: link.laneOffsetX,
+        });
+      }
+    }
+  }
+  return issues;
+}
+
+/**
+ * Single-parent stem must leave the parent card edge center and keep that axis.
+ */
+export function findSingleParentStemAnchorViolations(layout) {
+  const isHorizontal = layout.meta?.orientation === 'horizontal';
+  const families = buildParentFamilies(layout);
+  const issues = [];
+  for (const family of families) {
+    if (family.isCouple) continue;
+    const parent = family.parents[0];
+    if (!parent) continue;
+    const expected = singleParentJunction(parent, isHorizontal);
+    const childLinks = (layout.links || []).filter(
+      (link) => link.type === 'parent-child' && link.familyKey === family.familyKey,
+    );
+    for (const link of childLinks) {
+      const start = (link.points || [])[0];
+      if (!start || !almostEq(start[0], expected.x) || !almostEq(start[1], expected.y)) {
+        issues.push({
+          family: family.familyKey,
+          link: `${link.source}->${link.target}`,
+          reason: 'singleParentStemAnchoredToCardCenter',
+          expected,
+          start,
+        });
+        continue;
+      }
+      const stem = firstStemAxis(link.points, isHorizontal);
+      const expectedAxis = isHorizontal ? expected.y : expected.x;
+      if (stem && !almostEq(stem.axis, expectedAxis)) {
+        issues.push({
+          family: family.familyKey,
+          link: `${link.source}->${link.target}`,
+          reason: 'singleParentStemAnchoredToCardCenter',
+          expectedAxis,
+          actualAxis: stem.axis,
+          delta: stem.axis - expectedAxis,
+        });
+      }
+      if (link.laneOffsetX) {
+        issues.push({
+          family: family.familyKey,
+          reason: 'familyStemLaneShiftViolations',
+          laneOffsetX: link.laneOffsetX,
+        });
+      }
+    }
+  }
+  return issues;
+}
+
+/** One parent pair must not emit multiple distinct stem axes. */
+export function findMultipleStemsPerParentPair(layout) {
+  const isHorizontal = layout.meta?.orientation === 'horizontal';
+  const byFamily = new Map();
+  for (const link of layout.links || []) {
+    if (link.type !== 'parent-child' || !link.familyKey) continue;
+    const stem = firstStemAxis(link.points, isHorizontal);
+    if (!stem) continue;
+    if (!byFamily.has(link.familyKey)) byFamily.set(link.familyKey, new Set());
+    byFamily.get(link.familyKey).add(roundCoord(stem.axis));
+  }
+  const issues = [];
+  for (const [familyKey, axes] of byFamily) {
+    if (axes.size > 1) {
+      issues.push({
+        family: familyKey,
+        reason: 'multipleStemsPerParentPair',
+        axes: [...axes],
+      });
+    }
+  }
+  return issues;
+}
+
+/**
+ * Declared junction must match spouse-link midpoint (couples) or card edge
+ * (single parent), and must match the route start.
+ */
+export function findFamilyJunctionMismatch(layout) {
+  const isHorizontal = layout.meta?.orientation === 'horizontal';
+  const families = buildParentFamilies(layout);
+  const familyByKey = new Map(families.map((family) => [family.familyKey, family]));
+  const issues = [];
+  for (const link of layout.links || []) {
+    if (link.type !== 'parent-child' || !link.junction) continue;
+    const family = familyByKey.get(link.familyKey);
+    if (!family) continue;
+    const expected = family.isCouple
+      ? coupleSpouseJunction(family, isHorizontal)
+      : singleParentJunction(family.parents[0], isHorizontal);
+    if (!almostEq(link.junction.x, expected.x) || !almostEq(link.junction.y, expected.y)) {
+      issues.push({
+        family: family.familyKey,
+        link: `${link.source}->${link.target}`,
+        reason: 'familyJunctionMismatch',
+        expected,
+        actual: link.junction,
+      });
+    }
+  }
+  return issues;
+}
+
+export function findFamilyStemLaneShiftViolations(layout) {
+  return [
+    ...findTwoParentStemAnchorViolations(layout),
+    ...findSingleParentStemAnchorViolations(layout),
+  ].filter((issue) => issue.reason === 'familyStemLaneShiftViolations');
+}
+
+export function countAnchoredStemViolations(layout) {
+  const twoParent = findTwoParentStemAnchorViolations(layout).filter(
+    (issue) => issue.reason === 'twoParentStemAnchoredToSpouseMidpoint',
+  );
+  const singleParent = findSingleParentStemAnchorViolations(layout).filter(
+    (issue) => issue.reason === 'singleParentStemAnchoredToCardCenter',
+  );
+  return {
+    twoParentStemAnchoredToSpouseMidpoint: twoParent.length,
+    singleParentStemAnchoredToCardCenter: singleParent.length,
+    familyStemLaneShiftViolations: findFamilyStemLaneShiftViolations(layout).length,
+    multipleStemsPerParentPair: findMultipleStemsPerParentPair(layout).length,
+    familyJunctionMismatch: findFamilyJunctionMismatch(layout).length,
+  };
 }
 
 export function findUnrelatedCrossingsWithoutJump(layout) {

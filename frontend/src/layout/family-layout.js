@@ -563,6 +563,13 @@ export function layoutFamilyTree(
       minUnrelatedParallelGap: winner.metrics.minUnrelatedParallelGap ?? null,
       laneConflicts: winner.metrics.laneConflicts || 0,
       routingOutsideGenerationGap: winner.metrics.routingOutsideGenerationGap || 0,
+      twoParentStemAnchoredToSpouseMidpoint:
+        winner.metrics.twoParentStemAnchoredToSpouseMidpoint || 0,
+      singleParentStemAnchoredToCardCenter:
+        winner.metrics.singleParentStemAnchoredToCardCenter || 0,
+      familyStemLaneShiftViolations: winner.metrics.familyStemLaneShiftViolations || 0,
+      multipleStemsPerParentPair: winner.metrics.multipleStemsPerParentPair || 0,
+      familyJunctionMismatch: winner.metrics.familyJunctionMismatch || 0,
       requiredLaneCountByGap: plan?.requiredLaneCountByGap || {},
       routingGapHeightByGap: plan?.routingGapHeightByGap || {},
       maxLaneCount: plan?.maxLaneCount || 0,

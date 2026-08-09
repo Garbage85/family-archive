@@ -41,6 +41,11 @@ export function scorePlacementCandidate(metrics) {
     (metrics.falseJunctions || 0) +
     (metrics.ambiguousSharedSegments || 0) +
     (metrics.invalidFamilyJunctions || 0) +
+    (metrics.twoParentStemAnchoredToSpouseMidpoint || 0) +
+    (metrics.singleParentStemAnchoredToCardCenter || 0) +
+    (metrics.familyStemLaneShiftViolations || 0) +
+    (metrics.multipleStemsPerParentPair || 0) +
+    (metrics.familyJunctionMismatch || 0) +
     (metrics.unrelatedCollinearOverlaps || 0) +
     (metrics.zeroLengthSegments || 0) +
     (metrics.selfIntersections || 0) +
