@@ -283,6 +283,126 @@ export function findLinksThroughForeignCards(layout) {
   return hits;
 }
 
+function linkFamilyKey(link) {
+  if (link.familyKey) return String(link.familyKey);
+  if (link.type === 'spouse') {
+    return `spouse:${[link.source, link.target].map(String).sort().join('+')}`;
+  }
+  return `pc:${link.source}->${link.target}`;
+}
+
+function linkSegments(link) {
+  const points = link.points || [];
+  const segments = [];
+  for (let i = 0; i < points.length - 1; i += 1) {
+    const a = points[i];
+    const b = points[i + 1];
+    if (a[0] === b[0] && a[1] === b[1]) continue;
+    segments.push({
+      link,
+      familyKey: linkFamilyKey(link),
+      a,
+      b,
+      index: i,
+    });
+  }
+  return segments;
+}
+
+function orientSegment(segment) {
+  const horizontal = Math.abs(segment.a[1] - segment.b[1]) < 1e-6;
+  const vertical = Math.abs(segment.a[0] - segment.b[0]) < 1e-6;
+  if (horizontal) {
+    return {
+      kind: 'h',
+      y: segment.a[1],
+      min: Math.min(segment.a[0], segment.b[0]),
+      max: Math.max(segment.a[0], segment.b[0]),
+    };
+  }
+  if (vertical) {
+    return {
+      kind: 'v',
+      x: segment.a[0],
+      min: Math.min(segment.a[1], segment.b[1]),
+      max: Math.max(segment.a[1], segment.b[1]),
+    };
+  }
+  return { kind: 'diag' };
+}
+
+function rangesOverlap(aMin, aMax, bMin, bMax, epsilon = 1e-6) {
+  return aMin <= bMax - epsilon && bMin <= aMax - epsilon;
+}
+
+function sameFamily(a, b) {
+  return a.familyKey && b.familyKey && a.familyKey === b.familyKey;
+}
+
+/** Collinear overlapping segments from unrelated family links (ambiguous shared trunk). */
+export function findOverlappingCollinearUnrelatedSegments(layout) {
+  const segments = (layout.links || []).flatMap(linkSegments);
+  const hits = [];
+  for (let i = 0; i < segments.length; i += 1) {
+    for (let j = i + 1; j < segments.length; j += 1) {
+      const left = segments[i];
+      const right = segments[j];
+      if (sameFamily(left, right)) continue;
+      const a = orientSegment(left);
+      const b = orientSegment(right);
+      if (a.kind === 'h' && b.kind === 'h' && Math.abs(a.y - b.y) < 1e-6) {
+        if (rangesOverlap(a.min, a.max, b.min, b.max)) {
+          hits.push({
+            kind: 'horizontal',
+            y: a.y,
+            a: `${left.link.type}:${left.link.source}->${left.link.target}`,
+            b: `${right.link.type}:${right.link.source}->${right.link.target}`,
+          });
+        }
+      }
+      if (a.kind === 'v' && b.kind === 'v' && Math.abs(a.x - b.x) < 1e-6) {
+        if (rangesOverlap(a.min, a.max, b.min, b.max)) {
+          hits.push({
+            kind: 'vertical',
+            x: a.x,
+            a: `${left.link.type}:${left.link.source}->${left.link.target}`,
+            b: `${right.link.type}:${right.link.source}->${right.link.target}`,
+          });
+        }
+      }
+    }
+  }
+  return hits;
+}
+
+/** Ambiguous shared lanes = overlapping collinear unrelated parent-child segments. */
+export function findAmbiguousSharedLanes(layout) {
+  return findOverlappingCollinearUnrelatedSegments(layout).filter((hit) => {
+    const leftType = String(hit.a).split(':')[0];
+    const rightType = String(hit.b).split(':')[0];
+    return leftType === 'parent-child' && rightType === 'parent-child';
+  });
+}
+
+/** Proper crossings between unrelated link polylines (not endpoint-touching). */
+export function findUnrelatedLinkIntersections(layout) {
+  const segments = (layout.links || []).flatMap(linkSegments);
+  const hits = [];
+  for (let i = 0; i < segments.length; i += 1) {
+    for (let j = i + 1; j < segments.length; j += 1) {
+      const left = segments[i];
+      const right = segments[j];
+      if (sameFamily(left, right)) continue;
+      if (!segmentsIntersect(left.a, left.b, right.a, right.b)) continue;
+      hits.push({
+        a: `${left.link.type}:${left.link.source}->${left.link.target}`,
+        b: `${right.link.type}:${right.link.source}->${right.link.target}`,
+      });
+    }
+  }
+  return hits;
+}
+
 export function boundingBox(nodes) {
   if (!nodes?.length) return { width: 0, height: 0, minX: 0, maxX: 0, minY: 0, maxY: 0 };
   const xs = nodes.map((node) => node.x);
@@ -302,6 +422,9 @@ export function summarizeLayout(people, layout) {
   const missingVisibleParentChild = findMissingVisibleParentChildLinks(people, layout);
   const missingVisibleSpouse = findMissingVisibleSpouseLinks(people, layout);
   const lineHits = findLinksThroughForeignCards(layout);
+  const collinearUnrelated = findOverlappingCollinearUnrelatedSegments(layout);
+  const ambiguousLanes = findAmbiguousSharedLanes(layout);
+  const unrelatedCrossings = findUnrelatedLinkIntersections(layout);
   const spouseLinks = (layout.links || []).filter((link) => link.type === 'spouse').length;
   const parentLinks = (layout.links || []).filter((link) => link.type === 'parent-child').length;
   return {
@@ -321,6 +444,9 @@ export function summarizeLayout(people, layout) {
     spousePlacementIssues: spouseIssues.length,
     generationIssues: generationIssues.length,
     linksThroughCards: lineHits.length,
+    overlappingCollinearUnrelated: collinearUnrelated.length,
+    ambiguousSharedLanes: ambiguousLanes.length,
+    unrelatedLinkIntersections: unrelatedCrossings.length,
     boundingBox: boundingBox(layout.nodes),
   };
 }

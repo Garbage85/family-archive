@@ -4,6 +4,8 @@
  * Does not use Family Chart private APIs. Never writes coords to trees.data.
  */
 
+import { routeLayoutLinks } from './link-routing.js';
+
 function unique(ids) {
   return [...new Set((ids || []).map(String).filter(Boolean))];
 }
@@ -24,17 +26,35 @@ function childIds(person) {
   return unique(person?.rels?.children);
 }
 
+function closeUnderMarriage(visible, byId) {
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const id of [...visible]) {
+      for (const spouseId of spouseIds(byId.get(id))) {
+        if (byId.has(spouseId) && !visible.has(spouseId)) {
+          visible.add(spouseId);
+          changed = true;
+        }
+      }
+    }
+  }
+}
+
 /**
  * Visible set around center: spouse-symmetric family area.
  *
  * 1) Couple core = center ∪ direct spouses(center).
  * 2) For each core person: ancestry + progeny + siblings.
  * 3) Close under marriage (spouses of everyone already visible).
- * 4) Deduplicate by id.
+ * 4) For each displayed sibling of the couple core, include direct parents
+ *    of that sibling's displayed spouses (one parent level only — not
+ *    grandparents, not that spouse's siblings).
+ * 5) Close under marriage again for newly added parents.
+ * 6) Deduplicate by id.
  *
- * Switching center between spouses must keep the same spouse-connected area.
- * Does not walk ancestry of spouses that enter only via household closure
- * (e.g. sibling-in-law parents stay out unless they are in the couple core).
+ * Switching center between spouses keeps the same couple core, so the same
+ * sibling households and the same one-level in-law parents are included.
  */
 export function selectVisiblePeople(
   people,
@@ -80,19 +100,29 @@ export function selectVisiblePeople(
 
   const coupleCore = unique([String(centerId), ...spouseIds(center)]);
   for (const id of coupleCore) addPersonalFamilyArea(id);
+  closeUnderMarriage(visible, byId);
 
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const id of [...visible]) {
-      for (const spouseId of spouseIds(byId.get(id))) {
-        if (byId.has(spouseId) && !visible.has(spouseId)) {
-          visible.add(spouseId);
-          changed = true;
+  // Sibling-spouse direct parents (one level): e.g. p010 → sibling p007 → spouse p008 → father p009.
+  const coupleCoreSet = new Set(coupleCore);
+  const siblingsOfCore = new Set();
+  for (const coreId of coupleCore) {
+    for (const parentId of parentIds(byId.get(coreId))) {
+      for (const siblingId of childIds(byId.get(parentId))) {
+        if (!coupleCoreSet.has(siblingId) && visible.has(siblingId)) {
+          siblingsOfCore.add(siblingId);
         }
       }
     }
   }
+  for (const siblingId of siblingsOfCore) {
+    for (const spouseId of spouseIds(byId.get(siblingId))) {
+      if (!visible.has(spouseId)) continue;
+      for (const parentId of parentIds(byId.get(spouseId))) {
+        if (byId.has(parentId)) visible.add(parentId);
+      }
+    }
+  }
+  closeUnderMarriage(visible, byId);
 
   return [...visible]
     .sort((left, right) => left.localeCompare(right))
@@ -266,7 +296,7 @@ export function layoutFamilyTree(
     .sort((left, right) => left.id.localeCompare(right.id));
 
   const nodeById = new Map(nodes.map((node) => [node.id, node]));
-  const links = [];
+  const draftLinks = [];
   const spouseSeen = new Set();
   const parentSeen = new Set();
 
@@ -276,16 +306,11 @@ export function layoutFamilyTree(
       const key = [person.id, spouseId].sort().join('|');
       if (spouseSeen.has(key)) continue;
       spouseSeen.add(key);
-      const left = nodeById.get(person.id);
-      const right = nodeById.get(spouseId);
-      links.push({
+      draftLinks.push({
         type: 'spouse',
-        source: left.id,
-        target: right.id,
-        points: [
-          [left.x, left.y],
-          [right.x, right.y],
-        ],
+        source: person.id,
+        target: spouseId,
+        points: [],
       });
     }
     for (const parentId of parentIds(person)) {
@@ -293,36 +318,23 @@ export function layoutFamilyTree(
       const key = `${parentId}->${person.id}`;
       if (parentSeen.has(key)) continue;
       parentSeen.add(key);
-      const parent = nodeById.get(parentId);
-      const child = nodeById.get(person.id);
-      const midY = (parent.y + child.y) / 2;
-      const midX = (parent.x + child.x) / 2;
-      links.push({
+      draftLinks.push({
         type: 'parent-child',
-        source: parent.id,
-        target: child.id,
-        points: isHorizontal
-          ? [
-              [parent.x, parent.y],
-              [midX, parent.y],
-              [midX, child.y],
-              [child.x, child.y],
-            ]
-          : [
-              [parent.x, parent.y],
-              [parent.x, midY],
-              [child.x, midY],
-              [child.x, child.y],
-            ],
+        source: parentId,
+        target: person.id,
+        points: [],
       });
     }
   }
 
-  links.sort((left, right) => {
+  draftLinks.sort((left, right) => {
     const leftKey = `${left.type}:${left.source}:${left.target}`;
     const rightKey = `${right.type}:${right.source}:${right.target}`;
     return leftKey.localeCompare(rightKey);
   });
+
+  // Placement is final; routing never moves nodes.
+  const links = routeLayoutLinks({ nodes, links: draftLinks, households }, { orientation });
 
   return {
     nodes,

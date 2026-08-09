@@ -17,11 +17,14 @@ import {
   analyzeParentChildEdges,
   assertParentChildGenerationOrder,
   assertSpousesNearby,
+  findAmbiguousSharedLanes,
   findCardOverlaps,
   findLinksThroughForeignCards,
   findMissingRelationEndpoints,
   findMissingVisibleParentChildLinks,
   findMissingVisibleSpouseLinks,
+  findOverlappingCollinearUnrelatedSegments,
+  findUnrelatedLinkIntersections,
 } from '../src/layout/layout-validators.js';
 import { compareLayouts, scanPrototypeCenters } from './helpers/compare-layouts.js';
 
@@ -254,10 +257,11 @@ test('regression: spouse-symmetric visible set is identical for p010 and spouse 
     'p006',
     'p007',
     'p008',
+    'p009',
     'p010',
   ]);
-  // Sibling-in-law parents (p009) stay outside the couple-core expansion.
-  assert.equal(fromHusband.includes('p009'), false);
+  // Sibling-spouse direct parent (p009 father of p008) is included — one level only.
+  assert.equal(fromHusband.includes('p009'), true);
 
   for (const centerId of ['p010', 'p003']) {
     const layout = layoutFamilyTree(people, { centerId });
@@ -316,4 +320,58 @@ test('gate: prototype centers p001..p010 have no lost nodes, overlaps, or missin
     );
     assert.equal(row.missingVisibleSpouseLinks, 0, `${row.centerId} missingVisibleSpouseLinks`);
   }
+
+  for (const centerId of centerIds) {
+    const layout = layoutFamilyTree(people, { centerId });
+    assert.equal(findLinksThroughForeignCards(layout).length, 0, `${centerId} linksThroughCards`);
+    assert.equal(
+      findOverlappingCollinearUnrelatedSegments(layout).length,
+      0,
+      `${centerId} collinear unrelated`,
+    );
+    assert.equal(findAmbiguousSharedLanes(layout).length, 0, `${centerId} ambiguous lanes`);
+  }
+});
+
+test('family-junction routing keeps spouse links short and separates parent families', async () => {
+  const fixture = await loadFixture();
+  const people = loadStructuralPeople(fixture);
+  const layout = layoutFamilyTree(people, { centerId: 'p010', orientation: 'vertical' });
+  const spouseLinks = layout.links.filter((link) => link.type === 'spouse');
+  const parentLinks = layout.links.filter((link) => link.type === 'parent-child');
+
+  assert.ok(spouseLinks.length >= 4);
+  for (const link of spouseLinks) {
+    assert.equal(link.points.length, 2, 'spouse link is a single segment');
+    assert.match(link.familyKey, /^spouse:/);
+  }
+
+  const familyKeys = new Set(parentLinks.map((link) => link.familyKey));
+  assert.ok(familyKeys.has('pc:p001+p002'));
+  assert.ok(familyKeys.has('pc:p004+p005'));
+  assert.ok(familyKeys.has('pc:p009'));
+  assert.equal(findLinksThroughForeignCards(layout).length, 0);
+  assert.equal(findAmbiguousSharedLanes(layout).length, 0);
+  assert.equal(findOverlappingCollinearUnrelatedSegments(layout).length, 0);
+
+  const crossings = findUnrelatedLinkIntersections(layout);
+  console.log(
+    '\nP010 ROUTING METRICS\n',
+    JSON.stringify(
+      {
+        nodes: layout.nodes.length,
+        links: layout.links.length,
+        parentChildLinks: parentLinks.length,
+        spouseLinks: spouseLinks.length,
+        visibleIds: layout.nodes.map((node) => node.id),
+        hasP009: layout.nodes.some((node) => node.id === 'p009'),
+        linksThroughCards: 0,
+        ambiguousSharedLanes: 0,
+        unrelatedLinkIntersections: crossings.length,
+        familyKeys: [...familyKeys].sort(),
+      },
+      null,
+      2,
+    ),
+  );
 });
