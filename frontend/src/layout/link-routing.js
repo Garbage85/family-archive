@@ -1,21 +1,25 @@
 /**
  * Orthogonal family-junction link routing for the household layout preview.
  *
- * Design rules (display-only; never writes trees.data):
- * - Parent→child flows in the natural generation direction only
- *   (parents → junction/bus in the generation gap → children).
- * - Each parent household has its own junction and short family bus.
- * - Unrelated family buses MAY cross; that is not a kinship signal.
- * - Ambiguous shared collinear trunks across families are avoided via lane offsets.
- * - Long exterior detours around the tree (e.g. bus below the child row) are forbidden.
- * - Routing priority: avoid cards → natural generation flow → short length →
- *   few bends → only then fewer crossings.
- * - Spouse links stay short horizontal edge-to-edge segments in a household.
+ * Couple with children (one familyKey / one junction):
  *
- * Crossing style: line-jump (SVG semicircle) on the horizontal segment at an
- * unrelated H×V crossing. Chosen over a plain 4-way cross because junctions
- * already look connected via shared family geometry; a bare cross on mobile
- * is easy to misread as a branch point. Jump radius stays small for touch UIs.
+ *   parent A ---- spouse link ---- parent B
+ *                     |
+ *                family stem
+ *                     |
+ *                 child bus
+ *                /    |    \
+ *             child child child
+ *
+ * Single-parent family: stem from the parent card to the child bus.
+ * Multi-spouse: each parent pair that has children gets its own junction.
+ *
+ * Unrelated family buses may cross; crossings are not kinship.
+ * Crossings use SVG line-jumps on the horizontal segment.
+ * Ambiguous shared collinear trunks across families are avoided via lane offsets.
+ * Exterior overflow buses under the child row are forbidden.
+ *
+ * Coordinates are display-only and must never be written to trees.data.
  */
 
 export const CROSSING_STYLE = 'line-jump';
@@ -42,11 +46,12 @@ function pt(x, y) {
   return [roundCoord(x), roundCoord(y)];
 }
 
-function routeSpouse(source, target) {
-  const left = source.x <= target.x ? source : target;
-  const right = source.x <= target.x ? target : source;
-  const y = (left.y + right.y) / 2;
-  return [pt(left.x + half(left, 'x'), y), pt(right.x - half(right, 'x'), y)];
+function pairKey(ids) {
+  return [...ids].map(String).sort().join('+');
+}
+
+export function familyKeyForPair(parentIds) {
+  return `fam:${pairKey(parentIds)}`;
 }
 
 /**
@@ -89,6 +94,8 @@ export function buildParentFamilies(layout) {
       .sort((left, right) => left.x - right.x || left.id.localeCompare(right.id));
     const xs = family.parents.map((node) => node.x);
     family.parentMidX = xs.reduce((sum, value) => sum + value, 0) / xs.length;
+    family.parentMidY =
+      family.parents.reduce((sum, node) => sum + node.y, 0) / family.parents.length;
     family.parentBottom = Math.max(...family.parents.map((node) => node.y + half(node, 'y')));
     family.parentTop = Math.min(...family.parents.map((node) => node.y - half(node, 'y')));
     family.parentRight = Math.max(...family.parents.map((node) => node.x + half(node, 'x')));
@@ -102,6 +109,8 @@ export function buildParentFamilies(layout) {
       family.children.reduce((sum, node) => sum + node.y, 0) / family.children.length;
     family.spanMinX = Math.min(family.parentMidX, family.childMinX);
     family.spanMaxX = Math.max(family.parentMidX, family.childMaxX);
+    family.familyKey = familyKeyForPair(family.parentIds);
+    family.isCouple = family.parents.length >= 2;
   }
 
   return [...families.values()].sort(
@@ -143,7 +152,6 @@ export function assignFamilyLanes(families, _isHorizontal = false) {
   const maxRank = Math.max(0, ...rank.values());
   for (const family of families) {
     family.laneIndex = rank.get(family.key) || 0;
-    // Spread lanes inside the parent→child gap only (never past the child row).
     family.laneT = maxRank === 0 ? 0.45 : 0.3 + (0.4 * family.laneIndex) / maxRank;
     family.laneOffset = family.laneIndex * LANE_GAP;
   }
@@ -192,32 +200,64 @@ export function simplifyPoints(points) {
   return out;
 }
 
+function routeSpouse(source, target) {
+  const left = source.x <= target.x ? source : target;
+  const right = source.x <= target.x ? target : source;
+  const y = (left.y + right.y) / 2;
+  return simplifyPoints([pt(left.x + half(left, 'x'), y), pt(right.x - half(right, 'x'), y)]);
+}
+
 /**
- * Build polyline for one parent→child edge inside a family junction.
- * Same-family edges share stem + bus; child drops are per child.
- * Path stays inside the generation gap (no exterior overflow bus).
+ * Spouse-junction for a couple: midpoint of the short spouse link.
+ * Stem and child bus hang from this point — not from a parallel parent-bottom magistral.
+ */
+export function coupleSpouseJunction(family) {
+  return {
+    x: roundCoord(family.parentMidX),
+    y: roundCoord(family.parentMidY),
+    kind: 'spouse-junction',
+  };
+}
+
+/**
+ * Parent-child polyline for one edge. Couple edges start at the shared spouse
+ * junction (not at each parent card), so parents connect through the spouse link.
  */
 export function routeFamilyParentChild(family, parent, child, isHorizontal) {
   if (isHorizontal) {
     const busX = horizontalBusX(family);
-    const stemY = roundCoord(
-      family.parents.reduce((sum, node) => sum + node.y, 0) / family.parents.length,
-    );
+    if (family.isCouple) {
+      const junction = coupleSpouseJunction(family);
+      return simplifyPoints([
+        pt(junction.x, junction.y),
+        pt(busX, junction.y),
+        pt(busX, child.y),
+        pt(child.x - half(child, 'x'), child.y),
+      ]);
+    }
     return simplifyPoints([
       pt(parent.x + half(parent, 'x'), parent.y),
       pt(busX, parent.y),
-      pt(busX, stemY),
       pt(busX, child.y),
       pt(child.x - half(child, 'x'), child.y),
     ]);
   }
 
   const busY = verticalBusY(family);
-  const stemX = roundCoord(family.parentMidX);
+  if (family.isCouple) {
+    const junction = coupleSpouseJunction(family);
+    return simplifyPoints([
+      pt(junction.x, junction.y),
+      pt(junction.x, busY),
+      pt(child.x, busY),
+      pt(child.x, child.y - half(child, 'y')),
+    ]);
+  }
+
+  // Single parent: stem from the parent card to the child bus.
   return simplifyPoints([
     pt(parent.x, parent.y + half(parent, 'y')),
-    pt(stemX, parent.y + half(parent, 'y')),
-    pt(stemX, busY),
+    pt(parent.x, busY),
     pt(child.x, busY),
     pt(child.x, child.y - half(child, 'y')),
   ]);
@@ -244,6 +284,11 @@ function segmentsOf(points) {
   return segs;
 }
 
+/**
+ * Proper interior intersection. Endpoints are excluded so intentional T-joins
+ * at a shared family junction are not treated as crossings — but near-bend
+ * interior hits still count (epsilon keeps true crossings).
+ */
 function segmentIntersectionPoint(a, b) {
   const d = (a.b[0] - a.a[0]) * (b.b[1] - b.a[1]) - (a.b[1] - a.a[1]) * (b.b[0] - b.a[0]);
   if (Math.abs(d) < 1e-9) return null;
@@ -253,18 +298,17 @@ function segmentIntersectionPoint(a, b) {
   return pt(a.a[0] + t * (a.b[0] - a.a[0]), a.a[1] + t * (a.b[1] - a.a[1]));
 }
 
-/**
- * Annotate unrelated H×V crossings. The horizontal segment is the "over" line
- * and receives a line-jump; the vertical stays straight underneath.
- */
-export function annotateLineJumps(links) {
-  const enriched = (links || []).map((link) => ({
-    ...link,
-    jumps: [],
-    crossingStyle: CROSSING_STYLE,
-  }));
+function sameFamilyKeys(a, b) {
+  return Boolean(a && b && a === b);
+}
 
-  const indexed = enriched.map((link, linkIndex) => ({
+/**
+ * Enumerate unrelated H×V crossings with geometry. Junction/shared topology
+ * (same familyKey) is never a crossing — even when segments touch.
+ */
+export function findUnrelatedCrossingSites(links) {
+  const sites = [];
+  const indexed = (links || []).map((link, linkIndex) => ({
     link,
     linkIndex,
     familyKey: linkFamilyKey(link),
@@ -275,7 +319,7 @@ export function annotateLineJumps(links) {
     for (let j = i + 1; j < indexed.length; j += 1) {
       const left = indexed[i];
       const right = indexed[j];
-      if (left.familyKey && left.familyKey === right.familyKey) continue;
+      if (sameFamilyKeys(left.familyKey, right.familyKey)) continue;
 
       for (const segA of left.segs) {
         for (const segB of right.segs) {
@@ -284,31 +328,53 @@ export function annotateLineJumps(links) {
           }
           const point = segmentIntersectionPoint(segA, segB);
           if (!point) continue;
-          // Jump only on parent-child horizontal buses — spouse stubs stay plain.
-          let over;
-          let under;
-          let overSeg;
-          if (segA.horizontal && left.link.type === 'parent-child') {
-            over = left;
-            under = right;
-            overSeg = segA;
-          } else if (segB.horizontal && right.link.type === 'parent-child') {
-            over = right;
-            under = left;
-            overSeg = segB;
-          } else {
-            continue;
-          }
-          over.link.jumps.push({
+          const horizontal = segA.horizontal ? left : right;
+          const vertical = segA.horizontal ? right : left;
+          const horizontalSeg = segA.horizontal ? segA : segB;
+          sites.push({
             x: point[0],
             y: point[1],
-            axis: 'h',
-            segmentIndex: overSeg.index,
-            under: `${under.link.type}:${under.link.source}->${under.link.target}`,
+            horizontalLink: horizontal.link,
+            verticalLink: vertical.link,
+            horizontalSegIndex: horizontalSeg.index,
+            familyA: left.familyKey,
+            familyB: right.familyKey,
+            a: `${left.link.type}:${left.link.source}->${left.link.target}`,
+            b: `${right.link.type}:${right.link.source}->${right.link.target}`,
           });
         }
       }
     }
+  }
+  return sites;
+}
+
+/**
+ * Annotate line-jumps on the horizontal segment of every unrelated H×V crossing
+ * (parent-child bus or spouse stub). Vertical stays straight underneath.
+ */
+export function annotateLineJumps(links) {
+  const enriched = (links || []).map((link) => ({
+    ...link,
+    jumps: [],
+    crossingStyle: CROSSING_STYLE,
+  }));
+  const byRef = new Map(
+    enriched.map((link) => [`${link.type}:${link.source}->${link.target}`, link]),
+  );
+
+  for (const site of findUnrelatedCrossingSites(enriched)) {
+    const overKey = `${site.horizontalLink.type}:${site.horizontalLink.source}->${site.horizontalLink.target}`;
+    const underKey = `${site.verticalLink.type}:${site.verticalLink.source}->${site.verticalLink.target}`;
+    const over = byRef.get(overKey);
+    if (!over) continue;
+    over.jumps.push({
+      x: site.x,
+      y: site.y,
+      axis: 'h',
+      segmentIndex: site.horizontalSegIndex,
+      under: underKey,
+    });
   }
 
   for (const link of enriched) {
@@ -360,12 +426,10 @@ export function pointsToSvgPath(points, jumps = [], radius = LINE_JUMP_RADIUS) {
       const right = jump.x + radius;
       const approach = dir > 0 ? left : right;
       const leave = dir > 0 ? right : left;
-      // Skip degenerate jumps that would collapse after a previous nearby jump.
       if ((leave - cursorX) * dir <= EPS) continue;
       if ((approach - cursorX) * dir > EPS) {
         d += `L${roundCoord(approach)},${y}`;
       }
-      // Upper semicircle for left→right; mirror sweep for right→left.
       const sweep = dir > 0 ? 1 : 0;
       d += `A${radius},${radius} 0 0 ${sweep} ${roundCoord(leave)},${y}`;
       cursorX = leave;
@@ -373,6 +437,17 @@ export function pointsToSvgPath(points, jumps = [], radius = LINE_JUMP_RADIUS) {
     d += `L${b[0]},${b[1]}`;
   }
   return d;
+}
+
+function pointOnSegment(point, a, b, pad = EPS) {
+  const minX = Math.min(a[0], b[0]) - pad;
+  const maxX = Math.max(a[0], b[0]) + pad;
+  const minY = Math.min(a[1], b[1]) - pad;
+  const maxY = Math.max(a[1], b[1]) + pad;
+  if (point[0] < minX || point[0] > maxX || point[1] < minY || point[1] > maxY) return false;
+  if (almostEq(a[0], b[0])) return almostEq(point[0], a[0], pad);
+  if (almostEq(a[1], b[1])) return almostEq(point[1], a[1], pad);
+  return false;
 }
 
 /**
@@ -384,7 +459,9 @@ export function routeLayoutLinks(layout, { orientation = 'vertical' } = {}) {
   const isHorizontal = orientation === 'horizontal';
   const families = assignFamilyLanes(buildParentFamilies(layout), isHorizontal);
   const familyByParentChild = new Map();
+  const familyByCoupleKey = new Map();
   for (const family of families) {
+    familyByCoupleKey.set(pairKey(family.parentIds), family);
     for (const parentId of family.parentIds) {
       for (const child of family.children) {
         familyByParentChild.set(`${parentId}->${child.id}`, family);
@@ -398,11 +475,23 @@ export function routeLayoutLinks(layout, { orientation = 'vertical' } = {}) {
     if (!source || !target) return { ...link, points: link.points || [], jumps: [] };
 
     if (link.type === 'spouse') {
+      const couple = familyByCoupleKey.get(pairKey([link.source, link.target]));
+      const points = routeSpouse(source, target);
+      if (couple?.isCouple) {
+        const junction = coupleSpouseJunction(couple);
+        return {
+          ...link,
+          familyKey: couple.familyKey,
+          laneIndex: couple.laneIndex,
+          junction,
+          points,
+        };
+      }
       return {
         ...link,
-        familyKey: `spouse:${[link.source, link.target].map(String).sort().join('+')}`,
+        familyKey: `spouse:${pairKey([link.source, link.target])}`,
         junction: null,
-        points: simplifyPoints(routeSpouse(source, target)),
+        points,
       };
     }
 
@@ -411,8 +500,9 @@ export function routeLayoutLinks(layout, { orientation = 'vertical' } = {}) {
       const midY = (source.y + target.y) / 2;
       return {
         ...link,
-        familyKey: `pc:${link.source}->${link.target}`,
-        junction: { x: source.x, y: midY },
+        familyKey: `fam:${link.source}->${link.target}`,
+        junction: { x: source.x, y: midY, kind: 'fallback-junction' },
+        busMode: 'gap',
         points: simplifyPoints([
           pt(source.x, source.y + half(source, 'y')),
           pt(source.x, midY),
@@ -424,19 +514,28 @@ export function routeLayoutLinks(layout, { orientation = 'vertical' } = {}) {
 
     const busY = isHorizontal ? null : verticalBusY(family);
     const busX = isHorizontal ? horizontalBusX(family) : null;
-    const stemX = isHorizontal ? null : roundCoord(family.parentMidX);
-    const stemY = isHorizontal
-      ? roundCoord(family.parents.reduce((sum, node) => sum + node.y, 0) / family.parents.length)
-      : null;
+    const singleParent = family.parents[0];
+    const junction = family.isCouple
+      ? coupleSpouseJunction(family)
+      : isHorizontal
+        ? {
+            x: busX,
+            y: roundCoord(singleParent.y),
+            kind: 'single-parent-junction',
+          }
+        : {
+            x: roundCoord(singleParent.x),
+            y: roundCoord(singleParent.y + half(singleParent, 'y')),
+            kind: 'single-parent-junction',
+          };
 
     return {
       ...link,
-      familyKey: `pc:${family.key}`,
+      familyKey: family.familyKey,
       laneIndex: family.laneIndex,
       busMode: 'gap',
-      junction: isHorizontal
-        ? { x: busX, y: stemY, kind: 'family-junction' }
-        : { x: stemX, y: busY, kind: 'family-junction' },
+      junction,
+      bus: isHorizontal ? { x: busX, y: null } : { x: null, y: busY },
       points: routeFamilyParentChild(family, source, target, isHorizontal),
     };
   });
@@ -450,6 +549,24 @@ export function routeSignature(link) {
     .map((jump) => `${roundCoord(jump.x)},${roundCoord(jump.y)}`)
     .join(';');
   return `${link.type}|${link.source}->${link.target}|${link.familyKey || ''}|${pts}|j:${jumps}`;
+}
+
+export function countParentChildSegments(links) {
+  let segments = 0;
+  for (const link of links || []) {
+    if (link.type !== 'parent-child') continue;
+    segments += Math.max(0, (link.points || []).length - 1);
+  }
+  return segments;
+}
+
+export function countFamilyJunctions(links) {
+  const keys = new Set();
+  for (const link of links || []) {
+    if (!link.junction || !link.familyKey) continue;
+    if (String(link.familyKey).startsWith('fam:')) keys.add(link.familyKey);
+  }
+  return keys.size;
 }
 
 export function routingMetrics(links) {
@@ -484,6 +601,8 @@ export function routingMetrics(links) {
   return {
     crossingStyle: CROSSING_STYLE,
     lineJumpCount: jumpCount,
+    parentChildSegments: countParentChildSegments(links),
+    familyJunctions: countFamilyJunctions(links),
     maxBendsPerParentChild: maxBends,
     maxParentChildLength: Number.isFinite(maxLength) ? roundCoord(maxLength) : 0,
     totalParentChildLength: Number.isFinite(totalLength) ? roundCoord(totalLength) : 0,
@@ -500,10 +619,6 @@ export function routingMetrics(links) {
   };
 }
 
-/**
- * True when a parent-child polyline leaves the parent→child generation band
- * on the far side of the children (exterior overflow corridor).
- */
 export function findExteriorParentChildDetours(layout) {
   const byId = new Map((layout.nodes || []).map((node) => [String(node.id), node]));
   const hits = [];
@@ -521,10 +636,8 @@ export function findExteriorParentChildDetours(layout) {
     if (!parent || !child) continue;
     const childFar = child.y + half(child, 'y');
     const childTop = child.y - half(child, 'y');
-    const parentBottom = parent.y + half(parent, 'y');
     for (const point of link.points || []) {
       const y = point[1];
-      // Below the child card (past sibling/child row) — forbidden exterior corridor.
       if (y > childFar + EPS) {
         hits.push({
           link: `${link.source}->${link.target}`,
@@ -534,7 +647,7 @@ export function findExteriorParentChildDetours(layout) {
         });
         break;
       }
-      // Far above the parent row — non-natural for downward trees.
+      // Above the parent card top is non-natural for downward trees.
       if (child.y >= parent.y && y < parent.y - half(parent, 'y') - LANE_GAP) {
         hits.push({
           link: `${link.source}->${link.target}`,
@@ -544,7 +657,6 @@ export function findExteriorParentChildDetours(layout) {
         break;
       }
     }
-    // Horizontal bus must stay inside the generation gap, not under the child row.
     const points = link.points || [];
     for (let i = 0; i < points.length - 1; i += 1) {
       const a = points[i];
@@ -553,13 +665,13 @@ export function findExteriorParentChildDetours(layout) {
       const y = a[1];
       const span = Math.abs(b[0] - a[0]);
       if (span < half(child, 'x')) continue;
+      // Child bus must stay above the child-top attach (generation gap).
       if (child.y >= parent.y && y > childTop + EPS) {
         hits.push({
           link: `${link.source}->${link.target}`,
           reason: 'horizontal-bus-below-child-top',
           y,
           childTop,
-          parentBottom,
         });
         break;
       }
@@ -569,36 +681,160 @@ export function findExteriorParentChildDetours(layout) {
 }
 
 export function findInvalidJunctions(layout) {
-  const byId = new Map((layout.nodes || []).map((node) => [String(node.id), node]));
   const issues = [];
   for (const link of layout.links || []) {
-    if (link.type !== 'parent-child') continue;
-    if (!link.familyKey) {
+    if (link.type === 'parent-child' && !link.familyKey) {
       issues.push({ link: `${link.source}->${link.target}`, reason: 'missing-familyKey' });
-      continue;
     }
-    const parent = byId.get(String(link.source));
-    const child = byId.get(String(link.target));
-    if (!parent || !child) {
-      issues.push({ link: `${link.source}->${link.target}`, reason: 'missing-endpoint' });
-      continue;
-    }
-    const junction = link.junction;
-    if (!junction || !Number.isFinite(junction.x) || !Number.isFinite(junction.y)) {
+    if (link.type === 'parent-child' && !link.junction) {
       issues.push({ link: `${link.source}->${link.target}`, reason: 'missing-junction' });
-      continue;
     }
-    const parentBottom = parent.y + half(parent, 'y');
-    const childTop = child.y - half(child, 'y');
-    if (child.y >= parent.y) {
-      if (junction.y < parentBottom - EPS || junction.y > childTop + EPS) {
+  }
+  return issues;
+}
+
+/** One familyKey / junction per parent pair that has children. */
+export function findOneFamilyJunctionPerParentPairIssues(layout) {
+  const families = buildParentFamilies(layout);
+  const issues = [];
+  for (const family of families) {
+    const expected = family.familyKey;
+    const related = (layout.links || []).filter((link) => {
+      if (link.type === 'parent-child') {
+        return (
+          family.parentIds.includes(String(link.source)) && family.childIds.has(String(link.target))
+        );
+      }
+      if (link.type === 'spouse' && family.isCouple) {
+        const key = pairKey([link.source, link.target]);
+        return key === pairKey(family.parentIds);
+      }
+      return false;
+    });
+    for (const link of related) {
+      if (link.familyKey !== expected) {
         issues.push({
-          link: `${link.source}->${link.target}`,
-          reason: 'junction-outside-generation-gap',
-          junction,
-          parentBottom,
-          childTop,
+          family: expected,
+          link: `${link.type}:${link.source}->${link.target}`,
+          familyKey: link.familyKey,
+          reason: 'familyKey-mismatch',
         });
+      }
+    }
+    if (family.isCouple) {
+      const junctions = related
+        .map((link) => link.junction)
+        .filter(
+          (junction) => junction && Number.isFinite(junction.x) && Number.isFinite(junction.y),
+        );
+      if (!junctions.length) {
+        issues.push({ family: expected, reason: 'missing-couple-junction' });
+      } else {
+        const x0 = junctions[0].x;
+        const y0 = junctions[0].y;
+        for (const junction of junctions) {
+          if (!almostEq(junction.x, x0) || !almostEq(junction.y, y0)) {
+            issues.push({
+              family: expected,
+              reason: 'multiple-junction-coordinates',
+              junctions,
+            });
+            break;
+          }
+        }
+      }
+    }
+  }
+  return issues;
+}
+
+/** Child routes of a couple must start at the shared spouse junction. */
+export function findChildBusNotAttachedToSpouseJunction(layout) {
+  const families = buildParentFamilies(layout);
+  const issues = [];
+  for (const family of families) {
+    if (!family.isCouple) continue;
+    const junction = coupleSpouseJunction(family);
+    for (const link of layout.links || []) {
+      if (link.type !== 'parent-child') continue;
+      if (link.familyKey !== family.familyKey) continue;
+      const start = (link.points || [])[0];
+      if (!start || !almostEq(start[0], junction.x) || !almostEq(start[1], junction.y)) {
+        issues.push({
+          family: family.familyKey,
+          link: `${link.source}->${link.target}`,
+          start,
+          junction,
+          reason: 'child-route-not-starting-at-spouse-junction',
+        });
+      }
+      const spouse = (layout.links || []).find(
+        (item) =>
+          item.type === 'spouse' &&
+          item.familyKey === family.familyKey &&
+          (item.points || []).length >= 2,
+      );
+      if (spouse) {
+        const a = spouse.points[0];
+        const b = spouse.points[1];
+        if (!pointOnSegment([junction.x, junction.y], a, b, 1)) {
+          issues.push({
+            family: family.familyKey,
+            reason: 'spouse-junction-not-on-spouse-link',
+            junction,
+            spouse: spouse.points,
+          });
+        }
+      }
+    }
+  }
+  return issues;
+}
+
+export function findUnrelatedCrossingsWithoutJump(layout) {
+  const sites = findUnrelatedCrossingSites(layout.links || []);
+  const jumpPoints = [];
+  for (const link of layout.links || []) {
+    for (const jump of link.jumps || []) {
+      jumpPoints.push(jump);
+    }
+  }
+  return sites.filter((site) => {
+    return !jumpPoints.some(
+      (jump) => almostEq(jump.x, site.x, 1.5) && almostEq(jump.y, site.y, 1.5),
+    );
+  });
+}
+
+/**
+ * Unrelated families must not share a vertex/T-join that looks like a branch.
+ * Intentional joins only within the same familyKey.
+ */
+export function findFalseJunctionsBetweenUnrelatedFamilies(layout) {
+  const links = layout.links || [];
+  const issues = [];
+  for (let i = 0; i < links.length; i += 1) {
+    for (let j = i + 1; j < links.length; j += 1) {
+      const left = links[i];
+      const right = links[j];
+      if (sameFamilyKeys(linkFamilyKey(left), linkFamilyKey(right))) continue;
+      const leftPts = left.points || [];
+      const rightSegs = segmentsOf(right.points || []);
+      for (const point of leftPts) {
+        for (const seg of rightSegs) {
+          const atEnd =
+            (almostEq(point[0], seg.a[0]) && almostEq(point[1], seg.a[1])) ||
+            (almostEq(point[0], seg.b[0]) && almostEq(point[1], seg.b[1]));
+          if (atEnd) continue;
+          if (pointOnSegment(point, seg.a, seg.b, EPS)) {
+            issues.push({
+              a: `${left.type}:${left.source}->${left.target}`,
+              b: `${right.type}:${right.source}->${right.target}`,
+              point,
+              reason: 'endpoint-lies-on-unrelated-segment',
+            });
+          }
+        }
       }
     }
   }

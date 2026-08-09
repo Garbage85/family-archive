@@ -20,19 +20,26 @@ import {
   findAmbiguousSharedLanes,
   findAmbiguousSharedSegments,
   findCardOverlaps,
+  findChildBusNotAttachedToSpouseJunction,
+  findFalseJunctionsBetweenUnrelatedFamilies,
   findLinksThroughForeignCards,
   findMissingRelationEndpoints,
   findMissingVisibleParentChildLinks,
   findMissingVisibleSpouseLinks,
+  findOneFamilyJunctionPerParentPairIssues,
   findOverlappingCollinearUnrelatedSegments,
+  findUnrelatedCrossingsWithoutJump,
   findUnrelatedLinkIntersections,
   findZeroLengthSegments,
   layoutRouteSignature,
 } from '../src/layout/layout-validators.js';
 import {
   CROSSING_STYLE,
+  countFamilyJunctions,
+  countParentChildSegments,
   findExteriorParentChildDetours,
   findInvalidJunctions,
+  findUnrelatedCrossingSites,
   routingMetrics,
 } from '../src/layout/link-routing.js';
 import { compareLayouts, scanPrototypeCenters } from './helpers/compare-layouts.js';
@@ -344,6 +351,26 @@ test('gate: prototype centers p001..p010 have no lost nodes, overlaps, or missin
     assert.equal(findZeroLengthSegments(layout).length, 0, `${centerId} zero-length segments`);
     assert.equal(findInvalidJunctions(layout).length, 0, `${centerId} invalid junctions`);
     assert.equal(
+      findOneFamilyJunctionPerParentPairIssues(layout).length,
+      0,
+      `${centerId} oneFamilyJunctionPerParentPair`,
+    );
+    assert.equal(
+      findChildBusNotAttachedToSpouseJunction(layout).length,
+      0,
+      `${centerId} childBusAttachedToSpouseJunction`,
+    );
+    assert.equal(
+      findUnrelatedCrossingsWithoutJump(layout).length,
+      0,
+      `${centerId} unrelatedCrossingWithoutJump`,
+    );
+    assert.equal(
+      findFalseJunctionsBetweenUnrelatedFamilies(layout).length,
+      0,
+      `${centerId} falseJunctionBetweenUnrelatedFamilies`,
+    );
+    assert.equal(
       findExteriorParentChildDetours(layout).length,
       0,
       `${centerId} exterior parent-child detours`,
@@ -353,15 +380,10 @@ test('gate: prototype centers p001..p010 have no lost nodes, overlaps, or missin
       layoutRouteSignature(layoutAgain),
       `${centerId} deterministic route signatures`,
     );
-    // Crossings are informational and may be > 0.
-    assert.ok(
-      findUnrelatedLinkIntersections(layout).length >= 0,
-      `${centerId} crossings metric available`,
-    );
   }
 });
 
-test('family-junction routing keeps short gap buses; crossings allowed with line-jumps', async () => {
+test('family-junction routing attaches child bus to spouse junction', async () => {
   const fixture = await loadFixture();
   const people = loadStructuralPeople(fixture);
   const layout = layoutFamilyTree(people, { centerId: 'p010', orientation: 'vertical' });
@@ -371,19 +393,22 @@ test('family-junction routing keeps short gap buses; crossings allowed with line
   assert.ok(spouseLinks.length >= 4);
   for (const link of spouseLinks) {
     assert.equal(link.points.length, 2, 'spouse link is a single segment');
-    assert.match(link.familyKey, /^spouse:/);
   }
 
+  const coupleSpouse = spouseLinks.find((link) => link.familyKey === 'fam:p001+p002');
+  assert.ok(coupleSpouse, 'parent couple spouse shares fam: key');
+  assert.equal(coupleSpouse.junction?.kind, 'spouse-junction');
+
   const familyKeys = new Set(parentLinks.map((link) => link.familyKey));
-  assert.ok(familyKeys.has('pc:p001+p002'));
-  assert.ok(familyKeys.has('pc:p004+p005'));
-  assert.ok(familyKeys.has('pc:p009'));
+  assert.ok(familyKeys.has('fam:p001+p002'));
+  assert.ok(familyKeys.has('fam:p004+p005'));
+  assert.ok(familyKeys.has('fam:p009'));
   assert.equal(findLinksThroughForeignCards(layout).length, 0);
   assert.equal(findAmbiguousSharedSegments(layout).length, 0);
-  assert.equal(findOverlappingCollinearUnrelatedSegments(layout).length, 0);
-  assert.equal(findZeroLengthSegments(layout).length, 0);
-  assert.equal(findInvalidJunctions(layout).length, 0);
-  assert.equal(findExteriorParentChildDetours(layout).length, 0);
+  assert.equal(findChildBusNotAttachedToSpouseJunction(layout).length, 0);
+  assert.equal(findOneFamilyJunctionPerParentPairIssues(layout).length, 0);
+  assert.equal(findUnrelatedCrossingsWithoutJump(layout).length, 0);
+  assert.equal(findFalseJunctionsBetweenUnrelatedFamilies(layout).length, 0);
   assert.equal(CROSSING_STYLE, 'line-jump');
 
   for (const link of parentLinks) {
@@ -395,24 +420,25 @@ test('family-junction routing keeps short gap buses; crossings allowed with line
   assert.ok(crossings.length > 0, 'full p010 graph is expected to have unrelated crossings');
   assert.ok(metrics.lineJumpCount > 0, 'horizontal buses receive line-jumps at crossings');
 
-  const centerIds = Array.from(
-    { length: 10 },
-    (_, index) => `p${String(index + 1).padStart(3, '0')}`,
-  );
-  const crossingReport = centerIds.map((centerId) => {
-    const centered = layoutFamilyTree(people, { centerId });
-    const centeredMetrics = routingMetrics(centered.links);
-    return {
-      centerId,
-      crossings: findUnrelatedLinkIntersections(centered).length,
-      ambiguousSharedSegments: findAmbiguousSharedSegments(centered).length,
-      exteriorDetours: findExteriorParentChildDetours(centered).length,
-      maxBends: centeredMetrics.maxBendsPerParentChild,
-      maxRouteLength: centeredMetrics.maxParentChildLength,
-      lineJumps: centeredMetrics.lineJumpCount,
-      routingBounds: centeredMetrics.routingBounds,
-    };
-  });
+  // before (parallel parent-bottom magistral): 33 PC segments, bounds height 54
+  const before = {
+    parentChildSegments: 33,
+    familyJunctions: 3,
+    crossings: 8,
+    jumps: 4,
+    missedJumps: 0,
+    maxBends: 3,
+    routingBounds: { width: 944, height: 54 },
+  };
+  const after = {
+    parentChildSegments: countParentChildSegments(layout.links),
+    familyJunctions: countFamilyJunctions(layout.links),
+    crossings: crossings.length,
+    jumps: metrics.lineJumpCount,
+    missedJumps: findUnrelatedCrossingsWithoutJump(layout).length,
+    maxBends: metrics.maxBendsPerParentChild,
+    routingBounds: metrics.routingBounds,
+  };
 
   console.log(
     '\nP010 ROUTING METRICS\n',
@@ -420,29 +446,53 @@ test('family-junction routing keeps short gap buses; crossings allowed with line
       {
         crossingStyle: CROSSING_STYLE,
         junctionVsCrossing: {
-          junction: 'shared family stem/bus (familyKey) + explicit junction point',
-          crossing: 'unrelated H×V intersection; horizontal bus uses SVG line-jump',
+          junction: 'spouse link midpoint + shared stem/bus (same fam: familyKey)',
+          crossing: 'unrelated H×V; horizontal segment gets SVG line-jump',
         },
+        before,
+        after,
         nodes: layout.nodes.length,
-        links: layout.links.length,
         parentChildLinks: parentLinks.length,
         spouseLinks: spouseLinks.length,
-        visibleIds: layout.nodes.map((node) => node.id),
-        hasP009: layout.nodes.some((node) => node.id === 'p009'),
-        linksThroughCards: 0,
-        ambiguousSharedSegments: 0,
-        unrelatedLinkIntersections: crossings.length,
-        lineJumpCount: metrics.lineJumpCount,
-        maxBendsPerParentChild: metrics.maxBendsPerParentChild,
-        maxParentChildLength: metrics.maxParentChildLength,
-        routingBounds: metrics.routingBounds,
         familyKeys: [...familyKeys].sort(),
-        crossingReport,
       },
       null,
       2,
     ),
   );
+
+  assert.ok(
+    after.parentChildSegments < before.parentChildSegments,
+    'unified junction should reduce parent-child segments',
+  );
+});
+
+test('regression: spouse-parent route × sibling family crossing requires line-jump', async () => {
+  const fixture = await loadFixture();
+  const people = loadStructuralPeople(fixture);
+  // Live case: center p010, spouse p003 with parents p004/p005, siblings p006/p007.
+  const layout = layoutFamilyTree(people, { centerId: 'p010' });
+  assert.ok(layout.nodes.some((node) => node.id === 'p003'));
+  assert.ok(layout.nodes.some((node) => node.id === 'p004'));
+  assert.ok(layout.nodes.some((node) => node.id === 'p007'));
+
+  const sites = findUnrelatedCrossingSites(layout.links).filter((site) => {
+    const keys = [site.familyA, site.familyB].sort();
+    return keys[0] === 'fam:p001+p002' && keys[1] === 'fam:p004+p005';
+  });
+  assert.ok(sites.length > 0, 'spouse-parent family must cross sibling family');
+  assert.equal(
+    findUnrelatedCrossingsWithoutJump(layout).length,
+    0,
+    'every unrelated crossing must have a line-jump',
+  );
+
+  const jumped = layout.links.some(
+    (link) =>
+      link.familyKey === 'fam:p001+p002' &&
+      (link.jumps || []).some((jump) => Math.abs(jump.x - -236) < 1),
+  );
+  assert.ok(jumped, 'sibling child-bus must jump over spouse-parent drop at x≈-236');
 });
 
 test('after sibling spouse is visible, routing stays in generation gap (no exterior bus)', async () => {

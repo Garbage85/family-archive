@@ -389,6 +389,13 @@ export function findAmbiguousSharedSegments(layout) {
   return findAmbiguousSharedLanes(layout);
 }
 
+export {
+  findChildBusNotAttachedToSpouseJunction,
+  findFalseJunctionsBetweenUnrelatedFamilies,
+  findOneFamilyJunctionPerParentPairIssues,
+  findUnrelatedCrossingsWithoutJump,
+} from './link-routing.js';
+
 /** Proper crossings between unrelated link polylines (not endpoint-touching). */
 export function findUnrelatedLinkIntersections(layout) {
   const segments = (layout.links || []).flatMap(linkSegments);
