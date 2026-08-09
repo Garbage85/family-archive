@@ -25,8 +25,16 @@ function childIds(person) {
 }
 
 /**
- * Visible set around center: ancestry + progeny + siblings of center +
- * spouses of every included person (households closed under marriage).
+ * Visible set around center: spouse-symmetric family area.
+ *
+ * 1) Couple core = center ∪ direct spouses(center).
+ * 2) For each core person: ancestry + progeny + siblings.
+ * 3) Close under marriage (spouses of everyone already visible).
+ * 4) Deduplicate by id.
+ *
+ * Switching center between spouses must keep the same spouse-connected area.
+ * Does not walk ancestry of spouses that enter only via household closure
+ * (e.g. sibling-in-law parents stay out unless they are in the couple core).
  */
 export function selectVisiblePeople(
   people,
@@ -37,7 +45,7 @@ export function selectVisiblePeople(
   const center = byId.get(String(centerId));
   if (!center) return [];
 
-  const visible = new Set([String(centerId)]);
+  const visible = new Set();
 
   function walkParents(id, depth) {
     if (depth <= 0) return;
@@ -57,15 +65,21 @@ export function selectVisiblePeople(
     }
   }
 
-  walkParents(String(centerId), ancestryDepth);
-  walkChildren(String(centerId), progenyDepth);
-
-  for (const parentId of parentIds(center)) {
-    const parent = byId.get(parentId);
-    for (const siblingId of childIds(parent)) {
-      if (siblingId !== String(centerId) && byId.has(siblingId)) visible.add(siblingId);
+  function addPersonalFamilyArea(seedId) {
+    const seed = String(seedId);
+    if (!byId.has(seed)) return;
+    visible.add(seed);
+    walkParents(seed, ancestryDepth);
+    walkChildren(seed, progenyDepth);
+    for (const parentId of parentIds(byId.get(seed))) {
+      for (const siblingId of childIds(byId.get(parentId))) {
+        if (byId.has(siblingId)) visible.add(siblingId);
+      }
     }
   }
+
+  const coupleCore = unique([String(centerId), ...spouseIds(center)]);
+  for (const id of coupleCore) addPersonalFamilyArea(id);
 
   let changed = true;
   while (changed) {
@@ -86,6 +100,10 @@ export function selectVisiblePeople(
     .filter(Boolean);
 }
 
+/**
+ * Generation indices relative to center. Parent/child and spouse edges are
+ * traversed so in-laws from the couple-symmetric visible set stay aligned.
+ */
 function assignGenerations(people, centerId) {
   const byId = personMap(people);
   const generation = new Map([[String(centerId), 0]]);
@@ -105,32 +123,15 @@ function assignGenerations(people, centerId) {
       generation.set(childId, g + 1);
       queue.push(childId);
     }
+    for (const spouseId of spouseIds(person)) {
+      if (!byId.has(spouseId) || generation.has(spouseId)) continue;
+      generation.set(spouseId, g);
+      queue.push(spouseId);
+    }
   }
 
   for (const person of people) {
     if (!generation.has(person.id)) generation.set(person.id, 0);
-  }
-
-  // Spouses share generation with the lower-abs partner already placed.
-  let stable = false;
-  while (!stable) {
-    stable = true;
-    for (const person of people) {
-      for (const spouseId of spouseIds(person)) {
-        if (!byId.has(spouseId)) continue;
-        const gPerson = generation.get(person.id);
-        const gSpouse = generation.get(spouseId);
-        if (gPerson !== gSpouse) {
-          // Prefer bloodline generation already reached via parent/child.
-          const prefer = Math.abs(gPerson) <= Math.abs(gSpouse) ? gPerson : gSpouse;
-          if (generation.get(person.id) !== prefer || generation.get(spouseId) !== prefer) {
-            generation.set(person.id, prefer);
-            generation.set(spouseId, prefer);
-            stable = false;
-          }
-        }
-      }
-    }
   }
 
   return generation;

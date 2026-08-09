@@ -202,16 +202,17 @@ test('regression: real fixture center p010 keeps every visible parent-child edge
   assert.equal(comparison.prototype.overlaps, 0);
   assert.equal(comparison.prototype.missingVisibleParentChildLinks, 0);
   assert.equal(comparison.prototype.missingVisibleSpouseLinks, 0);
-  // Apples-to-apples: unique topology edges among displayed people match prototype.
+  // Prototype counts unique topology edges among its own displayed people.
   assert.equal(comparison.prototype.parentChildLinks, comparison.prototype.parentChildLinksUnique);
-  assert.equal(
-    comparison.familyChart.parentChildLinksUnique,
-    comparison.prototype.parentChildLinksUnique,
-  );
-  // Family Chart raw count includes reverse ancestry.parent pointers and is higher.
+  // Family Chart raw count includes reverse ancestry.parent pointers and is higher
+  // than unique topology edges among FC's (smaller) displayed set.
   assert.ok(
     comparison.familyChart.parentChildLinksRaw > comparison.familyChart.parentChildLinksUnique,
     'expected FC raw parentChildLinks to overcount vs unique topology edges',
+  );
+  assert.ok(
+    comparison.prototype.parentChildLinksUnique >= comparison.familyChart.parentChildLinksUnique,
+    'prototype spouse-symmetric area should cover at least FC unique parent-child edges',
   );
   assert.equal(
     comparison.familyChart.parentChildLinksRaw,
@@ -237,6 +238,41 @@ test('regression: real fixture center p010 keeps every visible parent-child edge
   );
 });
 
+test('regression: spouse-symmetric visible set is identical for p010 and spouse p003', async () => {
+  const fixture = await loadFixture();
+  const people = loadStructuralPeople(fixture);
+  const ids = (centerId) => selectVisiblePeople(people, centerId).map((person) => person.id);
+  const fromHusband = ids('p010');
+  const fromWife = ids('p003');
+  assert.deepEqual(fromHusband, fromWife);
+  assert.deepEqual(fromHusband, [
+    'p001',
+    'p002',
+    'p003',
+    'p004',
+    'p005',
+    'p006',
+    'p007',
+    'p008',
+    'p010',
+  ]);
+  // Sibling-in-law parents (p009) stay outside the couple-core expansion.
+  assert.equal(fromHusband.includes('p009'), false);
+
+  for (const centerId of ['p010', 'p003']) {
+    const layout = layoutFamilyTree(people, { centerId });
+    assert.deepEqual(layout.nodes.map((node) => node.id).sort(), fromHusband);
+    assert.equal(findCardOverlaps(layout.nodes).length, 0);
+    assert.equal(findMissingVisibleParentChildLinks(people, layout).length, 0);
+    assert.equal(findMissingVisibleSpouseLinks(people, layout).length, 0);
+  }
+
+  console.log(
+    '\nSPOUSE-SYMMETRIC VISIBLE IDS\n',
+    JSON.stringify({ p010: fromHusband, p003: fromWife }, null, 2),
+  );
+});
+
 test('gate: prototype centers p001..p010 have no lost nodes, overlaps, or missing visible links', async () => {
   const fixture = await loadFixture();
   const people = loadStructuralPeople(fixture);
@@ -253,7 +289,20 @@ test('gate: prototype centers p001..p010 have no lost nodes, overlaps, or missin
       row.missingVisibleSpouseLinks > 0,
   );
 
-  console.log('\nPROTOTYPE CENTER SCAN p001..p010\n', JSON.stringify(rows, null, 2));
+  console.log(
+    '\nPROTOTYPE CENTER SCAN p001..p010\n',
+    JSON.stringify(
+      {
+        rows,
+        visibleIds: {
+          p003: selectVisiblePeople(people, 'p003').map((person) => person.id),
+          p010: selectVisiblePeople(people, 'p010').map((person) => person.id),
+        },
+      },
+      null,
+      2,
+    ),
+  );
   assert.deepEqual(failures, [], `centers failed gate: ${JSON.stringify(failures)}`);
 
   for (const row of rows) {

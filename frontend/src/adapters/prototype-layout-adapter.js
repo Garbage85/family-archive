@@ -353,12 +353,15 @@ export class PrototypeFamilyTreeChart {
         const relationship = this.kinships.get(String(node.id));
         const isCenter = String(node.id) === String(this.rootPersonId);
         const isSelected = String(node.id) === String(this.selectedPersonId);
+        const gender = String(person.data?.gender || '').toUpperCase();
+        const genderClass =
+          gender === 'M' ? 'card-male' : gender === 'F' ? 'card-female' : 'card-genderless';
         const left = node.x - CARD_WIDTH / 2;
         const top = node.y - CARD_HEIGHT / 2;
         return `<div class="card_cont prototype-card-cont${isCenter ? ' kinship-center-card' : ''}${isSelected ? ' prototype-card-selected' : ''}"
           data-person-id="${escapeAttr(node.id)}"
           style="left:${left}px;top:${top}px;width:${CARD_WIDTH}px;height:${CARD_HEIGHT}px">
-          <div class="card" role="button" tabindex="0" data-person-id="${escapeAttr(node.id)}">
+          <div class="card ${genderClass}${isCenter ? ' card-main' : ''}" role="button" tabindex="0" data-person-id="${escapeAttr(node.id)}">
             ${createFamilyChartCardHtml(person, relationship).replace(
               'class="card-inner family-archive-card"',
               `class="card-inner family-archive-card${isCenter ? ' kinship-center-card-inner' : ''}"`,

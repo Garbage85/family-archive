@@ -307,12 +307,23 @@ test('6-7. production fixture: no overlaps and no missing visible spouse/parent-
   }
 });
 
-test('prototype adapter reuses Family Archive cards and never imports Family Chart', async () => {
-  const adapter = await source('src/adapters/prototype-layout-adapter.js');
+test('prototype adapter reuses Family Archive cards with standard gender shell classes', async () => {
+  const [adapter, css] = await Promise.all([
+    source('src/adapters/prototype-layout-adapter.js'),
+    source('src/styles.css'),
+  ]);
   assert.match(adapter, /createFamilyChartCardHtml/);
   assert.match(adapter, /layoutFamilyTree/);
   assert.match(adapter, /cloneTree\(this\.data\)/);
   assert.match(adapter, /Display-only/);
-  assert.doesNotMatch(adapter, /from 'family-chart'|from "family-chart"/);
+  assert.match(adapter, /card-male/);
+  assert.match(adapter, /card-female/);
+  assert.match(adapter, /card-genderless/);
+  assert.match(adapter, /card-main/);
+  assert.match(css, /--male-color:\s*rgb\(120,\s*159,\s*172\)/);
+  assert.match(css, /--female-color:\s*rgb\(196,\s*138,\s*146\)/);
+  assert.match(css, /\.card-male \.card-inner/);
+  // Layout engine stays ours — no family-chart JS/CSS module import.
+  assert.doesNotMatch(adapter, /from ['"]family-chart['"]|family-chart\/styles/);
   assert.doesNotMatch(adapter, /saveTree|trees\.data\s*=/);
 });
