@@ -9,21 +9,33 @@
  * - Reuses Family Archive card HTML (createFamilyChartCardHtml).
  * - Orthogonal link routing is preview-quality; see link-routing.js.
  * - Editing continues through the existing sidebar / person-editor path.
+ * - Viewport: readable initial/center focus; explicit fit() fits all; pinch+pan.
  */
 
 import { createFamilyChartCardHtml } from '../family-chart-card.js';
 import { layoutFamilyTree } from '../layout/family-layout.js';
 import { routeLayoutLinks } from '../layout/link-routing.js';
+import {
+  CARD_HEIGHT,
+  CARD_WIDTH,
+  MAX_SCALE,
+  MIN_SCALE,
+  MOBILE_MIN_READABLE_SCALE,
+  computeCenterFocusView,
+  computeFitAllView,
+  panBy,
+  pointerDistance,
+  pointerMidpoint,
+  readableInitialScale,
+  wheelZoomFactor,
+  zoomAtPoint,
+} from '../layout/prototype-viewport.js';
 import { formatPersonName } from '../person-card-formatters.js';
 import { cloneTree, normaliseTree } from '../tree-utils.js';
 
-const CARD_WIDTH = 184;
-const CARD_HEIGHT = 170;
 const CARD_X_SPACING = 236;
 const CARD_Y_SPACING = 224;
-const FIT_PADDING = 48;
-const MIN_SCALE = 0.25;
-const MAX_SCALE = 2.5;
+const PAN_CLICK_THRESHOLD_PX = 8;
 
 function escapeAttr(value = '') {
   return String(value)
@@ -60,11 +72,17 @@ export class PrototypeFamilyTreeChart {
     this._viewport = null;
     this._host = null;
     this._searchHost = null;
-    this._pointer = null;
+    this._pointers = new Map();
+    this._panSession = null;
+    this._pinchSession = null;
+    this._suppressClick = false;
     this._onWheel = null;
     this._onPointerDown = null;
     this._onPointerMove = null;
     this._onPointerUp = null;
+    this._onTouchStart = null;
+    this._onTouchMove = null;
+    this._onTouchEnd = null;
     this._onHostClick = null;
     this._onHostKeyDown = null;
     this._onDocumentClick = null;
@@ -104,7 +122,8 @@ export class PrototypeFamilyTreeChart {
     this._bindViewportGestures();
     this._bindCardEvents();
     this._mountSearch();
-    this._render({ fit: true });
+    // Readable center focus — not fit-all (fit-all is explicit via fit()).
+    this._render({ view: 'initial' });
   }
 
   resolvePersonId(personId) {
@@ -125,12 +144,24 @@ export class PrototypeFamilyTreeChart {
     return this.layout;
   }
 
+  getViewport() {
+    return {
+      scale: this.scale,
+      translateX: this.translateX,
+      translateY: this.translateY,
+      minScale: MIN_SCALE,
+      maxScale: MAX_SCALE,
+      mobileMinReadableScale: MOBILE_MIN_READABLE_SCALE,
+    };
+  }
+
   updateData(rawData, { fit = false, focusId = null, rootPersonId, kinships } = {}) {
     this.data = normaliseTree(rawData);
     if (kinships instanceof Map) this.kinships = kinships;
     this.rootPersonId = this.resolvePersonId(rootPersonId ?? this.rootPersonId);
     if (focusId) this.selectedPersonId = String(focusId);
-    this._render({ fit });
+    // `fit` from app means "keep useful view", not microscopic fit-all.
+    this._render({ view: fit ? 'center' : 'preserve' });
   }
 
   focus(id) {
@@ -144,13 +175,14 @@ export class PrototypeFamilyTreeChart {
     if (!nextId) return false;
     if (kinships instanceof Map) this.kinships = kinships;
     this.rootPersonId = nextId;
-    this._render({ fit });
+    // Center change must NOT call fit-all (microscopic). Focus center at readable scale.
+    this._render({ view: fit ? 'center' : 'preserve' });
     return true;
   }
 
   setKinships(kinships, { fit = false } = {}) {
     this.kinships = kinships instanceof Map ? kinships : new Map();
-    this._render({ fit });
+    this._render({ view: fit ? 'center' : 'preserve' });
   }
 
   openPersonSearch() {
@@ -159,15 +191,45 @@ export class PrototypeFamilyTreeChart {
     input?.click();
   }
 
+  /** Toolbar "Показать всё" — may shrink below readable floor. */
   fit() {
-    this._fitToView();
-    this._applyTransform();
+    this._applyView(computeFitAllView(this._hostMetrics()));
+  }
+
+  /** Readable center-focused view used after mount / as non-fit-all reset. */
+  resetView() {
+    this._applyView(this._computeReadableCenterView());
   }
 
   toggleOrientation() {
     this.orientation = this.orientation === 'vertical' ? 'horizontal' : 'vertical';
-    this._render({ fit: true });
+    this._render({ view: 'initial' });
     return this.orientation;
+  }
+
+  /** Test/helper: wheel zoom at a host-local point. */
+  zoomAt(hostX, hostY, factor) {
+    this._applyView(
+      zoomAtPoint(
+        { scale: this.scale, translateX: this.translateX, translateY: this.translateY },
+        { hostX, hostY, factor },
+      ),
+    );
+  }
+
+  /** Test/helper: pan by delta in screen pixels. */
+  panViewport(dx, dy) {
+    this._applyView(
+      panBy(
+        { scale: this.scale, translateX: this.translateX, translateY: this.translateY },
+        { dx, dy },
+      ),
+    );
+  }
+
+  /** Test/helper: pinch zoom around a host-local midpoint. */
+  pinchZoom(hostX, hostY, factor) {
+    this.zoomAt(hostX, hostY, factor);
   }
 
   destroy() {
@@ -191,7 +253,64 @@ export class PrototypeFamilyTreeChart {
     this._viewport = null;
     this.layout = null;
     this.selectedPersonId = null;
-    this._pointer = null;
+    this._pointers.clear();
+    this._panSession = null;
+    this._pinchSession = null;
+  }
+
+  _hostMetrics() {
+    const hostWidth = this._host?.clientWidth || 800;
+    const hostHeight = this._host?.clientHeight || 600;
+    return {
+      hostWidth,
+      hostHeight,
+      nodes: this.layout?.nodes || [],
+      cardWidth: CARD_WIDTH,
+      cardHeight: CARD_HEIGHT,
+    };
+  }
+
+  _focusNode() {
+    return (
+      this.layout?.nodes?.find((node) => String(node.id) === String(this.rootPersonId)) ||
+      this.layout?.nodes?.[0] || { x: 0, y: 0 }
+    );
+  }
+
+  _computeReadableCenterView() {
+    const metrics = this._hostMetrics();
+    const focus = this._focusNode();
+    const scale = readableInitialScale(metrics.hostWidth, { cardWidth: CARD_WIDTH });
+    return computeCenterFocusView({
+      hostWidth: metrics.hostWidth,
+      hostHeight: metrics.hostHeight,
+      focusX: focus.x,
+      focusY: focus.y,
+      scale,
+    });
+  }
+
+  _computeCenterPreserveScaleView() {
+    const metrics = this._hostMetrics();
+    const focus = this._focusNode();
+    // Keep current scale but never below readable floor on compact screens.
+    const minReadable = readableInitialScale(metrics.hostWidth, { cardWidth: CARD_WIDTH });
+    const scale = Math.max(this.scale || minReadable, minReadable);
+    return computeCenterFocusView({
+      hostWidth: metrics.hostWidth,
+      hostHeight: metrics.hostHeight,
+      focusX: focus.x,
+      focusY: focus.y,
+      scale,
+    });
+  }
+
+  _applyView(view) {
+    if (!view) return;
+    this.scale = view.scale;
+    this.translateX = view.translateX;
+    this.translateY = view.translateY;
+    this._applyTransform();
   }
 
   _computeLayout() {
@@ -209,7 +328,7 @@ export class PrototypeFamilyTreeChart {
     return layout;
   }
 
-  _render({ fit = false } = {}) {
+  _render({ view = 'preserve' } = {}) {
     if (!this._host || !this._viewport) return;
     this.layout = this._computeLayout();
     const linksLayer = this._viewport.querySelector('[data-prototype-links]');
@@ -250,8 +369,9 @@ export class PrototypeFamilyTreeChart {
       .join('');
 
     this._bindKinshipLabels();
-    if (fit) this._fitToView();
-    this._applyTransform();
+    if (view === 'initial') this._applyView(this._computeReadableCenterView());
+    else if (view === 'center') this._applyView(this._computeCenterPreserveScaleView());
+    else this._applyTransform();
   }
 
   _syncSelectionClasses() {
@@ -265,6 +385,12 @@ export class PrototypeFamilyTreeChart {
   _bindCardEvents() {
     if (!this._host) return;
     this._onHostClick = (event) => {
+      if (this._suppressClick) {
+        this._suppressClick = false;
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
       const kinship = event.target.closest?.('[data-kinship-card-label]');
       if (kinship) {
         const personId = kinship.closest?.('[data-person-id]')?.getAttribute('data-person-id');
@@ -356,51 +482,172 @@ export class PrototypeFamilyTreeChart {
     document.addEventListener('click', this._onDocumentClick, true);
   }
 
+  _hostPointFromClient(clientX, clientY) {
+    const rect = this._host.getBoundingClientRect();
+    return { x: clientX - rect.left, y: clientY - rect.top };
+  }
+
   _bindViewportGestures() {
     if (!this._host || !this._viewport) return;
 
     this._onWheel = (event) => {
+      // Only hijack wheel over the canvas host.
       event.preventDefault();
-      const rect = this._host.getBoundingClientRect();
-      const cursorX = event.clientX - rect.left;
-      const cursorY = event.clientY - rect.top;
-      const factor = event.deltaY < 0 ? 1.08 : 1 / 1.08;
-      const nextScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, this.scale * factor));
-      const worldX = (cursorX - this.translateX) / this.scale;
-      const worldY = (cursorY - this.translateY) / this.scale;
-      this.scale = nextScale;
-      this.translateX = cursorX - worldX * this.scale;
-      this.translateY = cursorY - worldY * this.scale;
-      this._applyTransform();
+      const point = this._hostPointFromClient(event.clientX, event.clientY);
+      this._applyView(
+        zoomAtPoint(
+          { scale: this.scale, translateX: this.translateX, translateY: this.translateY },
+          { hostX: point.x, hostY: point.y, factor: wheelZoomFactor(event.deltaY) },
+        ),
+      );
     };
 
     this._onPointerDown = (event) => {
-      if (event.target.closest?.('[data-person-id]')) return;
-      this._pointer = {
-        id: event.pointerId,
-        x: event.clientX,
-        y: event.clientY,
-        originX: this.translateX,
-        originY: this.translateY,
-      };
+      if (event.pointerType === 'mouse' && event.button !== 0) return;
+      this._pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
       this._host.setPointerCapture?.(event.pointerId);
+      if (this._pointers.size === 2) {
+        this._beginPinch();
+        this._panSession = null;
+      } else if (this._pointers.size === 1) {
+        this._pinchSession = null;
+        this._panSession = {
+          x: event.clientX,
+          y: event.clientY,
+          originX: this.translateX,
+          originY: this.translateY,
+          moved: false,
+          onCard: Boolean(event.target.closest?.('[data-person-id]')),
+        };
+      }
     };
+
     this._onPointerMove = (event) => {
-      if (!this._pointer || this._pointer.id !== event.pointerId) return;
-      this.translateX = this._pointer.originX + (event.clientX - this._pointer.x);
-      this.translateY = this._pointer.originY + (event.clientY - this._pointer.y);
-      this._applyTransform();
+      if (!this._pointers.has(event.pointerId)) return;
+      this._pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+
+      if (this._pointers.size >= 2 && this._pinchSession) {
+        event.preventDefault();
+        this._updatePinch();
+        return;
+      }
+
+      if (this._panSession && this._pointers.size === 1) {
+        const dx = event.clientX - this._panSession.x;
+        const dy = event.clientY - this._panSession.y;
+        if (!this._panSession.moved && Math.hypot(dx, dy) >= PAN_CLICK_THRESHOLD_PX) {
+          this._panSession.moved = true;
+          this._suppressClick = true;
+        }
+        if (this._panSession.moved) {
+          event.preventDefault();
+          this.translateX = this._panSession.originX + dx;
+          this.translateY = this._panSession.originY + dy;
+          this._applyTransform();
+        }
+      }
     };
+
     this._onPointerUp = (event) => {
-      if (!this._pointer || this._pointer.id !== event.pointerId) return;
-      this._pointer = null;
+      this._pointers.delete(event.pointerId);
+      if (this._pointers.size < 2) this._pinchSession = null;
+      if (this._pointers.size === 1) {
+        const remaining = [...this._pointers.entries()][0];
+        if (remaining) {
+          const [id, point] = remaining;
+          this._panSession = {
+            id,
+            x: point.x,
+            y: point.y,
+            originX: this.translateX,
+            originY: this.translateY,
+            moved: false,
+            onCard: false,
+          };
+        }
+      } else if (this._pointers.size === 0) {
+        this._panSession = null;
+      }
+    };
+
+    // iOS Safari: touch events remain the most reliable path for two-finger pinch.
+    this._onTouchStart = (event) => {
+      if (event.touches.length >= 2) {
+        event.preventDefault();
+        this._syncPointersFromTouches(event.touches);
+        this._beginPinch();
+        this._panSession = null;
+      }
+    };
+    this._onTouchMove = (event) => {
+      if (event.touches.length >= 2) {
+        event.preventDefault();
+        this._syncPointersFromTouches(event.touches);
+        if (!this._pinchSession) this._beginPinch();
+        this._updatePinch();
+        return;
+      }
+      if (event.touches.length === 1 && this._panSession?.moved) {
+        event.preventDefault();
+      }
+    };
+    this._onTouchEnd = (event) => {
+      this._syncPointersFromTouches(event.touches);
+      if (event.touches.length < 2) this._pinchSession = null;
+      if (event.touches.length === 0) this._panSession = null;
     };
 
     this._host.addEventListener('wheel', this._onWheel, { passive: false });
     this._host.addEventListener('pointerdown', this._onPointerDown);
-    this._host.addEventListener('pointermove', this._onPointerMove);
+    this._host.addEventListener('pointermove', this._onPointerMove, { passive: false });
     this._host.addEventListener('pointerup', this._onPointerUp);
     this._host.addEventListener('pointercancel', this._onPointerUp);
+    this._host.addEventListener('touchstart', this._onTouchStart, { passive: false });
+    this._host.addEventListener('touchmove', this._onTouchMove, { passive: false });
+    this._host.addEventListener('touchend', this._onTouchEnd, { passive: false });
+    this._host.addEventListener('touchcancel', this._onTouchEnd, { passive: false });
+  }
+
+  _syncPointersFromTouches(touches) {
+    this._pointers.clear();
+    for (let index = 0; index < touches.length; index += 1) {
+      const touch = touches.item(index);
+      this._pointers.set(touch.identifier, { x: touch.clientX, y: touch.clientY });
+    }
+  }
+
+  _beginPinch() {
+    const points = [...this._pointers.values()];
+    if (points.length < 2) return;
+    const [a, b] = points;
+    this._pinchSession = {
+      distance: Math.max(1, pointerDistance(a, b)),
+      scale: this.scale,
+      translateX: this.translateX,
+      translateY: this.translateY,
+    };
+    this._suppressClick = true;
+  }
+
+  _updatePinch() {
+    if (!this._pinchSession) return;
+    const points = [...this._pointers.values()];
+    if (points.length < 2) return;
+    const [a, b] = points;
+    const distance = Math.max(1, pointerDistance(a, b));
+    const factor = distance / this._pinchSession.distance;
+    const mid = pointerMidpoint(a, b);
+    const hostMid = this._hostPointFromClient(mid.x, mid.y);
+    this._applyView(
+      zoomAtPoint(
+        {
+          scale: this._pinchSession.scale,
+          translateX: this._pinchSession.translateX,
+          translateY: this._pinchSession.translateY,
+        },
+        { hostX: hostMid.x, hostY: hostMid.y, factor },
+      ),
+    );
   }
 
   _unbindViewportGestures() {
@@ -412,50 +659,24 @@ export class PrototypeFamilyTreeChart {
       this._host.removeEventListener('pointerup', this._onPointerUp);
       this._host.removeEventListener('pointercancel', this._onPointerUp);
     }
+    if (this._onTouchStart) this._host.removeEventListener('touchstart', this._onTouchStart);
+    if (this._onTouchMove) this._host.removeEventListener('touchmove', this._onTouchMove);
+    if (this._onTouchEnd) {
+      this._host.removeEventListener('touchend', this._onTouchEnd);
+      this._host.removeEventListener('touchcancel', this._onTouchEnd);
+    }
     this._onWheel = null;
     this._onPointerDown = null;
     this._onPointerMove = null;
     this._onPointerUp = null;
-  }
-
-  _fitToView() {
-    if (!this._host || !this.layout?.nodes?.length) {
-      this.scale = 1;
-      this.translateX = 0;
-      this.translateY = 0;
-      return;
-    }
-    const width = this._host.clientWidth || 800;
-    const height = this._host.clientHeight || 600;
-    let minX = Infinity;
-    let maxX = -Infinity;
-    let minY = Infinity;
-    let maxY = -Infinity;
-    for (const node of this.layout.nodes) {
-      minX = Math.min(minX, node.x - CARD_WIDTH / 2);
-      maxX = Math.max(maxX, node.x + CARD_WIDTH / 2);
-      minY = Math.min(minY, node.y - CARD_HEIGHT / 2);
-      maxY = Math.max(maxY, node.y + CARD_HEIGHT / 2);
-    }
-    const contentWidth = Math.max(1, maxX - minX);
-    const contentHeight = Math.max(1, maxY - minY);
-    const scale = Math.min(
-      MAX_SCALE,
-      Math.max(
-        MIN_SCALE,
-        Math.min(
-          (width - FIT_PADDING * 2) / contentWidth,
-          (height - FIT_PADDING * 2) / contentHeight,
-        ),
-      ),
-    );
-    this.scale = scale;
-    this.translateX = (width - contentWidth * scale) / 2 - minX * scale;
-    this.translateY = (height - contentHeight * scale) / 2 - minY * scale;
+    this._onTouchStart = null;
+    this._onTouchMove = null;
+    this._onTouchEnd = null;
   }
 
   _applyTransform() {
     if (!this._viewport) return;
+    // Single transform for cards + SVG links together.
     this._viewport.style.transform = `translate(${this.translateX}px, ${this.translateY}px) scale(${this.scale})`;
   }
 }

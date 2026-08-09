@@ -203,7 +203,12 @@ function mountTree(data = workingData, { fit = true } = {}) {
     rootPersonId: centerPersonId,
     kinships,
   });
-  if (fit) chart.fit();
+  if (fit) {
+    // Prototype: readable center focus (resetView). Fit-all stays on the toolbar
+    // "Показать всё" button via chart.fit(). Family Chart keeps updateTree fit.
+    if (typeof chart.resetView === 'function') chart.resetView();
+    else chart.fit();
+  }
   updateMeta();
 }
 

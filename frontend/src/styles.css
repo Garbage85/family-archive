@@ -550,6 +550,10 @@ button {
   position: relative;
   overflow: hidden;
   cursor: grab;
+  /* Own pan/pinch gestures; do not let the browser scroll/zoom the page over the canvas. */
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 .prototype-layout-surface:active {
   cursor: grabbing;
