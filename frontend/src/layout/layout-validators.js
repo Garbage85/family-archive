@@ -390,10 +390,14 @@ export function findAmbiguousSharedSegments(layout) {
 }
 
 export {
+  assertCrossingJumpParity,
   findChildBusNotAttachedToSpouseJunction,
   findFalseJunctionsBetweenUnrelatedFamilies,
+  findFalseJumps,
   findOneFamilyJunctionPerParentPairIssues,
   findUnrelatedCrossingsWithoutJump,
+  uniqueRenderedJumpPoints,
+  uniqueUnrelatedCrossingPoints,
 } from './link-routing.js';
 
 /** Proper crossings between unrelated link polylines (not endpoint-touching). */

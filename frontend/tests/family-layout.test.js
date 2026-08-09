@@ -15,6 +15,7 @@ import {
 } from '../src/layout/family-layout.js';
 import {
   analyzeParentChildEdges,
+  assertCrossingJumpParity,
   assertParentChildGenerationOrder,
   assertSpousesNearby,
   findAmbiguousSharedLanes,
@@ -22,6 +23,7 @@ import {
   findCardOverlaps,
   findChildBusNotAttachedToSpouseJunction,
   findFalseJunctionsBetweenUnrelatedFamilies,
+  findFalseJumps,
   findLinksThroughForeignCards,
   findMissingRelationEndpoints,
   findMissingVisibleParentChildLinks,
@@ -32,14 +34,20 @@ import {
   findUnrelatedLinkIntersections,
   findZeroLengthSegments,
   layoutRouteSignature,
+  uniqueRenderedJumpPoints,
+  uniqueUnrelatedCrossingPoints,
 } from '../src/layout/layout-validators.js';
 import {
   CROSSING_STYLE,
+  annotateLineJumps,
   countFamilyJunctions,
   countParentChildSegments,
+  exclusiveInteriorCrossingPoint,
   findExteriorParentChildDetours,
   findInvalidJunctions,
   findUnrelatedCrossingSites,
+  orthogonalCrossingPoint,
+  pointsToSvgPath,
   routingMetrics,
 } from '../src/layout/link-routing.js';
 import { compareLayouts, scanPrototypeCenters } from './helpers/compare-layouts.js';
@@ -365,6 +373,13 @@ test('gate: prototype centers p001..p010 have no lost nodes, overlaps, or missin
       0,
       `${centerId} unrelatedCrossingWithoutJump`,
     );
+    assert.equal(findFalseJumps(layout).length, 0, `${centerId} falseJumps`);
+    const parity = assertCrossingJumpParity(layout);
+    assert.equal(
+      parity.unrelatedGeometricCrossings,
+      parity.renderedLineJumps,
+      `${centerId} unrelatedGeometricCrossings === renderedLineJumps (${JSON.stringify(parity)})`,
+    );
     assert.equal(
       findFalseJunctionsBetweenUnrelatedFamilies(layout).length,
       0,
@@ -467,32 +482,117 @@ test('family-junction routing attaches child bus to spouse junction', async () =
   );
 });
 
-test('regression: spouse-parent route × sibling family crossing requires line-jump', async () => {
+test('regression: exclusive detector missed bend/endpoint crossings (root cause)', () => {
+  // Live-shaped geometry: family bus of p001+p002 crosses the child-drop of
+  // p004+p005 exactly at the bus→drop bend (vertical segment endpoint).
+  const horizontal = {
+    a: [-354, -122.8],
+    b: [0, -122.8],
+    horizontal: true,
+    vertical: false,
+    index: 0,
+  };
+  const verticalDrop = {
+    a: [-236, -122.8],
+    b: [-236, -85],
+    horizontal: false,
+    vertical: true,
+    index: 2,
+  };
+  assert.equal(
+    exclusiveInteriorCrossingPoint(horizontal, verticalDrop),
+    null,
+    'old exclusive detector skips bend/endpoint hit',
+  );
+  const inclusive = orthogonalCrossingPoint(horizontal, verticalDrop);
+  assert.ok(inclusive, 'inclusive detector must see the bend crossing');
+  assert.equal(inclusive.kind, 'endpoint/bend');
+  assert.deepEqual(inclusive.point, [-236, -122.8]);
+
+  const annotated = annotateLineJumps([
+    {
+      type: 'parent-child',
+      source: 'p001',
+      target: 'p006',
+      familyKey: 'fam:p001+p002',
+      points: [
+        [-354, -224],
+        [-354, -122.8],
+        [0, -122.8],
+        [0, -85],
+      ],
+    },
+    {
+      type: 'parent-child',
+      source: 'p004',
+      target: 'p003',
+      familyKey: 'fam:p004+p005',
+      points: [
+        [118, -224],
+        [118, -122.8],
+        [-236, -122.8],
+        [-236, -85],
+      ],
+    },
+  ]);
+  const sites = findUnrelatedCrossingSites(annotated);
+  assert.ok(sites.some((site) => site.kind === 'endpoint/bend'));
+  assert.equal(findUnrelatedCrossingsWithoutJump({ links: annotated }).length, 0);
+  const over = annotated.find((link) => link.familyKey === 'fam:p001+p002');
+  assert.ok(over.jumps.some((jump) => jump.x === -236 && jump.y === -122.8));
+  assert.match(pointsToSvgPath(over.points, over.jumps), /A/);
+});
+
+test('regression: live p001+p002 × p004+p005 crossing has jump (p003/p010)', async () => {
   const fixture = await loadFixture();
   const people = loadStructuralPeople(fixture);
-  // Live case: center p010, spouse p003 with parents p004/p005, siblings p006/p007.
-  const layout = layoutFamilyTree(people, { centerId: 'p010' });
-  assert.ok(layout.nodes.some((node) => node.id === 'p003'));
-  assert.ok(layout.nodes.some((node) => node.id === 'p004'));
-  assert.ok(layout.nodes.some((node) => node.id === 'p007'));
+  for (const centerId of ['p010', 'p003']) {
+    const layout = layoutFamilyTree(people, { centerId });
+    const sites = uniqueUnrelatedCrossingPoints(layout.links).filter((site) => {
+      const keys = [site.horizontalFamilyKey, site.verticalFamilyKey].sort();
+      return keys[0] === 'fam:p001+p002' && keys[1] === 'fam:p004+p005';
+    });
+    assert.ok(sites.length > 0, `${centerId}: live family pair must cross`);
 
-  const sites = findUnrelatedCrossingSites(layout.links).filter((site) => {
-    const keys = [site.familyA, site.familyB].sort();
-    return keys[0] === 'fam:p001+p002' && keys[1] === 'fam:p004+p005';
-  });
-  assert.ok(sites.length > 0, 'spouse-parent family must cross sibling family');
-  assert.equal(
-    findUnrelatedCrossingsWithoutJump(layout).length,
-    0,
-    'every unrelated crossing must have a line-jump',
-  );
+    const report = sites.map((site) => ({
+      centerId,
+      horizontalFamilyKey: site.horizontalFamilyKey,
+      verticalFamilyKey: site.verticalFamilyKey,
+      horizontalSegId: site.horizontalSegId,
+      verticalSegId: site.verticalSegId,
+      intersection: { x: site.x, y: site.y },
+      kind: site.kind,
+      classification: site.classification,
+    }));
+    console.log('\nLIVE CROSSING DIAGNOSTIC\n', JSON.stringify(report, null, 2));
 
-  const jumped = layout.links.some(
-    (link) =>
-      link.familyKey === 'fam:p001+p002' &&
-      (link.jumps || []).some((jump) => Math.abs(jump.x - -236) < 1),
-  );
-  assert.ok(jumped, 'sibling child-bus must jump over spouse-parent drop at x≈-236');
+    for (const site of sites) {
+      assert.equal(site.classification, 'crossing');
+      const hasJump = uniqueRenderedJumpPoints(layout.links).some(
+        (jump) => Math.abs(jump.x - site.x) < 1.5 && Math.abs(jump.y - site.y) < 1.5,
+      );
+      assert.ok(hasJump, `${centerId}: missing jump at (${site.x},${site.y}) kind=${site.kind}`);
+    }
+
+    const parity = assertCrossingJumpParity(layout);
+    assert.equal(parity.missedJumps, 0, `${centerId} missedJumps`);
+    assert.equal(parity.falseJumps, 0, `${centerId} falseJumps`);
+    assert.equal(
+      parity.unrelatedGeometricCrossings,
+      parity.renderedLineJumps,
+      `${centerId} parity`,
+    );
+
+    // Every horizontal over-path that crosses must render an arc.
+    for (const link of layout.links) {
+      if (!(link.jumps || []).length) continue;
+      assert.match(
+        pointsToSvgPath(link.points, link.jumps),
+        /A/,
+        `${link.source}->${link.target} SVG must contain jump arc`,
+      );
+    }
+  }
 });
 
 test('after sibling spouse is visible, routing stays in generation gap (no exterior bus)', async () => {

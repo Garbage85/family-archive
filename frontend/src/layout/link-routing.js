@@ -23,7 +23,7 @@
  */
 
 export const CROSSING_STYLE = 'line-jump';
-export const LINE_JUMP_RADIUS = 7;
+export const LINE_JUMP_RADIUS = 10;
 
 const LANE_GAP = 16;
 const BUS_INSET = 10;
@@ -285,26 +285,77 @@ function segmentsOf(points) {
 }
 
 /**
- * Proper interior intersection. Endpoints are excluded so intentional T-joins
- * at a shared family junction are not treated as crossings — but near-bend
- * interior hits still count (epsilon keeps true crossings).
+ * Orthogonal H×V intersection, INCLUSIVE of endpoints/bends.
+ *
+ * Root cause of missed live jumps: the previous exclusive parametric test
+ * (0 < t,u < 1) dropped crossings that landed exactly on a bend or segment
+ * end (e.g. child-drop top where family bus turns into the drop, or a bus
+ * tip touching a foreign stem). For unrelated familyKeys those are still
+ * crossings and must get a line-jump.
  */
-function segmentIntersectionPoint(a, b) {
-  const d = (a.b[0] - a.a[0]) * (b.b[1] - b.a[1]) - (a.b[1] - a.a[1]) * (b.b[0] - b.a[0]);
+export function orthogonalCrossingPoint(segA, segB) {
+  const aH = segA.horizontal;
+  const aV = segA.vertical;
+  const bH = segB.horizontal;
+  const bV = segB.vertical;
+  if (!(aH && bV) && !(aV && bH)) return null;
+
+  const horizontal = aH ? segA : segB;
+  const vertical = aV ? segA : segB;
+  const x = vertical.a[0];
+  const y = horizontal.a[1];
+  const hMin = Math.min(horizontal.a[0], horizontal.b[0]);
+  const hMax = Math.max(horizontal.a[0], horizontal.b[0]);
+  const vMin = Math.min(vertical.a[1], vertical.b[1]);
+  const vMax = Math.max(vertical.a[1], vertical.b[1]);
+  if (x < hMin - 1e-9 || x > hMax + 1e-9) return null;
+  if (y < vMin - 1e-9 || y > vMax + 1e-9) return null;
+
+  const onHEnd = almostEq(x, horizontal.a[0]) || almostEq(x, horizontal.b[0]);
+  const onVEnd = almostEq(y, vertical.a[1]) || almostEq(y, vertical.b[1]);
+  return {
+    point: pt(x, y),
+    kind: onHEnd || onVEnd ? 'endpoint/bend' : 'interior',
+    onHorizontalEndpoint: onHEnd,
+    onVerticalEndpoint: onVEnd,
+  };
+}
+
+/** @deprecated exclusive interior-only test — kept for regression contrast */
+export function exclusiveInteriorCrossingPoint(segA, segB) {
+  const d =
+    (segA.b[0] - segA.a[0]) * (segB.b[1] - segB.a[1]) -
+    (segA.b[1] - segA.a[1]) * (segB.b[0] - segB.a[0]);
   if (Math.abs(d) < 1e-9) return null;
-  const t = ((b.a[0] - a.a[0]) * (b.b[1] - b.a[1]) - (b.a[1] - a.a[1]) * (b.b[0] - b.a[0])) / d;
-  const u = ((b.a[0] - a.a[0]) * (a.b[1] - a.a[1]) - (b.a[1] - a.a[1]) * (a.b[0] - a.a[0])) / d;
+  const t =
+    ((segB.a[0] - segA.a[0]) * (segB.b[1] - segB.a[1]) -
+      (segB.a[1] - segA.a[1]) * (segB.b[0] - segA.a[0])) /
+    d;
+  const u =
+    ((segB.a[0] - segA.a[0]) * (segA.b[1] - segA.a[1]) -
+      (segB.a[1] - segA.a[1]) * (segA.b[0] - segA.a[0])) /
+    d;
   if (t <= 1e-9 || t >= 1 - 1e-9 || u <= 1e-9 || u >= 1 - 1e-9) return null;
-  return pt(a.a[0] + t * (a.b[0] - a.a[0]), a.a[1] + t * (a.b[1] - a.a[1]));
+  return pt(segA.a[0] + t * (segA.b[0] - segA.a[0]), segA.a[1] + t * (segA.b[1] - segA.a[1]));
 }
 
 function sameFamilyKeys(a, b) {
   return Boolean(a && b && a === b);
 }
 
+function isIntentionalFamilyJunctionPoint(link, point) {
+  const junction = link.junction;
+  if (!junction || !Number.isFinite(junction.x) || !Number.isFinite(junction.y)) return false;
+  return almostEq(point[0], junction.x) && almostEq(point[1], junction.y);
+}
+
 /**
- * Enumerate unrelated H×V crossings with geometry. Junction/shared topology
- * (same familyKey) is never a crossing — even when segments touch.
+ * Enumerate unrelated H×V crossings (endpoints/bends included).
+ *
+ * JUNCTION only when both segments share familyKey AND the point is that
+ * family's intentional branch/junction. Any other geometric H×V hit between
+ * different familyKeys is a CROSSING — even on bends, endpoints, child-drops,
+ * or near a foreign junction.
  */
 export function findUnrelatedCrossingSites(links) {
   const sites = [];
@@ -319,26 +370,48 @@ export function findUnrelatedCrossingSites(links) {
     for (let j = i + 1; j < indexed.length; j += 1) {
       const left = indexed[i];
       const right = indexed[j];
-      if (sameFamilyKeys(left.familyKey, right.familyKey)) continue;
+      const sameFamily = sameFamilyKeys(left.familyKey, right.familyKey);
 
       for (const segA of left.segs) {
         for (const segB of right.segs) {
           if (!(segA.horizontal && segB.vertical) && !(segA.vertical && segB.horizontal)) {
             continue;
           }
-          const point = segmentIntersectionPoint(segA, segB);
-          if (!point) continue;
+          const hit = orthogonalCrossingPoint(segA, segB);
+          if (!hit) continue;
+
+          // Same family: only skip when this is the intentional junction join.
+          // (Shared collinear trunks are handled by ambiguous-segment validators.)
+          if (sameFamily) {
+            if (
+              isIntentionalFamilyJunctionPoint(left.link, hit.point) ||
+              isIntentionalFamilyJunctionPoint(right.link, hit.point)
+            ) {
+              continue;
+            }
+            // Same-family non-junction geometry is not an unrelated crossing.
+            continue;
+          }
+
           const horizontal = segA.horizontal ? left : right;
           const vertical = segA.horizontal ? right : left;
           const horizontalSeg = segA.horizontal ? segA : segB;
+          const verticalSeg = segA.horizontal ? segB : segA;
           sites.push({
-            x: point[0],
-            y: point[1],
+            x: hit.point[0],
+            y: hit.point[1],
+            kind: hit.kind,
+            classification: 'crossing',
             horizontalLink: horizontal.link,
             verticalLink: vertical.link,
             horizontalSegIndex: horizontalSeg.index,
+            verticalSegIndex: verticalSeg.index,
+            horizontalSegId: `${horizontal.link.type}:${horizontal.link.source}->${horizontal.link.target}#${horizontalSeg.index}`,
+            verticalSegId: `${vertical.link.type}:${vertical.link.source}->${vertical.link.target}#${verticalSeg.index}`,
             familyA: left.familyKey,
             familyB: right.familyKey,
+            horizontalFamilyKey: horizontal.familyKey,
+            verticalFamilyKey: vertical.familyKey,
             a: `${left.link.type}:${left.link.source}->${left.link.target}`,
             b: `${right.link.type}:${right.link.source}->${right.link.target}`,
           });
@@ -349,9 +422,33 @@ export function findUnrelatedCrossingSites(links) {
   return sites;
 }
 
+/** Unique physical unrelated crossing points (deduped). */
+export function uniqueUnrelatedCrossingPoints(links) {
+  const map = new Map();
+  for (const site of findUnrelatedCrossingSites(links)) {
+    const key = `${roundCoord(site.x)},${roundCoord(site.y)}`;
+    if (!map.has(key)) map.set(key, site);
+  }
+  return [...map.values()];
+}
+
+/** Unique rendered jump points (deduped). */
+export function uniqueRenderedJumpPoints(links) {
+  const map = new Map();
+  for (const link of links || []) {
+    for (const jump of link.jumps || []) {
+      const key = `${roundCoord(jump.x)},${roundCoord(jump.y)}`;
+      if (!map.has(key)) map.set(key, jump);
+    }
+  }
+  return [...map.values()];
+}
+
 /**
- * Annotate line-jumps on the horizontal segment of every unrelated H×V crossing
- * (parent-child bus or spouse stub). Vertical stays straight underneath.
+ * Annotate line-jumps on the horizontal segment of every unrelated H×V crossing.
+ * Vertical stays straight underneath. Every horizontal link whose geometry
+ * contains the crossing point receives the jump so overlapping duplicate
+ * parent→child polylines all render the bridge.
  */
 export function annotateLineJumps(links) {
   const enriched = (links || []).map((link) => ({
@@ -359,22 +456,27 @@ export function annotateLineJumps(links) {
     jumps: [],
     crossingStyle: CROSSING_STYLE,
   }));
-  const byRef = new Map(
-    enriched.map((link) => [`${link.type}:${link.source}->${link.target}`, link]),
-  );
 
   for (const site of findUnrelatedCrossingSites(enriched)) {
-    const overKey = `${site.horizontalLink.type}:${site.horizontalLink.source}->${site.horizontalLink.target}`;
     const underKey = `${site.verticalLink.type}:${site.verticalLink.source}->${site.verticalLink.target}`;
-    const over = byRef.get(overKey);
-    if (!over) continue;
-    over.jumps.push({
-      x: site.x,
-      y: site.y,
-      axis: 'h',
-      segmentIndex: site.horizontalSegIndex,
-      under: underKey,
-    });
+    for (const link of enriched) {
+      if (linkFamilyKey(link) !== site.horizontalFamilyKey) continue;
+      for (const seg of segmentsOf(link.points)) {
+        if (!seg.horizontal) continue;
+        const minX = Math.min(seg.a[0], seg.b[0]);
+        const maxX = Math.max(seg.a[0], seg.b[0]);
+        if (!almostEq(seg.a[1], site.y)) continue;
+        if (site.x < minX - 1e-9 || site.x > maxX + 1e-9) continue;
+        link.jumps.push({
+          x: site.x,
+          y: site.y,
+          axis: 'h',
+          segmentIndex: seg.index,
+          kind: site.kind,
+          under: underKey,
+        });
+      }
+    }
   }
 
   for (const link of enriched) {
@@ -394,6 +496,8 @@ export function annotateLineJumps(links) {
 /**
  * Build SVG path `d` with semicircular line-jumps on annotated crossings.
  * Logical `points` stay orthogonal for validators/metrics.
+ * Jump arcs are clamped inside the host segment so endpoint/bend crossings
+ * still render a visible bridge instead of collapsing.
  */
 export function pointsToSvgPath(points, jumps = [], radius = LINE_JUMP_RADIUS) {
   if (!points?.length) return '';
@@ -421,17 +525,28 @@ export function pointsToSvgPath(points, jumps = [], radius = LINE_JUMP_RADIUS) {
     let cursorX = a[0];
     const y = a[1];
     const dir = Math.sign(b[0] - a[0]) || 1;
+    const segMin = Math.min(a[0], b[0]);
+    const segMax = Math.max(a[0], b[0]);
     for (const jump of segJumps) {
-      const left = jump.x - radius;
-      const right = jump.x + radius;
-      const approach = dir > 0 ? left : right;
-      const leave = dir > 0 ? right : left;
+      let r = radius;
+      const roomLeft = jump.x - segMin;
+      const roomRight = segMax - jump.x;
+      const maxR = Math.max(2, Math.min(roomLeft, roomRight) - 0.5);
+      if (maxR < r) r = maxR;
+      if (r < 2) {
+        // Degenerate end touch: still break the stroke with a tiny gap+bump.
+        r = 2;
+      }
+      let approach = jump.x - dir * r;
+      let leave = jump.x + dir * r;
+      approach = Math.min(segMax, Math.max(segMin, approach));
+      leave = Math.min(segMax, Math.max(segMin, leave));
       if ((leave - cursorX) * dir <= EPS) continue;
       if ((approach - cursorX) * dir > EPS) {
         d += `L${roundCoord(approach)},${y}`;
       }
       const sweep = dir > 0 ? 1 : 0;
-      d += `A${radius},${radius} 0 0 ${sweep} ${roundCoord(leave)},${y}`;
+      d += `A${roundCoord(r)},${roundCoord(r)} 0 0 ${sweep} ${roundCoord(leave)},${y}`;
       cursorX = leave;
     }
     d += `L${b[0]},${b[1]}`;
@@ -598,9 +713,13 @@ export function routingMetrics(links) {
     }
   }
 
+  const uniqueCrossings = uniqueUnrelatedCrossingPoints(links).length;
+  const uniqueJumps = uniqueRenderedJumpPoints(links).length;
   return {
     crossingStyle: CROSSING_STYLE,
     lineJumpCount: jumpCount,
+    uniqueUnrelatedCrossings: uniqueCrossings,
+    uniqueRenderedJumps: uniqueJumps,
     parentChildSegments: countParentChildSegments(links),
     familyJunctions: countFamilyJunctions(links),
     maxBendsPerParentChild: maxBends,
@@ -792,18 +911,33 @@ export function findChildBusNotAttachedToSpouseJunction(layout) {
 }
 
 export function findUnrelatedCrossingsWithoutJump(layout) {
-  const sites = findUnrelatedCrossingSites(layout.links || []);
-  const jumpPoints = [];
-  for (const link of layout.links || []) {
-    for (const jump of link.jumps || []) {
-      jumpPoints.push(jump);
-    }
-  }
-  return sites.filter((site) => {
-    return !jumpPoints.some(
-      (jump) => almostEq(jump.x, site.x, 1.5) && almostEq(jump.y, site.y, 1.5),
+  const jumps = uniqueRenderedJumpPoints(layout.links || []);
+  return uniqueUnrelatedCrossingPoints(layout.links || []).filter((site) => {
+    return !jumps.some((jump) => almostEq(jump.x, site.x, 1.5) && almostEq(jump.y, site.y, 1.5));
+  });
+}
+
+/** Jumps that do not correspond to any unrelated geometric crossing. */
+export function findFalseJumps(layout) {
+  const crossings = uniqueUnrelatedCrossingPoints(layout.links || []);
+  return uniqueRenderedJumpPoints(layout.links || []).filter((jump) => {
+    return !crossings.some(
+      (site) => almostEq(jump.x, site.x, 1.5) && almostEq(jump.y, site.y, 1.5),
     );
   });
+}
+
+/** Invariant: unique unrelated crossings === unique rendered jumps. */
+export function assertCrossingJumpParity(layout) {
+  const crossings = uniqueUnrelatedCrossingPoints(layout.links || []).length;
+  const jumps = uniqueRenderedJumpPoints(layout.links || []).length;
+  return {
+    ok: crossings === jumps,
+    unrelatedGeometricCrossings: crossings,
+    renderedLineJumps: jumps,
+    missedJumps: findUnrelatedCrossingsWithoutJump(layout).length,
+    falseJumps: findFalseJumps(layout).length,
+  };
 }
 
 /**
