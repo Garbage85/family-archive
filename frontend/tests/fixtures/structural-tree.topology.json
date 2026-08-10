@@ -1,7 +1,7 @@
 {
   "version": 1,
   "kind": "structural-topology",
-  "personCount": 17,
+  "personCount": 23,
   "idPrefix": "p",
   "people": [
     {
@@ -145,7 +145,7 @@
       "rels": {
         "parents": ["p014", "p015"],
         "spouses": ["p017"],
-        "children": []
+        "children": ["p018", "p020"]
       }
     },
     {
@@ -154,6 +154,60 @@
       "rels": {
         "parents": [],
         "spouses": ["p016"],
+        "children": ["p018", "p020"]
+      }
+    },
+    {
+      "id": "p018",
+      "data": { "gender": "M" },
+      "rels": {
+        "parents": ["p016", "p017"],
+        "spouses": ["p019"],
+        "children": ["p021"]
+      }
+    },
+    {
+      "id": "p019",
+      "data": { "gender": "F" },
+      "rels": {
+        "parents": [],
+        "spouses": ["p018"],
+        "children": ["p021"]
+      }
+    },
+    {
+      "id": "p020",
+      "data": { "gender": "F" },
+      "rels": {
+        "parents": ["p016", "p017"],
+        "spouses": ["p022"],
+        "children": ["p023"]
+      }
+    },
+    {
+      "id": "p021",
+      "data": { "gender": "M" },
+      "rels": {
+        "parents": ["p018", "p019"],
+        "spouses": [],
+        "children": []
+      }
+    },
+    {
+      "id": "p022",
+      "data": { "gender": "M" },
+      "rels": {
+        "parents": [],
+        "spouses": ["p020"],
+        "children": ["p023"]
+      }
+    },
+    {
+      "id": "p023",
+      "data": { "gender": "F" },
+      "rels": {
+        "parents": ["p020", "p022"],
+        "spouses": [],
         "children": []
       }
     }
@@ -171,8 +225,8 @@
       "notes",
       "avatar"
     ],
-    "spouseEdgeCount": 7,
-    "parentChildEdgeCount": 16,
+    "spouseEdgeCount": 9,
+    "parentChildEdgeCount": 24,
     "generationHints": {
       "p001": 0,
       "p002": 0,
@@ -190,14 +244,21 @@
       "p014": -1,
       "p015": -1,
       "p016": 0,
-      "p017": 0
+      "p017": 0,
+      "p018": 1,
+      "p019": 1,
+      "p020": 1,
+      "p021": 2,
+      "p022": 1,
+      "p023": 2
     },
     "defaultCenterId": "p010",
     "parentSiblingBranch": {
       "motherId": "p002",
       "maternalGrandparents": ["p014", "p015"],
       "maternalAuntId": "p016",
-      "maternalAuntSpouseId": "p017"
+      "maternalAuntSpouseId": "p017",
+      "maternalAuntChildren": ["p018", "p020"]
     },
     "growth": {
       "spouseSisterId": "p011",
