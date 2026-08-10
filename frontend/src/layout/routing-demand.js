@@ -519,4 +519,30 @@ export function adjacentLaneAxisGap(axisValues) {
   return { axes: unique, gaps };
 }
 
+/** Deterministic lane-order candidates for stem-aware routing. */
+export function enumerateLanePermutations(values) {
+  const sorted = [...values].sort((a, b) => a - b);
+  const result = [];
+  const used = Array(sorted.length).fill(false);
+  const current = [];
+  const visit = () => {
+    if (current.length === sorted.length) {
+      result.push([...current]);
+      return;
+    }
+    let previous = null;
+    for (let index = 0; index < sorted.length; index += 1) {
+      if (used[index] || sorted[index] === previous) continue;
+      previous = sorted[index];
+      used[index] = true;
+      current.push(sorted[index]);
+      visit();
+      current.pop();
+      used[index] = false;
+    }
+  };
+  visit();
+  return result;
+}
+
 export { parseGapKey, rangesOverlap };

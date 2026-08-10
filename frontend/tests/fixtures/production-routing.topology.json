@@ -1,0 +1,111 @@
+{
+  "kind": "production-routing-topology",
+  "personCount": 20,
+  "centerId": "p001",
+  "people": [
+    {
+      "id": "p001",
+      "data": { "gender": "M" },
+      "rels": { "parents": ["p002", "p003"], "spouses": ["p004"], "children": [] }
+    },
+    {
+      "id": "p002",
+      "data": { "gender": "M" },
+      "rels": { "parents": ["p013", "p014"], "spouses": ["p003"], "children": ["p001", "p007"] }
+    },
+    {
+      "id": "p003",
+      "data": { "gender": "F" },
+      "rels": { "parents": ["p010", "p012"], "spouses": ["p002"], "children": ["p001", "p007"] }
+    },
+    {
+      "id": "p004",
+      "data": { "gender": "F" },
+      "rels": { "parents": ["p005", "p006"], "spouses": ["p001"], "children": [] }
+    },
+    {
+      "id": "p005",
+      "data": { "gender": "F" },
+      "rels": { "parents": [], "spouses": ["p006"], "children": ["p004"] }
+    },
+    {
+      "id": "p006",
+      "data": { "gender": "M" },
+      "rels": { "parents": [], "spouses": ["p005"], "children": ["p004"] }
+    },
+    {
+      "id": "p007",
+      "data": { "gender": "M" },
+      "rels": { "parents": ["p002", "p003"], "spouses": [], "children": [] }
+    },
+    {
+      "id": "p008",
+      "data": { "gender": "F" },
+      "rels": { "parents": [], "spouses": [], "children": [] }
+    },
+    {
+      "id": "p009",
+      "data": { "gender": "F" },
+      "rels": { "parents": [], "spouses": [], "children": [] }
+    },
+    {
+      "id": "p010",
+      "data": { "gender": "F" },
+      "rels": { "parents": [], "spouses": ["p012"], "children": ["p003", "p011"] }
+    },
+    {
+      "id": "p011",
+      "data": { "gender": "F" },
+      "rels": { "parents": ["p010", "p012"], "spouses": ["p016"], "children": ["p017"] }
+    },
+    {
+      "id": "p012",
+      "data": { "gender": "M" },
+      "rels": { "parents": [], "spouses": ["p010"], "children": ["p003", "p011"] }
+    },
+    {
+      "id": "p013",
+      "data": { "gender": "M" },
+      "rels": { "parents": [], "spouses": ["p014"], "children": ["p002", "p015"] }
+    },
+    {
+      "id": "p014",
+      "data": { "gender": "F" },
+      "rels": { "parents": [], "spouses": ["p013"], "children": ["p002", "p015"] }
+    },
+    {
+      "id": "p015",
+      "data": { "gender": "M" },
+      "rels": { "parents": ["p013", "p014"], "spouses": ["p018"], "children": ["p019"] }
+    },
+    {
+      "id": "p016",
+      "data": { "gender": "M" },
+      "rels": { "parents": [], "spouses": ["p011"], "children": ["p017"] }
+    },
+    {
+      "id": "p017",
+      "data": { "gender": "F" },
+      "rels": { "parents": ["p011", "p016"], "spouses": [], "children": [] }
+    },
+    {
+      "id": "p018",
+      "data": { "gender": "F" },
+      "rels": { "parents": ["p020"], "spouses": ["p015"], "children": ["p019"] }
+    },
+    {
+      "id": "p019",
+      "data": { "gender": "M" },
+      "rels": { "parents": ["p015", "p018"], "spouses": [], "children": [] }
+    },
+    {
+      "id": "p020",
+      "data": { "gender": "M" },
+      "rels": { "parents": [], "spouses": [], "children": ["p018"] }
+    }
+  ],
+  "meta": {
+    "parentChildEdgeCount": 19,
+    "spouseEdgeCount": 7
+  }
+}

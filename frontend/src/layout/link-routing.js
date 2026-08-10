@@ -28,6 +28,11 @@ import {
   fitBusOffsetsToGenerationGaps,
   MIN_PARALLEL_GAP,
 } from './parallel-lanes.js';
+import {
+  enumerateLanePermutations,
+  ROUTING_EDGE_PADDING,
+  ROUTING_LANE_GAP,
+} from './routing-demand.js';
 
 export const CROSSING_STYLE = 'line-jump';
 export const LINE_JUMP_RADIUS = 10;
@@ -754,7 +759,7 @@ function buildRoutedLinks(layout, families, isHorizontal) {
  * Rebuild link polylines from final node coordinates.
  * Call only after nodes are placed; never mutates people / trees.data.
  */
-export function routeLayoutLinks(
+function routeLayoutLinksOnce(
   layout,
   {
     orientation = 'vertical',
@@ -833,6 +838,169 @@ export function routeLayoutLinks(
 
   // Pass 3: line-jumps only for remaining true H×V crossings.
   return annotateLineJumps(routed);
+}
+
+const LANE_SEARCH_EPS = 1e-6;
+const STEM_AWARE_EXHAUSTIVE_GROUP_LIMIT = 6;
+
+function spansOverlap(left, right) {
+  return Math.min(left.span1, right.span1) - Math.max(left.span0, right.span0) > LANE_SEARCH_EPS;
+}
+
+function assignmentKey(assignment) {
+  return [...assignment.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, lane]) => `${key}=${lane}`)
+    .join('|');
+}
+
+function planWithAssignments(routingPlan, assignment) {
+  const laneByFamilyKey = new Map();
+  for (const [familyKey, entry] of routingPlan.laneByFamilyKey || []) {
+    const laneIndex = assignment.get(familyKey) ?? entry.laneIndex ?? 0;
+    laneByFamilyKey.set(familyKey, {
+      ...entry,
+      laneIndex,
+      axis: Number.isFinite(entry.corridorStart)
+        ? entry.corridorStart + ROUTING_EDGE_PADDING + laneIndex * ROUTING_LANE_GAP
+        : entry.axis,
+    });
+  }
+  return { ...routingPlan, laneByFamilyKey };
+}
+
+function busStemCrossingCount(links) {
+  return findUnrelatedCrossingSites(links).filter(
+    (site) =>
+      site.horizontalLink?.type === 'parent-child' && site.verticalLink?.type === 'parent-child',
+  ).length;
+}
+
+function routingCost(links, assignment) {
+  const falseJunctions = findFalseJunctionsBetweenUnrelatedFamilies({ links }).length;
+  const missedJumps = findUnrelatedCrossingsWithoutJump({ links }).length;
+  const falseJumps = findFalseJumps({ links }).length;
+  const hardRouting = falseJunctions + missedJumps + falseJumps;
+  const crossings = busStemCrossingCount(links);
+  const jumps = uniqueRenderedJumpPoints(links).length;
+  const laneCount = Math.max(-1, ...assignment.values()) + 1;
+  const pathLength = routingMetrics(links).totalParentChildLength;
+  return {
+    tuple: [hardRouting, crossings, jumps, laneCount, pathLength, assignmentKey(assignment)],
+    hardRouting,
+    falseJunctions,
+    missedJumps,
+    falseJumps,
+    crossings,
+    jumps,
+    laneCount,
+    pathLength,
+  };
+}
+
+function compareCosts(left, right) {
+  for (let index = 0; index < left.tuple.length; index += 1) {
+    if (left.tuple[index] === right.tuple[index]) continue;
+    if (typeof left.tuple[index] === 'string') {
+      return left.tuple[index].localeCompare(right.tuple[index]);
+    }
+    return left.tuple[index] - right.tuple[index];
+  }
+  return 0;
+}
+
+/**
+ * Reorder only the lane colors already demanded by Phase B. The candidate
+ * routes keep all nodes and all bus geometry fixed; only the generation-gap
+ * lane axes change. Bus interval conflicts remain hard constraints.
+ */
+export function optimizeStemAwareRoutingPlan(layout, routingPlan, orientation) {
+  if (!routingPlan?.laneByFamilyKey?.size) return routingPlan;
+  const entries = [...routingPlan.laneByFamilyKey.entries()];
+  const groups = new Map();
+  for (const [familyKey, entry] of entries) {
+    const gap = entry.gap || '';
+    if (!groups.has(gap)) groups.set(gap, []);
+    groups.get(gap).push({ familyKey, ...entry });
+  }
+  const groupChoices = [];
+  for (const group of groups.values()) {
+    const laneValues = group.map((entry) => entry.laneIndex ?? 0);
+    // Factorial search is useful for the small household groups where lane
+    // ordering matters most. Large stress layouts retain the deterministic
+    // demand order instead of allocating millions of permutations.
+    const permutations =
+      group.length <= STEM_AWARE_EXHAUSTIVE_GROUP_LIMIT
+        ? enumerateLanePermutations(laneValues)
+        : [laneValues];
+    const choices = permutations.filter((permutation) => {
+      const assigned = new Map(group.map((entry, index) => [entry.familyKey, permutation[index]]));
+      for (let i = 0; i < group.length; i += 1) {
+        for (let j = i + 1; j < group.length; j += 1) {
+          if (assigned.get(group[i].familyKey) !== assigned.get(group[j].familyKey)) continue;
+          if (spansOverlap(group[i], group[j])) return false;
+        }
+      }
+      return true;
+    });
+    groupChoices.push({ group, choices });
+  }
+  const combinations = groupChoices.reduce((total, item) => total * item.choices.length, 1);
+  // Large synthetic trees should remain responsive. For those, deterministic
+  // local choices still use the same cost function and hard constraints.
+  const exhaustive = combinations <= 4096;
+  let best = null;
+  const evaluate = (assignment) => {
+    const candidatePlan = planWithAssignments(routingPlan, assignment);
+    const links = routeLayoutLinksOnce(layout, {
+      orientation,
+      routingPlan: candidatePlan,
+    });
+    const cost = routingCost(links, assignment);
+    if (!best || compareCosts(cost, best.cost) < 0) best = { candidatePlan, cost };
+  };
+  const visit = (index, assignment) => {
+    if (index >= groupChoices.length) {
+      evaluate(assignment);
+      return;
+    }
+    const { group, choices } = groupChoices[index];
+    for (const choice of choices) {
+      const next = new Map(assignment);
+      group.forEach((entry, itemIndex) => next.set(entry.familyKey, choice[itemIndex]));
+      visit(index + 1, next);
+      if (!exhaustive && best) break;
+    }
+  };
+  visit(0, new Map());
+  return best?.candidatePlan || routingPlan;
+}
+
+export function routeLayoutLinks(
+  layout,
+  {
+    orientation = 'vertical',
+    applyParallelLanes = true,
+    parallelGap = MIN_PARALLEL_GAP,
+    routingPlan = null,
+    optimizeStemAwareLanes = true,
+  } = {},
+) {
+  if (routingPlan && optimizeStemAwareLanes) {
+    const optimizedPlan = optimizeStemAwareRoutingPlan(layout, routingPlan, orientation);
+    return routeLayoutLinksOnce(layout, {
+      orientation,
+      applyParallelLanes,
+      parallelGap,
+      routingPlan: optimizedPlan,
+    });
+  }
+  return routeLayoutLinksOnce(layout, {
+    orientation,
+    applyParallelLanes,
+    parallelGap,
+    routingPlan,
+  });
 }
 
 export function routeSignature(link) {

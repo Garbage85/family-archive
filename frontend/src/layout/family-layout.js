@@ -10,7 +10,7 @@
  *   D) final routing (structured bus lanes → stem separation → jumps)
  */
 
-import { routeLayoutLinks } from './link-routing.js';
+import { optimizeStemAwareRoutingPlan, routeLayoutLinks } from './link-routing.js';
 import {
   buildPlacementCandidates,
   compareCandidateScores,
@@ -232,6 +232,7 @@ function materializeCandidateLayout({
   cardWidth,
   cardHeight,
   orientation,
+  optimizeStemAwareLanes = true,
 }) {
   const isHorizontal = orientation === 'horizontal';
   const cardAlong = isHorizontal ? cardWidth : cardHeight;
@@ -298,7 +299,7 @@ function materializeCandidateLayout({
   // PHASE D — structured bus lanes, stem separation, jumps. Nodes stay fixed.
   const links = routeLayoutLinks(
     { nodes, links: draftLinks, households: candidate.households },
-    { orientation, routingPlan },
+    { orientation, routingPlan, optimizeStemAwareLanes },
   );
 
   // Keep household generation-axis metadata in sync with final baselines.
@@ -449,6 +450,7 @@ export function layoutFamilyTree(
       cardWidth,
       cardHeight,
       orientation,
+      optimizeStemAwareLanes: false,
     });
     layout.meta = {
       centerId: String(centerId),
@@ -492,6 +494,33 @@ export function layoutFamilyTree(
   const winner = scored[0];
   const fullRoutingEvaluations = scored.length;
   const candidateCount = candidates.length;
+
+  // Candidate selection deliberately uses the clean v0.3.5 routing order so
+  // stem-aware lanes cannot change card placement or household ordering. Once
+  // the winner is fixed, optimize only its generation-gap lane permutation and
+  // rebuild the links with the selected axes.
+  const winnerNodeMap = new Map(winner.layout.nodes.map((node) => [node.id, node]));
+  const winnerDraftLinks = buildDraftLinks(visible, winnerNodeMap);
+  const optimizedPlan = optimizeStemAwareRoutingPlan(
+    { nodes: winner.layout.nodes, links: winnerDraftLinks, households: winner.layout.households },
+    winner.layout.routingPlan,
+    orientation,
+  );
+  winner.layout.routingPlan = optimizedPlan;
+  winner.layout.links = routeLayoutLinks(
+    { nodes: winner.layout.nodes, links: winnerDraftLinks, households: winner.layout.households },
+    { orientation, routingPlan: optimizedPlan, optimizeStemAwareLanes: false },
+  );
+  winner.metrics = collectPlacementMetrics(people, winner.layout, {
+    expectedVisibleIds,
+    households: winner.layout.households,
+    canonicalOrderKey,
+    spouseSide: winner.candidate.spouseSide,
+    householdToBranch: winner.candidate.householdToBranch,
+    routingPlan: winner.layout.routingPlan,
+  });
+  winner.metrics.spouseSide = winner.candidate.spouseSide;
+  winner.metrics.candidateId = winner.candidate.candidateId;
   const nodes = winner.layout.nodes;
   const links = winner.layout.links;
   const placedHouseholds = winner.layout.households.map((household) => ({
