@@ -193,15 +193,20 @@ function buildDraftLinks(visible, nodeById) {
         points: [],
       });
     }
-    for (const parentId of parentIds(person)) {
+    const parentChildEdges = [
+      ...parentIds(person).map((parentId) => [parentId, person.id]),
+      ...childIds(person).map((childId) => [person.id, childId]),
+    ];
+    for (const [parentId, childId] of parentChildEdges) {
       if (!nodeById.has(parentId)) continue;
-      const key = `${parentId}->${person.id}`;
+      if (!nodeById.has(childId)) continue;
+      const key = `${parentId}->${childId}`;
       if (parentSeen.has(key)) continue;
       parentSeen.add(key);
       draftLinks.push({
         type: 'parent-child',
         source: parentId,
-        target: person.id,
+        target: childId,
         points: [],
       });
     }

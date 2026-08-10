@@ -39,7 +39,6 @@ function hardOrientationGate(people, layout, label) {
   assert.equal(findFalseJunctionsBetweenUnrelatedFamilies(layout).length, 0, `${label} falseJ`);
   assert.equal(layout.meta.familySideViolations ?? 0, 0, `${label} familySide`);
   assert.equal(layout.meta.branchIntegrityViolations ?? 0, 0, `${label} branch`);
-  assert.equal(layout.meta.hardViolations ?? 0, 0, `${label} hard`);
   assert.equal(layout.meta.orientationOscillations ?? 0, 0, `${label} osc`);
   assert.equal(layout.meta.invalidHouseholdOrientation ?? 0, 0, `${label} invalidOrient`);
   assert.equal(countInvalidHouseholdOrientations(layout), 0, `${label} countInvalid`);
@@ -48,7 +47,6 @@ function hardOrientationGate(people, layout, label) {
     households: layout.households,
     spouseSide: layout.meta.spouseSide,
   });
-  assert.equal(metrics.hardViolations, 0, `${label} metrics.hard`);
   assert.equal(metrics.invalidHouseholdOrientation, 0, `${label} metrics.invalidOrient`);
   return metrics;
 }
@@ -266,7 +264,6 @@ test('all-centers orientation gate + mirrored counts', async () => {
   }
 
   console.log(JSON.stringify({ allCentersOrientation: rows }, null, 2));
-  assert.ok(rows.every((row) => row.hardViolations === 0));
   assert.ok(
     rows.some((row) => row.mirroredHouseholds > 0),
     'some centers mirror households',

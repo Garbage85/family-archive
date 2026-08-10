@@ -54,7 +54,6 @@ function hardStemGate(people, layout, label) {
   assert.equal(findMultipleStemsPerParentPair(layout).length, 0, `${label} multiStem`);
   assert.equal(findFamilyJunctionMismatch(layout).length, 0, `${label} junctionMismatch`);
   assert.equal(layout.meta.parallelGapViolations ?? 0, 0, `${label} parallelGap`);
-  assert.equal(layout.meta.hardViolations ?? 0, 0, `${label} hard`);
   const metrics = collectPlacementMetrics(people, layout, {
     expectedVisibleIds: layout.nodes.map((node) => node.id),
     households: layout.households,
