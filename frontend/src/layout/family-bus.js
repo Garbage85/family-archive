@@ -5,7 +5,8 @@
 
 export const ROUTING_BUS_PADDING = 0;
 
-const EPS = 1e-6;
+// Geometric tolerance: placement/routing may introduce sub-pixel float noise.
+const EPS = 1e-3;
 
 function almostEq(a, b, eps = EPS) {
   return Math.abs(a - b) <= eps;

@@ -11,19 +11,22 @@ export const SOFT_WEIGHTS = {
   existingBranchOrderInversions: 12000,
   unexpectedCoupleFlip: 80000,
   // Priority among softs:
-  //   local family geometry → compact children → lanes/height → short routes → crossings/jumps.
-  foreignHouseholdsUnderBus: 9000,
-  busExcessLength: 25,
-  familyHorizontalSpread: 1.8,
+  //   familyAlignment → crossings/jumps → lanes/height → bends/length → bbox/stability.
+  familyAlignmentError: 12,
+  singleChildAlignmentError: 18,
+  singleChildHorizontalOffset: 14,
+  foreignHouseholdsUnderBus: 6000,
+  busExcessLength: 20,
+  familyHorizontalSpread: 1.2,
+  crossings: 1800,
+  jumps: 1400,
   maxLaneCountPerGap: 700,
   requiredLaneCountTotal: 100,
   totalRoutingGapHeight: 1.0,
-  routeLength: 0.2,
-  crossings: 1800,
-  jumps: 1400,
   nearCollinear: 2500,
   familyInterleave: 800,
-  bends: 40,
+  bends: 50,
+  routeLength: 0.25,
   width: 0.8,
   height: 0.5,
   orderingInstability: 120,
@@ -74,6 +77,12 @@ export function scorePlacementCandidate(metrics) {
     existingBranchOrderInversions:
       (metrics.existingBranchOrderInversions || 0) * SOFT_WEIGHTS.existingBranchOrderInversions,
     unexpectedCoupleFlip: (metrics.unexpectedCoupleFlip || 0) * SOFT_WEIGHTS.unexpectedCoupleFlip,
+    familyAlignmentError:
+      (metrics.familyAlignmentErrorTotal || 0) * SOFT_WEIGHTS.familyAlignmentError,
+    singleChildAlignmentError:
+      (metrics.singleChildAlignmentError || 0) * SOFT_WEIGHTS.singleChildAlignmentError,
+    singleChildHorizontalOffset:
+      (metrics.singleChildHorizontalOffset || 0) * SOFT_WEIGHTS.singleChildHorizontalOffset,
     foreignHouseholdsUnderBus:
       (metrics.foreignHouseholdsUnderBus || 0) * SOFT_WEIGHTS.foreignHouseholdsUnderBus,
     busExcessLength: (metrics.busExcessLength || 0) * SOFT_WEIGHTS.busExcessLength,

@@ -10,11 +10,27 @@
  * Routing cost must not tear a spouse branch across the couple core.
  */
 
+import {
+  buildParentChildFamilies,
+  computePreferredHouseholdCenters,
+  estimateHouseholdCenters,
+  packHouseholdStarts,
+  scoreOrderAlignment,
+} from './family-alignment.js';
 import { scorePlacementCandidate, compareCandidateScores } from './placement-cost.js';
 
 const EXHAUSTIVE_BLOCK_LIMIT = 6;
 const MAX_SWAP_PASSES = 8;
 const MAX_BARYCENTER_ITERS = 4;
+/** Soft weight for geometric alignment inside generation-order search. */
+const ALIGNMENT_PROXY_WEIGHT = 0.045;
+/**
+ * Placement passes:
+ *  1) tight seed (core pinned / other gens centered)
+ *  2) bottom-up median alignment of unpinned parent rows to children
+ *  3) light top-down re-fit of unpinned rows to parents
+ */
+const MAX_ALIGN_PLACE_ITERS = 3;
 
 function unique(ids) {
   return [...new Set((ids || []).map(String).filter(Boolean))];
@@ -30,10 +46,6 @@ function parentIds(person) {
 
 function childIds(person) {
   return unique(person?.rels?.children);
-}
-
-function householdWidth(household, cardCross, gap) {
-  return household.size * cardCross + (household.size - 1) * gap;
 }
 
 function sortedById(items, keyFn = (item) => item.id) {
@@ -648,16 +660,45 @@ export function enforceExtendedBranchesOuter(branches, side, spouseSide) {
 
 function optimizeBranchList(
   branches,
-  { generation, generationMap, peopleById, neighborRows, side = null, spouseSide = null },
+  {
+    generation,
+    generationMap,
+    peopleById,
+    neighborRows,
+    side = null,
+    spouseSide = null,
+    alignmentCtx = null,
+  },
 ) {
   if (branches.length <= 1) return branches.slice();
 
-  // Canonical: topology crossing proxy only. Previous layout must not bias order.
+  // Index proxy + geometric parent→child alignment (soft, never overrides sides).
   const scoreBranches = (order) => {
     const households = order.flatMap((branch) =>
       householdsForBranchInGeneration(branch, generation, generationMap),
     );
-    return rowCrossingProxy(households, generationMap, peopleById, neighborRows);
+    let score = rowCrossingProxy(households, generationMap, peopleById, neighborRows);
+    if (alignmentCtx) {
+      const fullOrder = alignmentCtx.composeFullOrder
+        ? alignmentCtx.composeFullOrder(households)
+        : households;
+      score +=
+        ALIGNMENT_PROXY_WEIGHT *
+        scoreOrderAlignment({
+          orderedHouseholds: fullOrder,
+          parentPositions: alignmentCtx.parentPositions,
+          families: alignmentCtx.families,
+          peopleById,
+          generationMap,
+          childGeneration: generation,
+          cardCross: alignmentCtx.cardCross,
+          gap: alignmentCtx.gap,
+          isHorizontal: alignmentCtx.isHorizontal,
+          centerGeneration: alignmentCtx.centerGeneration,
+          pinCenterId: alignmentCtx.pinCenterId,
+        });
+    }
+    return score;
   };
 
   let best = branches.slice().sort((a, b) => a.canonicalKey.localeCompare(b.canonicalKey));
@@ -685,9 +726,35 @@ function optimizeBranchList(
   return best;
 }
 
-function optimizeHouseholdsInsideBranch(households, { generationMap, peopleById, neighborRows }) {
+function optimizeHouseholdsInsideBranch(
+  households,
+  { generationMap, peopleById, neighborRows, generation = 0, alignmentCtx = null },
+) {
   if (households.length <= 1) return households.slice();
-  const score = (order) => rowCrossingProxy(order, generationMap, peopleById, neighborRows);
+  const score = (order) => {
+    let value = rowCrossingProxy(order, generationMap, peopleById, neighborRows);
+    if (alignmentCtx) {
+      const fullOrder = alignmentCtx.composeFullOrder
+        ? alignmentCtx.composeFullOrder(order)
+        : order;
+      value +=
+        ALIGNMENT_PROXY_WEIGHT *
+        scoreOrderAlignment({
+          orderedHouseholds: fullOrder,
+          parentPositions: alignmentCtx.parentPositions,
+          families: alignmentCtx.families,
+          peopleById,
+          generationMap,
+          childGeneration: generation,
+          cardCross: alignmentCtx.cardCross,
+          gap: alignmentCtx.gap,
+          isHorizontal: alignmentCtx.isHorizontal,
+          centerGeneration: alignmentCtx.centerGeneration,
+          pinCenterId: alignmentCtx.pinCenterId,
+        });
+    }
+    return value;
+  };
   let best = households.slice().sort((a, b) => a.id.localeCompare(b.id));
   if (households.length <= EXHAUSTIVE_BLOCK_LIMIT) {
     let bestScore = score(best);
@@ -709,7 +776,15 @@ function optimizeHouseholdsInsideBranch(households, { generationMap, peopleById,
  */
 export function optimizeGenerationOrder(
   households,
-  { generation, generationMap, peopleById, neighborRows, spouseSide, householdToBranch },
+  {
+    generation,
+    generationMap,
+    peopleById,
+    neighborRows,
+    spouseSide,
+    householdToBranch,
+    alignmentCtx = null,
+  },
 ) {
   if (!households.length) return [];
 
@@ -719,6 +794,17 @@ export function optimizeGenerationOrder(
     center: households.filter((h) => h.side === 'center'),
     neutral: households.filter((h) => h.side === 'neutral'),
   };
+
+  const coreOrdered = bySide.core.slice().sort((a, b) => a.id.localeCompare(b.id));
+  const neutralOrdered = bySide.neutral.slice().sort((a, b) => a.id.localeCompare(b.id));
+
+  function composeFullOrder(side, sideOrdered) {
+    const spousePart = side === 'spouse' ? sideOrdered : bySide.spouse;
+    const centerPart = side === 'center' ? sideOrdered : bySide.center;
+    return spouseSide === 'left'
+      ? [...spousePart, ...neutralOrdered, ...coreOrdered, ...centerPart]
+      : [...centerPart, ...neutralOrdered, ...coreOrdered, ...spousePart];
+  }
 
   function orderSide(side) {
     const sideHouseholds = bySide[side];
@@ -738,6 +824,14 @@ export function optimizeGenerationOrder(
     }
     // Include only branches that still have households in this generation.
     const active = sideBranches.filter((branch) => branch.households.length);
+    const branchAlignmentCtx = alignmentCtx
+      ? {
+          ...alignmentCtx,
+          // Score against the composed full generation row so core+sibling
+          // child blocks are visible to the alignment metric.
+          composeFullOrder: (sideHouseholdOrder) => composeFullOrder(side, sideHouseholdOrder),
+        }
+      : null;
     const orderedBranches = optimizeBranchList(canonicalBranchOrder(active, side, spouseSide), {
       generation,
       generationMap,
@@ -745,15 +839,32 @@ export function optimizeGenerationOrder(
       neighborRows,
       side,
       spouseSide,
+      alignmentCtx: branchAlignmentCtx,
     });
 
     const out = [];
-    for (const branch of orderedBranches) {
+    for (let branchIndex = 0; branchIndex < orderedBranches.length; branchIndex += 1) {
+      const branch = orderedBranches[branchIndex];
+      const insideAlignmentCtx = alignmentCtx
+        ? {
+            ...alignmentCtx,
+            composeFullOrder: (branchHouseholdOrder) => {
+              const sideOrder = [];
+              for (let i = 0; i < orderedBranches.length; i += 1) {
+                if (i === branchIndex) sideOrder.push(...branchHouseholdOrder);
+                else sideOrder.push(...orderedBranches[i].households);
+              }
+              return composeFullOrder(side, sideOrder);
+            },
+          }
+        : null;
       out.push(
         ...optimizeHouseholdsInsideBranch(branch.households, {
           generationMap,
           peopleById,
           neighborRows,
+          generation,
+          alignmentCtx: insideAlignmentCtx,
         }),
       );
     }
@@ -762,8 +873,6 @@ export function optimizeGenerationOrder(
 
   const spouseOrdered = orderSide('spouse');
   const centerOrdered = orderSide('center');
-  const coreOrdered = bySide.core.slice().sort((a, b) => a.id.localeCompare(b.id));
-  const neutralOrdered = bySide.neutral.slice().sort((a, b) => a.id.localeCompare(b.id));
 
   const ordered =
     spouseSide === 'left'
@@ -779,9 +888,42 @@ export function optimizeGenerationOrder(
 
 export function optimizeAllGenerations(
   householdsByGeneration,
-  { generationMap, peopleById, spouseSide, householdToBranch },
+  {
+    generationMap,
+    peopleById,
+    spouseSide,
+    householdToBranch,
+    cardCross = 184,
+    gap = 52,
+    isHorizontal = false,
+    centerId = null,
+  },
 ) {
   const gens = [...householdsByGeneration.keys()].sort((a, b) => a - b);
+  const families = buildParentChildFamilies([...peopleById.values()], [...generationMap.keys()]);
+  const centerGeneration =
+    centerId != null && generationMap.has(String(centerId))
+      ? generationMap.get(String(centerId))
+      : 0;
+
+  function parentPositionsFromOrders(ordersMap, childGeneration) {
+    const positions = new Map();
+    for (const g of gens) {
+      if (g === childGeneration) continue;
+      const row = ordersMap.get(g);
+      if (!row?.length) continue;
+      const { memberPositions } = estimateHouseholdCenters(row, {
+        cardCross,
+        gap,
+        isHorizontal,
+        peopleById,
+        pinCenterId: g === centerGeneration ? centerId : null,
+      });
+      for (const [id, pos] of memberPositions) positions.set(id, pos);
+    }
+    return positions;
+  }
+
   const orders = new Map();
   for (const g of gens) {
     orders.set(
@@ -793,6 +935,7 @@ export function optimizeAllGenerations(
         neighborRows: [],
         spouseSide,
         householdToBranch,
+        alignmentCtx: null,
       }),
     );
   }
@@ -810,6 +953,15 @@ export function optimizeAllGenerations(
         if (idx < gens.length - 1) {
           neighbors.push({ generation: gens[idx + 1], households: orders.get(gens[idx + 1]) });
         }
+        const alignmentCtx = {
+          families,
+          parentPositions: parentPositionsFromOrders(orders, g),
+          cardCross,
+          gap,
+          isHorizontal,
+          centerGeneration,
+          pinCenterId: g === centerGeneration ? centerId : null,
+        };
         orders.set(
           g,
           optimizeGenerationOrder(householdsByGeneration.get(g), {
@@ -819,6 +971,7 @@ export function optimizeAllGenerations(
             neighborRows: neighbors,
             spouseSide,
             householdToBranch,
+            alignmentCtx,
           }),
         );
       }
@@ -827,29 +980,62 @@ export function optimizeAllGenerations(
   return orders;
 }
 
+function resolveMemberOrders(orderedHouseholds, { centerId, spouseSide, peopleById }) {
+  const coreIndex = orderedHouseholds.findIndex((household) => household.side === 'core');
+  return orderedHouseholds.map((household, index) => {
+    if (household.side === 'core') {
+      return orderCoreHouseholdMembers(household, centerId, spouseSide, peopleById);
+    }
+    const outerIsLeft = coreIndex >= 0 ? index < coreIndex : spouseSide === 'left';
+    return orderNonCoreMembers(household, { outerIsLeft, peopleById });
+  });
+}
+
 export function placeHouseholdRow(
   orderedHouseholds,
-  { generation, cardCross, gap, generationStep, isHorizontal, centerId, spouseSide, peopleById },
+  {
+    generation,
+    cardCross,
+    gap,
+    generationStep,
+    isHorizontal,
+    centerId,
+    spouseSide,
+    peopleById,
+    parentPositions = null,
+    childPositions = null,
+    pinCenterId = null,
+  },
 ) {
-  const widths = orderedHouseholds.map((household) => householdWidth(household, cardCross, gap));
-  const total =
-    widths.reduce((sum, width) => sum + width, 0) + Math.max(0, orderedHouseholds.length - 1) * gap;
-  let cursor = -total / 2;
+  const memberOrders = resolveMemberOrders(orderedHouseholds, {
+    centerId,
+    spouseSide,
+    peopleById,
+  });
+  const { preferred, widths } = computePreferredHouseholdCenters(orderedHouseholds, {
+    parentPositions: parentPositions || new Map(),
+    childPositions: childPositions || new Map(),
+    peopleById,
+    cardCross,
+    gap,
+    isHorizontal,
+  });
+  const starts = packHouseholdStarts(orderedHouseholds, {
+    preferred,
+    widths,
+    gap,
+    pinCenterId,
+    memberOrders,
+    cardCross,
+  });
+
   const nodePositions = new Map();
   const placed = [];
-  const coreIndex = orderedHouseholds.findIndex((household) => household.side === 'core');
-
   for (let index = 0; index < orderedHouseholds.length; index += 1) {
     const household = orderedHouseholds[index];
     const width = widths[index];
-    const start = cursor;
-    let members;
-    if (household.side === 'core') {
-      members = orderCoreHouseholdMembers(household, centerId, spouseSide, peopleById);
-    } else {
-      const outerIsLeft = coreIndex >= 0 ? index < coreIndex : spouseSide === 'left';
-      members = orderNonCoreMembers(household, { outerIsLeft, peopleById });
-    }
+    const start = starts[index];
+    const members = memberOrders[index];
 
     members.forEach((memberId, memberIndex) => {
       const cross = start + memberIndex * (cardCross + gap) + cardCross / 2;
@@ -865,12 +1051,15 @@ export function placeHouseholdRow(
       x0: start,
       x1: start + width,
     });
-    cursor += width + gap;
   }
 
   return { nodePositions, households: placed };
 }
 
+/**
+ * Place all generations with top-down parent targets and bottom-up child hints.
+ * Final global shift pins centerId at cross=0 without breaking relative alignment.
+ */
 export function materializePlacement({
   ordersByGeneration,
   spouseSide,
@@ -883,26 +1072,87 @@ export function materializePlacement({
   branches = [],
   householdToBranch = new Map(),
 }) {
-  const nodePositions = new Map();
-  const placedHouseholds = [];
   const gens = [...ordersByGeneration.keys()].sort((a, b) => a - b);
+  const memberGeneration = new Map();
   for (const g of gens) {
-    const { nodePositions: rowPositions, households } = placeHouseholdRow(
-      ordersByGeneration.get(g),
-      {
-        generation: g,
-        cardCross,
-        gap,
-        generationStep,
-        isHorizontal,
-        centerId,
-        spouseSide,
-        peopleById,
-      },
-    );
-    for (const [id, pos] of rowPositions) nodePositions.set(id, pos);
-    placedHouseholds.push(...households);
+    for (const household of ordersByGeneration.get(g) || []) {
+      for (const id of household.memberIds || []) memberGeneration.set(String(id), g);
+    }
   }
+
+  function splitPositions(allPositions, generation) {
+    const parentPositions = new Map();
+    const childPositions = new Map();
+    for (const [id, pos] of allPositions) {
+      const g = memberGeneration.get(String(id));
+      if (g == null) continue;
+      if (g < generation) parentPositions.set(id, pos);
+      else if (g > generation) childPositions.set(id, pos);
+    }
+    return { parentPositions, childPositions };
+  }
+
+  let nodePositions = new Map();
+  let placedHouseholds = [];
+  const centerGeneration =
+    centerId != null && memberGeneration.has(String(centerId))
+      ? memberGeneration.get(String(centerId))
+      : 0;
+
+  for (let iter = 0; iter < MAX_ALIGN_PLACE_ITERS; iter += 1) {
+    const nextPositions = new Map();
+    const householdsByGen = new Map();
+    // iter0: top-down seed, iter1: bottom-up, iter2: top-down polish
+    const direction = iter === 1 ? 'bu' : 'td';
+    const seq = direction === 'td' ? gens : [...gens].reverse();
+
+    for (const [id, pos] of nodePositions) nextPositions.set(id, pos);
+
+    for (const g of seq) {
+      const { parentPositions, childPositions } = splitPositions(nextPositions, g);
+      const useParents = iter !== 1;
+      const useChildren = iter !== 0;
+      const { nodePositions: rowPositions, households } = placeHouseholdRow(
+        ordersByGeneration.get(g),
+        {
+          generation: g,
+          cardCross,
+          gap,
+          generationStep,
+          isHorizontal,
+          centerId,
+          spouseSide,
+          peopleById,
+          parentPositions: useParents ? parentPositions : new Map(),
+          childPositions: useChildren ? childPositions : new Map(),
+          pinCenterId: g === centerGeneration ? centerId : null,
+        },
+      );
+      for (const id of memberGeneration.keys()) {
+        if (memberGeneration.get(id) === g) nextPositions.delete(id);
+      }
+      for (const [id, pos] of rowPositions) nextPositions.set(id, pos);
+      householdsByGen.set(g, households);
+    }
+
+    nodePositions = nextPositions;
+    placedHouseholds = gens.flatMap((g) => householdsByGen.get(g) || []);
+  }
+
+  // Snap cross-axis coords to 3 decimals — keeps routing locality EPS stable.
+  for (const [id, pos] of nodePositions) {
+    if (isHorizontal) {
+      nodePositions.set(id, { x: pos.x, y: Math.round(pos.y * 1000) / 1000 });
+    } else {
+      nodePositions.set(id, { x: Math.round(pos.x * 1000) / 1000, y: pos.y });
+    }
+  }
+  placedHouseholds = placedHouseholds.map((household) => ({
+    ...household,
+    x0: Math.round(household.x0 * 1000) / 1000,
+    x1: Math.round(household.x1 * 1000) / 1000,
+  }));
+
   return {
     nodePositions,
     households: placedHouseholds,
@@ -1103,6 +1353,10 @@ export function buildPlacementCandidates({
       peopleById,
       spouseSide,
       householdToBranch,
+      cardCross,
+      gap,
+      isHorizontal,
+      centerId,
     });
     const material = materializePlacement({
       ordersByGeneration: orders,

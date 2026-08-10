@@ -17,6 +17,7 @@ import {
   findSelfIntersectingPolylines,
   boundingBox,
 } from './layout-validators.js';
+import { measureFamilyAlignment } from './family-alignment.js';
 import {
   findChildrenBlockInterleavingViolations,
   findFamilyBusLocalityViolations,
@@ -175,6 +176,11 @@ export function collectPlacementMetrics(
     orientation,
     people,
   });
+  const alignment = measureFamilyAlignment(layout, {
+    people,
+    orientation,
+    centerId: layout.meta?.centerId || null,
+  });
   const plan = routingPlan || {
     requiredLaneCountByGap: layout.meta?.requiredLaneCountByGap,
     routingGapHeightByGap: layout.meta?.routingGapHeightByGap,
@@ -217,6 +223,14 @@ export function collectPlacementMetrics(
     familyHorizontalSpread: busSummary.familyHorizontalSpread,
     maxBusLength: busSummary.maxBusLength,
     familyBusReport: busRows,
+    familyAlignmentErrorTotal: alignment.familyAlignmentErrorTotal,
+    maxFamilyAlignmentError: alignment.maxFamilyAlignmentError,
+    singleChildAlignmentError: alignment.singleChildAlignmentError,
+    singleChildHorizontalOffset: alignment.singleChildHorizontalOffset,
+    familyTargetByFamily: alignment.familyTargetByFamily,
+    childBlockCenterByFamily: alignment.childBlockCenterByFamily,
+    localBusLengthByFamily: alignment.localBusLengthByFamily,
+    familyAlignmentReport: alignment.families,
     unrelatedCollinearOverlaps: collinear.length,
     zeroLengthSegments: zeroLen.length,
     selfIntersections: selfHits.length,
@@ -311,6 +325,10 @@ export function summarizeCandidateRow(candidateId, metrics) {
     maxBusLength: metrics.maxBusLength,
     familyBusLocalityViolations: metrics.familyBusLocalityViolations,
     childrenBlockInterleavingViolations: metrics.childrenBlockInterleavingViolations,
+    familyAlignmentErrorTotal: Math.round(metrics.familyAlignmentErrorTotal || 0),
+    maxFamilyAlignmentError: Math.round(metrics.maxFamilyAlignmentError || 0),
+    singleChildAlignmentError: Math.round(metrics.singleChildAlignmentError || 0),
+    singleChildHorizontalOffset: Math.round(metrics.singleChildHorizontalOffset || 0),
     existingHouseholdsSideChanges: metrics.existingHouseholdsSideChanges,
     existingBranchOrderInversions: metrics.existingBranchOrderInversions,
     unexpectedCoupleFlip: metrics.unexpectedCoupleFlip,
