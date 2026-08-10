@@ -314,6 +314,8 @@ test('determinism: alignment geometry stable cold/warm/20x', async () => {
 test('performance sanity: production + dense synthetic stay bounded', async () => {
   const fixture = await loadProduction();
   const people = loadStructuralPeople(fixture);
+
+  const prodOnce = layoutFamilyTree(people, { centerId: 'p010', returnCandidates: true });
   const t0 = Date.now();
   for (let i = 0; i < 25; i += 1) layoutFamilyTree(people, { centerId: 'p010' });
   const productionMs = Date.now() - t0;
@@ -324,11 +326,32 @@ test('performance sanity: production + dense synthetic stay bounded', async () =
     person('m', { spouses: ['f'], children: kids, gender: 'F' }),
     ...kids.map((id) => person(id, { parents: ['f', 'm'] })),
   ];
+  const denseOnce = layoutFamilyTree(dense, { centerId: 'k0', returnCandidates: true });
   const t1 = Date.now();
   for (let i = 0; i < 25; i += 1) layoutFamilyTree(dense, { centerId: 'k0' });
   const denseMs = Date.now() - t1;
 
+  // Keep the historical 5000ms ceiling; require ~20% headroom on dense 25x.
   assert.ok(productionMs < 5000, `production 25x too slow: ${productionMs}ms`);
   assert.ok(denseMs < 5000, `dense 25x too slow: ${denseMs}ms`);
-  console.log('\nALIGNMENT PERF\n', JSON.stringify({ productionMs, denseMs }, null, 2));
+  assert.ok(denseMs < 4000, `dense 25x lacks 20% headroom: ${denseMs}ms`);
+  assert.equal(denseOnce.meta.hardViolations, 0);
+  assert.equal(prodOnce.meta.hardViolations, 0);
+
+  console.log(
+    '\nALIGNMENT PERF\n',
+    JSON.stringify(
+      {
+        productionMs,
+        denseMs,
+        dense1xCandidateCount: denseOnce.meta.candidateCount,
+        dense1xFullRoutingEvaluations: denseOnce.meta.fullRoutingEvaluations,
+        production1xCandidateCount: prodOnce.meta.candidateCount,
+        production1xFullRoutingEvaluations: prodOnce.meta.fullRoutingEvaluations,
+        productionAlign: Math.round(prodOnce.meta.familyAlignmentErrorTotal || 0),
+      },
+      null,
+      2,
+    ),
+  );
 });

@@ -19,9 +19,10 @@ import {
 } from './family-alignment.js';
 import { scorePlacementCandidate, compareCandidateScores } from './placement-cost.js';
 
-const EXHAUSTIVE_BLOCK_LIMIT = 6;
-const MAX_SWAP_PASSES = 8;
-const MAX_BARYCENTER_ITERS = 4;
+/** Exhaustive perms for small blocks (5! = 120). Larger → adjacent swaps. */
+const EXHAUSTIVE_BLOCK_LIMIT = 5;
+const MAX_SWAP_PASSES = 6;
+const MAX_BARYCENTER_ITERS = 3;
 /** Soft weight for geometric alignment inside generation-order search. */
 const ALIGNMENT_PROXY_WEIGHT = 0.045;
 /**
@@ -31,6 +32,8 @@ const ALIGNMENT_PROXY_WEIGHT = 0.045;
  *  3) light top-down re-fit of unpinned rows to parents
  */
 const MAX_ALIGN_PLACE_ITERS = 3;
+/** Full routing/validators only for this many stage-1 survivors. */
+export const FULL_ROUTE_CANDIDATE_LIMIT = 4;
 
 function unique(ids) {
   return [...new Set((ids || []).map(String).filter(Boolean))];
@@ -658,6 +661,29 @@ export function enforceExtendedBranchesOuter(branches, side, spouseSide) {
   return sideOnRight ? [...parents, ...extended] : [...extended, ...parents];
 }
 
+/**
+ * Equal-size sibling/singleton branches in one contiguous side block are
+ * order-invariant for tight-pack alignment and shared-parent crossing cost.
+ * Skip factorial / swap search — canonical order is enough.
+ */
+function branchesAreOrderInvariant(branches) {
+  if (!branches?.length || branches.length <= 1) return true;
+  if (!branches.every((branch) => branch.kind === 'sibling' || branch.kind === 'singleton')) {
+    return false;
+  }
+  const sizes = branches.map((branch) => {
+    const household = branch.households?.[0];
+    return household?.size || household?.memberIds?.length || 1;
+  });
+  return sizes.every((size) => size === sizes[0]);
+}
+
+function householdsAreOrderInvariant(households) {
+  if (!households?.length || households.length <= 1) return true;
+  const sizes = households.map((household) => household.size || household.memberIds?.length || 1);
+  return sizes.every((size) => size === sizes[0]);
+}
+
 function optimizeBranchList(
   branches,
   {
@@ -672,8 +698,19 @@ function optimizeBranchList(
 ) {
   if (branches.length <= 1) return branches.slice();
 
-  // Index proxy + geometric parent→child alignment (soft, never overrides sides).
+  let best = branches.slice().sort((a, b) => a.canonicalKey.localeCompare(b.canonicalKey));
+
+  // Fast path: dense equal siblings — search cannot improve soft alignment.
+  if (branchesAreOrderInvariant(branches)) {
+    if (side && spouseSide) best = enforceExtendedBranchesOuter(best, side, spouseSide);
+    return best;
+  }
+
+  const scoreCache = new Map();
+  // Index proxy + cheap tight-pack alignment (soft, never overrides sides).
   const scoreBranches = (order) => {
+    const key = order.map((branch) => branch.id).join('|');
+    if (scoreCache.has(key)) return scoreCache.get(key);
     const households = order.flatMap((branch) =>
       householdsForBranchInGeneration(branch, generation, generationMap),
     );
@@ -696,12 +733,14 @@ function optimizeBranchList(
           isHorizontal: alignmentCtx.isHorizontal,
           centerGeneration: alignmentCtx.centerGeneration,
           pinCenterId: alignmentCtx.pinCenterId,
+          // Search uses tight-pack proxy; final materialize still does full prefs.
+          cheap: true,
         });
     }
+    scoreCache.set(key, score);
     return score;
   };
 
-  let best = branches.slice().sort((a, b) => a.canonicalKey.localeCompare(b.canonicalKey));
   let bestScore = scoreBranches(best);
 
   if (branches.length <= EXHAUSTIVE_BLOCK_LIMIT) {
@@ -716,10 +755,8 @@ function optimizeBranchList(
     }
   } else {
     best = adjacentSwapOptimize(best, scoreBranches);
-    bestScore = scoreBranches(best);
   }
 
-  best = adjacentSwapOptimize(best, scoreBranches);
   if (side && spouseSide) {
     best = enforceExtendedBranchesOuter(best, side, spouseSide);
   }
@@ -731,7 +768,13 @@ function optimizeHouseholdsInsideBranch(
   { generationMap, peopleById, neighborRows, generation = 0, alignmentCtx = null },
 ) {
   if (households.length <= 1) return households.slice();
+  let best = households.slice().sort((a, b) => a.id.localeCompare(b.id));
+  if (householdsAreOrderInvariant(households)) return best;
+
+  const scoreCache = new Map();
   const score = (order) => {
+    const key = order.map((household) => household.id).join('|');
+    if (scoreCache.has(key)) return scoreCache.get(key);
     let value = rowCrossingProxy(order, generationMap, peopleById, neighborRows);
     if (alignmentCtx) {
       const fullOrder = alignmentCtx.composeFullOrder
@@ -751,11 +794,13 @@ function optimizeHouseholdsInsideBranch(
           isHorizontal: alignmentCtx.isHorizontal,
           centerGeneration: alignmentCtx.centerGeneration,
           pinCenterId: alignmentCtx.pinCenterId,
+          cheap: true,
         });
     }
+    scoreCache.set(key, value);
     return value;
   };
-  let best = households.slice().sort((a, b) => a.id.localeCompare(b.id));
+
   if (households.length <= EXHAUSTIVE_BLOCK_LIMIT) {
     let bestScore = score(best);
     for (const perm of permutations(households)) {
@@ -767,6 +812,7 @@ function optimizeHouseholdsInsideBranch(
         bestScore = value;
       }
     }
+    return best;
   }
   return adjacentSwapOptimize(best, score);
 }

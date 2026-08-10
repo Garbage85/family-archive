@@ -15,9 +15,11 @@ import {
   buildPlacementCandidates,
   compareCandidateScores,
   extractPlacementSnapshot,
+  FULL_ROUTE_CANDIDATE_LIMIT,
 } from './placement-optimizer.js';
 import {
   collectPlacementMetrics,
+  collectPlacementProxyMetrics,
   householdOrderingByGeneration,
   summarizeCandidateRow,
 } from './placement-metrics.js';
@@ -440,8 +442,71 @@ export function layoutFamilyTree(
     .map((household) => household.id)
     .join('|');
 
-  const scored = [];
+  // STAGE 1 — cheap structural + alignment proxy (no full routing).
+  // Note: proxy hard=0 is incomplete (routing-only faults like false junctions
+  // are invisible here), so we never drop a candidate solely for proxy hard>0
+  // when the candidate set is small — we rank and take top-N instead.
+  const stage1 = [];
   for (const candidate of candidates) {
+    const provisionalNodes = visible
+      .map((person) => {
+        const position = candidate.nodePositions.get(person.id) || { x: 0, y: 0 };
+        return {
+          id: person.id,
+          x: position.x,
+          y: position.y,
+          generation: generation.get(person.id) ?? 0,
+          width: cardWidth,
+          height: cardHeight,
+        };
+      })
+      .sort((left, right) => left.id.localeCompare(right.id));
+    const draftLinks = buildDraftLinks(
+      visible,
+      new Map(provisionalNodes.map((node) => [node.id, node])),
+    );
+    const proxyLayout = {
+      nodes: provisionalNodes,
+      links: draftLinks,
+      households: candidate.households,
+      meta: {
+        centerId: String(centerId),
+        orientation,
+        spouseSide: candidate.spouseSide,
+        candidateId: candidate.candidateId,
+      },
+    };
+    const proxyMetrics = collectPlacementProxyMetrics(people, proxyLayout, {
+      expectedVisibleIds,
+      households: candidate.households,
+      spouseSide: candidate.spouseSide,
+      householdToBranch: candidate.householdToBranch,
+    });
+    proxyMetrics.spouseSide = candidate.spouseSide;
+    proxyMetrics.candidateId = candidate.candidateId;
+    stage1.push({
+      candidate,
+      proxyMetrics,
+      // Mark structural proxy hard for reporting only.
+      rejected: false,
+    });
+  }
+
+  stage1.sort((left, right) =>
+    compareCandidateScores(
+      { ...left.proxyMetrics, candidateId: left.candidate.candidateId },
+      { ...right.proxyMetrics, candidateId: right.candidate.candidateId },
+    ),
+  );
+
+  // Route top-N by proxy rank. With the usual 2 spouse-side candidates both
+  // are evaluated so routing-only hard faults can still decide the winner.
+  const toRoute = stage1.slice(0, Math.min(FULL_ROUTE_CANDIDATE_LIMIT, stage1.length));
+
+  // STAGE 2 — full routing + validators only for top-N survivors.
+  const scored = [];
+  for (const entry of toRoute) {
+    const { candidate } = entry;
     const layout = materializeCandidateLayout({
       visible,
       generation,
@@ -484,6 +549,8 @@ export function layoutFamilyTree(
   );
 
   const winner = scored[0];
+  const fullRoutingEvaluations = scored.length;
+  const candidateCount = candidates.length;
   const nodes = winner.layout.nodes;
   const links = winner.layout.links;
   const placedHouseholds = winner.layout.households.map((household) => ({
@@ -593,16 +660,28 @@ export function layoutFamilyTree(
       generationBaselines: winner.layout.baselines || {},
       routingConstants: { ROUTING_LANE_GAP, ROUTING_EDGE_PADDING },
       coldWarmSignatureMismatch: 0,
+      candidateCount,
+      fullRoutingEvaluations,
+      stage1Skipped: Math.max(0, candidateCount - fullRoutingEvaluations),
     },
   };
 
   if (returnCandidates) {
+    const routedIds = new Set(scored.map((entry) => entry.candidate.candidateId));
     result.meta.candidates = scored.map((entry) =>
       summarizeCandidateRow(entry.candidate.candidateId, {
         ...entry.metrics,
         spouseSide: entry.candidate.spouseSide,
       }),
     );
+    result.meta.stage1 = stage1.map((entry) => ({
+      candidateId: entry.candidate.candidateId,
+      spouseSide: entry.candidate.spouseSide,
+      fullRouted: routedIds.has(entry.candidate.candidateId),
+      proxyHardViolations: entry.proxyMetrics.hardViolations,
+      familyAlignmentErrorTotal: Math.round(entry.proxyMetrics.familyAlignmentErrorTotal || 0),
+      totalCost: Math.round(entry.proxyMetrics.totalCost || 0),
+    }));
   }
 
   return result;

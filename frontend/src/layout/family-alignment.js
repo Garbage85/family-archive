@@ -630,6 +630,9 @@ export function estimateHouseholdCenters(
 /**
  * Geometric alignment cost for a trial child-generation order given parent positions.
  * Used inside barycenter passes — must stay cheap and deterministic.
+ *
+ * cheap=true: tight-pack geometry only (skip preferred-position solve). Ranking
+ * of orderings stays consistent; final materialize still uses full prefs.
  */
 export function scoreOrderAlignment({
   orderedHouseholds,
@@ -643,14 +646,26 @@ export function scoreOrderAlignment({
   isHorizontal = false,
   centerGeneration = 0,
   pinCenterId = null,
+  cheap = false,
 }) {
   if (!orderedHouseholds?.length || !families?.length) return 0;
+
+  // Only families whose children sit in this generation participate.
+  const relevant = [];
+  for (const family of families) {
+    const childGens = family.childIds.map((id) => generationMap.get(String(id)) ?? 0);
+    if (!childGens.length || Math.min(...childGens) !== childGeneration) continue;
+    relevant.push(family);
+  }
+  if (!relevant.length) return 0;
+
   const { memberPositions } = estimateHouseholdCenters(orderedHouseholds, {
     cardCross,
     gap,
     isHorizontal,
-    parentPositions,
-    peopleById,
+    // Cheap search: ignore parent/child preferred packing (tight / pinned only).
+    parentPositions: cheap ? null : parentPositions,
+    peopleById: cheap ? null : peopleById,
     pinCenterId,
   });
 
@@ -660,9 +675,7 @@ export function scoreOrderAlignment({
   }
 
   let cost = 0;
-  for (const family of families) {
-    const childGens = family.childIds.map((id) => generationMap.get(String(id)) ?? 0);
-    if (!childGens.length || Math.min(...childGens) !== childGeneration) continue;
+  for (const family of relevant) {
     const parentNodes = family.parentIds
       .map((id) => {
         const pos = positions.get(String(id));
@@ -687,7 +700,6 @@ export function scoreOrderAlignment({
     const weight = familyAlignmentWeight(family, generationMap, centerGeneration);
     const err = Math.abs(block.blockCenter - target);
     const coef = family.childIds.length <= 1 ? 2.5 : 1;
-    // Soft route proxy: bus length / single-child horizontal run.
     const bus =
       block.blockMin != null && block.blockMax != null
         ? Math.max(block.blockMax, target) - Math.min(block.blockMin, target)

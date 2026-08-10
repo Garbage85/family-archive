@@ -94,6 +94,118 @@ function generationOrderKey(households) {
 }
 
 /**
+ * Stage-1 cheap metrics: structural hard gates + alignment + bbox.
+ * No routing, lane demand, or link geometry validators.
+ */
+export function collectPlacementProxyMetrics(
+  people,
+  layout,
+  {
+    expectedVisibleIds = null,
+    households = null,
+    spouseSide = null,
+    householdToBranch = null,
+  } = {},
+) {
+  const expected = expectedVisibleIds || (layout.nodes || []).map((node) => String(node.id));
+  const usedHouseholds = households || layout.households;
+  const lostNodes = findLostVisiblePeople(expected, layout);
+  const overlaps = findCardOverlaps(layout.nodes);
+  const side = spouseSide || layout.meta?.spouseSide || null;
+  let familySideViolations = 0;
+  if (side) {
+    const byGen = new Map();
+    for (const household of usedHouseholds || []) {
+      const g = household.generation ?? 0;
+      if (!byGen.has(g)) byGen.set(g, []);
+      byGen.get(g).push(household);
+    }
+    for (const row of byGen.values()) {
+      familySideViolations += countFamilySideViolations(row, side);
+    }
+  }
+  const branchIntegrityViolations = countBranchIntegrityViolations(
+    usedHouseholds,
+    householdToBranch,
+  );
+  const parentSiblingBranchSideViolations = countParentSiblingBranchSideViolations(
+    usedHouseholds,
+    householdToBranch,
+    side,
+  );
+  const orientation = layout.meta?.orientation || 'vertical';
+  // Draft topology links (empty points) are enough for children-block contiguity.
+  const childrenInterleave = findChildrenBlockInterleavingViolations(layout, {
+    orientation,
+    people,
+  });
+  const alignment = measureFamilyAlignment(layout, {
+    people,
+    orientation,
+    centerId: layout.meta?.centerId || null,
+  });
+  const bounds = boundingBox(layout.nodes);
+
+  const metrics = {
+    overlaps: overlaps.length,
+    lostNodes: lostNodes.length,
+    missingPC: 0,
+    missingSpouse: 0,
+    missingSiblingSpouses: 0,
+    linksThroughCards: 0,
+    falseJunctions: 0,
+    ambiguousSharedSegments: 0,
+    invalidFamilyJunctions: 0,
+    twoParentStemAnchoredToSpouseMidpoint: 0,
+    singleParentStemAnchoredToCardCenter: 0,
+    familyStemLaneShiftViolations: 0,
+    multipleStemsPerParentPair: 0,
+    familyJunctionMismatch: 0,
+    familyBusLocalityViolations: 0,
+    unrelatedFamiliesSharingBusSegment: 0,
+    childrenBlockInterleavingViolations: childrenInterleave.length,
+    foreignHouseholdsUnderBus: 0,
+    busExcessLength: 0,
+    maxBusExcessLength: 0,
+    familyHorizontalSpread: alignment.familyHorizontalSpread || 0,
+    maxBusLength: 0,
+    familyAlignmentErrorTotal: alignment.familyAlignmentErrorTotal,
+    maxFamilyAlignmentError: alignment.maxFamilyAlignmentError,
+    singleChildAlignmentError: alignment.singleChildAlignmentError,
+    singleChildHorizontalOffset: alignment.singleChildHorizontalOffset,
+    familyTargetByFamily: alignment.familyTargetByFamily,
+    childBlockCenterByFamily: alignment.childBlockCenterByFamily,
+    localBusLengthByFamily: alignment.localBusLengthByFamily,
+    familyAlignmentReport: alignment.families,
+    unrelatedCollinearOverlaps: 0,
+    zeroLengthSegments: 0,
+    selfIntersections: 0,
+    missingRequiredJumps: 0,
+    falseJumps: 0,
+    exteriorDetours: 0,
+    familySideViolations,
+    branchIntegrityViolations,
+    parentSiblingBranchSideViolations,
+    parallelLaneOverlap: 0,
+    parallelGapViolations: 0,
+    laneConflicts: 0,
+    routingOutsideGenerationGap: 0,
+    coldWarmSignatureMismatch: 0,
+    crossings: 0,
+    jumps: 0,
+    bends: 0,
+    routeLength: 0,
+    width: bounds.width,
+    height: bounds.height,
+    spouseSide: side,
+    candidateId: layout.meta?.candidateId || null,
+  };
+
+  const score = scorePlacementCandidate(metrics);
+  return { ...metrics, ...score, proxy: true };
+}
+
+/**
  * Full metric bundle for one laid-out candidate.
  */
 export function collectPlacementMetrics(
