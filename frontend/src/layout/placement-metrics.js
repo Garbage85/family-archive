@@ -25,6 +25,7 @@ import {
   measureFamilyBuses,
   summarizeBusMetrics,
 } from './family-bus.js';
+import { scoreHouseholdOrientation } from './household-orientation.js';
 import {
   countAnchoredStemViolations,
   findExteriorParentChildDetours,
@@ -51,8 +52,94 @@ import {
   ROUTING_LANE_GAP,
 } from './routing-demand.js';
 
-function unique(ids) {
-  return [...new Set((ids || []).map(String).filter(Boolean))];
+function measureOrientationStemMetrics(people, layout, { orientation = 'vertical' } = {}) {
+  const isHorizontal = orientation === 'horizontal';
+  const peopleById = new Map((people || []).map((person) => [String(person.id), person]));
+  const nodePositions = new Map(
+    (layout.nodes || []).map((node) => [String(node.id), { x: node.x, y: node.y }]),
+  );
+  const households = layout.households || [];
+  let parentStemHorizontalDeviation = 0;
+  let childStemHorizontalDeviation = 0;
+  let householdOrientationCost = 0;
+  for (const household of households) {
+    if ((household.memberIds || []).length < 2) continue;
+    const scored = scoreHouseholdOrientation({
+      order: household.memberIds,
+      household,
+      nodePositions,
+      peopleById,
+      households,
+      isHorizontal,
+    });
+    householdOrientationCost += scored.total;
+    parentStemHorizontalDeviation += scored.upstream;
+    childStemHorizontalDeviation += scored.downstream;
+  }
+  return {
+    parentStemHorizontalDeviation,
+    childStemHorizontalDeviation,
+    householdOrientationCost,
+  };
+}
+
+/**
+ * Cold vs warm orientation parity for the same topology.
+ * Growth across generations may flip orientations; that is not measured here.
+ */
+export function coldWarmOrientationMismatch(coldLayout, warmLayout) {
+  const cold = Object.fromEntries(
+    (coldLayout?.households || []).map((household) => [
+      household.id,
+      (household.memberIds || []).map(String).join('|'),
+    ]),
+  );
+  const warm = Object.fromEntries(
+    (warmLayout?.households || []).map((household) => [
+      household.id,
+      (household.memberIds || []).map(String).join('|'),
+    ]),
+  );
+  const ids = new Set([...Object.keys(cold), ...Object.keys(warm)]);
+  let mismatches = 0;
+  for (const id of ids) {
+    if ((cold[id] || '') !== (warm[id] || '')) mismatches += 1;
+  }
+  return mismatches;
+}
+
+/**
+ * Sanity: memberIds order must match cross-axis positions; couple households
+ * must keep finite [x0,x1] extents.
+ */
+export function countInvalidHouseholdOrientations(layout, { orientation = 'vertical' } = {}) {
+  const isHorizontal = orientation === 'horizontal';
+  const nodesById = new Map((layout?.nodes || []).map((node) => [String(node.id), node]));
+  let invalid = 0;
+  for (const household of layout?.households || []) {
+    const members = (household.memberIds || []).map(String);
+    if (members.length < 2) continue;
+    if (!Number.isFinite(household.x0) || !Number.isFinite(household.x1)) {
+      invalid += 1;
+      continue;
+    }
+    const crosses = members.map((id) => {
+      const node = nodesById.get(id);
+      if (!node) return null;
+      return isHorizontal ? node.y : node.x;
+    });
+    if (crosses.some((value) => value == null || !Number.isFinite(value))) {
+      invalid += 1;
+      continue;
+    }
+    for (let i = 1; i < crosses.length; i += 1) {
+      if (crosses[i] + 1e-6 < crosses[i - 1]) {
+        invalid += 1;
+        break;
+      }
+    }
+  }
+  return invalid;
 }
 
 function countMissingSiblingSpouses(people, layout) {
@@ -293,6 +380,15 @@ export function collectPlacementMetrics(
     orientation,
     centerId: layout.meta?.centerId || null,
   });
+  const orientationStems = measureOrientationStemMetrics(
+    people,
+    {
+      nodes: layout.nodes,
+      households: usedHouseholds,
+    },
+    { orientation },
+  );
+  const invalidHouseholdOrientation = countInvalidHouseholdOrientations(layout, { orientation });
   const plan = routingPlan || {
     requiredLaneCountByGap: layout.meta?.requiredLaneCountByGap,
     routingGapHeightByGap: layout.meta?.routingGapHeightByGap,
@@ -343,6 +439,24 @@ export function collectPlacementMetrics(
     childBlockCenterByFamily: alignment.childBlockCenterByFamily,
     localBusLengthByFamily: alignment.localBusLengthByFamily,
     familyAlignmentReport: alignment.families,
+    householdOrientationCost: orientationStems.householdOrientationCost,
+    parentStemHorizontalDeviation: orientationStems.parentStemHorizontalDeviation,
+    childStemHorizontalDeviation: orientationStems.childStemHorizontalDeviation,
+    mirroredHouseholds: Number(layout.meta?.mirroredHouseholds || 0),
+    orientationCostBefore: Number(layout.meta?.orientationCostBefore || 0),
+    orientationCostAfter: Number(layout.meta?.orientationCostAfter || 0),
+    householdOrientationChanges: Number(layout.meta?.householdOrientationChanges || 0),
+    orientationOscillations: Number(layout.meta?.orientationOscillations || 0),
+    // Cold/warm orientation parity is asserted by tests comparing two layouts;
+    // candidate scoring keeps this at 0 (same as coldWarmSignatureMismatch).
+    coldWarmOrientationMismatch: 0,
+    invalidHouseholdOrientation,
+    householdOrientations: Object.fromEntries(
+      (usedHouseholds || []).map((household) => [
+        household.id,
+        (household.memberIds || []).map(String),
+      ]),
+    ),
     unrelatedCollinearOverlaps: collinear.length,
     zeroLengthSegments: zeroLen.length,
     selfIntersections: selfHits.length,
@@ -441,6 +555,15 @@ export function summarizeCandidateRow(candidateId, metrics) {
     maxFamilyAlignmentError: Math.round(metrics.maxFamilyAlignmentError || 0),
     singleChildAlignmentError: Math.round(metrics.singleChildAlignmentError || 0),
     singleChildHorizontalOffset: Math.round(metrics.singleChildHorizontalOffset || 0),
+    householdOrientationCost: Math.round(metrics.householdOrientationCost || 0),
+    parentStemHorizontalDeviation: Math.round(metrics.parentStemHorizontalDeviation || 0),
+    childStemHorizontalDeviation: Math.round(metrics.childStemHorizontalDeviation || 0),
+    mirroredHouseholds: metrics.mirroredHouseholds || 0,
+    orientationCostBefore: Math.round(metrics.orientationCostBefore || 0),
+    orientationCostAfter: Math.round(metrics.orientationCostAfter || 0),
+    orientationOscillations: metrics.orientationOscillations || 0,
+    coldWarmOrientationMismatch: metrics.coldWarmOrientationMismatch || 0,
+    invalidHouseholdOrientation: metrics.invalidHouseholdOrientation || 0,
     existingHouseholdsSideChanges: metrics.existingHouseholdsSideChanges,
     existingBranchOrderInversions: metrics.existingBranchOrderInversions,
     unexpectedCoupleFlip: metrics.unexpectedCoupleFlip,
@@ -455,5 +578,3 @@ export function summarizeCandidateRow(candidateId, metrics) {
     totalCost: Math.round(metrics.totalCost),
   };
 }
-
-export { unique };

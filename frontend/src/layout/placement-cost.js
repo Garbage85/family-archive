@@ -11,10 +11,13 @@ export const SOFT_WEIGHTS = {
   existingBranchOrderInversions: 12000,
   unexpectedCoupleFlip: 80000,
   // Priority among softs:
-  //   familyAlignment → crossings/jumps → lanes/height → bends/length → bbox/stability.
+  //   upstream/downstream orientation → familyAlignment → crossings/jumps → …
   familyAlignmentError: 12,
   singleChildAlignmentError: 18,
   singleChildHorizontalOffset: 14,
+  householdOrientationCost: 10,
+  parentStemHorizontalDeviation: 8,
+  childStemHorizontalDeviation: 8,
   foreignHouseholdsUnderBus: 6000,
   busExcessLength: 20,
   familyHorizontalSpread: 1.2,
@@ -68,7 +71,10 @@ export function scorePlacementCandidate(metrics) {
     (metrics.parallelGapViolations || 0) +
     (metrics.laneConflicts || 0) +
     (metrics.routingOutsideGenerationGap || 0) +
-    (metrics.coldWarmSignatureMismatch || 0);
+    (metrics.coldWarmSignatureMismatch || 0) +
+    (metrics.orientationOscillations || 0) +
+    (metrics.coldWarmOrientationMismatch || 0) +
+    (metrics.invalidHouseholdOrientation || 0);
 
   const soft = {
     // Stability is soft but very expensive vs routing — never tear family sides.
@@ -83,6 +89,13 @@ export function scorePlacementCandidate(metrics) {
       (metrics.singleChildAlignmentError || 0) * SOFT_WEIGHTS.singleChildAlignmentError,
     singleChildHorizontalOffset:
       (metrics.singleChildHorizontalOffset || 0) * SOFT_WEIGHTS.singleChildHorizontalOffset,
+    householdOrientationCost:
+      (metrics.orientationCostAfter || metrics.householdOrientationCost || 0) *
+      SOFT_WEIGHTS.householdOrientationCost,
+    parentStemHorizontalDeviation:
+      (metrics.parentStemHorizontalDeviation || 0) * SOFT_WEIGHTS.parentStemHorizontalDeviation,
+    childStemHorizontalDeviation:
+      (metrics.childStemHorizontalDeviation || 0) * SOFT_WEIGHTS.childStemHorizontalDeviation,
     foreignHouseholdsUnderBus:
       (metrics.foreignHouseholdsUnderBus || 0) * SOFT_WEIGHTS.foreignHouseholdsUnderBus,
     busExcessLength: (metrics.busExcessLength || 0) * SOFT_WEIGHTS.busExcessLength,

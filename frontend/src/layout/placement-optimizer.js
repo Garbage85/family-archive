@@ -17,6 +17,7 @@ import {
   packHouseholdStarts,
   scoreOrderAlignment,
 } from './family-alignment.js';
+import { optimizeHouseholdOrientations } from './household-orientation.js';
 import { scorePlacementCandidate, compareCandidateScores } from './placement-cost.js';
 
 /** Exhaustive perms for small blocks (5! = 120). Larger → adjacent swaps. */
@@ -1185,6 +1186,20 @@ export function materializePlacement({
     placedHouseholds = gens.flatMap((g) => householdsByGen.get(g) || []);
   }
 
+  // Local spouse-orientation search: mirror members inside households without
+  // moving household blocks. Improves multi-generation stem geometry.
+  const orientation = optimizeHouseholdOrientations({
+    nodePositions,
+    households: placedHouseholds,
+    peopleById,
+    cardCross,
+    gap,
+    isHorizontal,
+    centerId,
+  });
+  nodePositions = orientation.nodePositions;
+  placedHouseholds = orientation.households;
+
   // Snap cross-axis coords to 3 decimals — keeps routing locality EPS stable.
   for (const [id, pos] of nodePositions) {
     if (isHorizontal) {
@@ -1205,6 +1220,14 @@ export function materializePlacement({
     spouseSide,
     branches,
     householdToBranch,
+    orientationReport: {
+      mirroredHouseholds: orientation.mirroredHouseholds,
+      householdOrientationChanges: orientation.householdOrientationChanges,
+      orientationOscillations: orientation.orientationOscillations,
+      orientationCostBefore: orientation.orientationCostBefore,
+      orientationCostAfter: orientation.orientationCostAfter,
+      householdOrientationById: orientation.householdOrientationById,
+    },
   };
 }
 
@@ -1246,6 +1269,12 @@ export function extractPlacementSnapshot(layout) {
     branchOrderByGeneration,
     householdSides,
     householdIds: new Set(Object.values(householdOrderByGeneration).flat().map(String)),
+    householdOrientations: Object.fromEntries(
+      (layout.households || []).map((household) => [
+        household.id,
+        (household.memberIds || []).map(String).join('|'),
+      ]),
+    ),
   };
 }
 
