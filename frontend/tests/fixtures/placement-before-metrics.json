@@ -1,0 +1,881 @@
+{
+  "capturedAt": "BEFORE",
+  "commit": "a14e7e5",
+  "rows": [
+    {
+      "centerId": "p001",
+      "displayedCount": 7,
+      "ordering": [
+        {
+          "g": 0,
+          "ids": ["p001", "p002"]
+        },
+        {
+          "g": 1,
+          "ids": ["p010", "p003", "p006", "p007", "p008"]
+        }
+      ],
+      "overlaps": 0,
+      "through": 0,
+      "ambiguous": 0,
+      "falseJ": 0,
+      "exterior": 0,
+      "crossings": 0,
+      "jumps": 0,
+      "missedJumps": 0,
+      "falseJumps": 0,
+      "bends": 2,
+      "routeLength": 2250,
+      "bounds": {
+        "minX": -472,
+        "minY": 0,
+        "maxX": 236,
+        "maxY": 139,
+        "width": 708,
+        "height": 139
+      },
+      "nodes": [
+        {
+          "id": "p001",
+          "x": -118,
+          "y": 0,
+          "g": 0,
+          "hh": "hh:p001+p002"
+        },
+        {
+          "id": "p002",
+          "x": 118,
+          "y": 0,
+          "g": 0,
+          "hh": "hh:p001+p002"
+        },
+        {
+          "id": "p003",
+          "x": -236,
+          "y": 224,
+          "g": 1,
+          "hh": "hh:p003+p010"
+        },
+        {
+          "id": "p006",
+          "x": 0,
+          "y": 224,
+          "g": 1,
+          "hh": "hh:p006"
+        },
+        {
+          "id": "p007",
+          "x": 236,
+          "y": 224,
+          "g": 1,
+          "hh": "hh:p007+p008"
+        },
+        {
+          "id": "p008",
+          "x": 472,
+          "y": 224,
+          "g": 1,
+          "hh": "hh:p007+p008"
+        },
+        {
+          "id": "p010",
+          "x": -472,
+          "y": 224,
+          "g": 1,
+          "hh": "hh:p003+p010"
+        }
+      ]
+    },
+    {
+      "centerId": "p002",
+      "displayedCount": 7,
+      "ordering": [
+        {
+          "g": 0,
+          "ids": ["p001", "p002"]
+        },
+        {
+          "g": 1,
+          "ids": ["p010", "p003", "p006", "p007", "p008"]
+        }
+      ],
+      "overlaps": 0,
+      "through": 0,
+      "ambiguous": 0,
+      "falseJ": 0,
+      "exterior": 0,
+      "crossings": 0,
+      "jumps": 0,
+      "missedJumps": 0,
+      "falseJumps": 0,
+      "bends": 2,
+      "routeLength": 2250,
+      "bounds": {
+        "minX": -472,
+        "minY": 0,
+        "maxX": 236,
+        "maxY": 139,
+        "width": 708,
+        "height": 139
+      },
+      "nodes": [
+        {
+          "id": "p001",
+          "x": -118,
+          "y": 0,
+          "g": 0,
+          "hh": "hh:p001+p002"
+        },
+        {
+          "id": "p002",
+          "x": 118,
+          "y": 0,
+          "g": 0,
+          "hh": "hh:p001+p002"
+        },
+        {
+          "id": "p003",
+          "x": -236,
+          "y": 224,
+          "g": 1,
+          "hh": "hh:p003+p010"
+        },
+        {
+          "id": "p006",
+          "x": 0,
+          "y": 224,
+          "g": 1,
+          "hh": "hh:p006"
+        },
+        {
+          "id": "p007",
+          "x": 236,
+          "y": 224,
+          "g": 1,
+          "hh": "hh:p007+p008"
+        },
+        {
+          "id": "p008",
+          "x": 472,
+          "y": 224,
+          "g": 1,
+          "hh": "hh:p007+p008"
+        },
+        {
+          "id": "p010",
+          "x": -472,
+          "y": 224,
+          "g": 1,
+          "hh": "hh:p003+p010"
+        }
+      ]
+    },
+    {
+      "centerId": "p003",
+      "displayedCount": 10,
+      "ordering": [
+        {
+          "g": -1,
+          "ids": ["p001", "p002", "p005", "p004", "p009"]
+        },
+        {
+          "g": 0,
+          "ids": ["p010", "p003", "p006", "p007", "p008"]
+        }
+      ],
+      "overlaps": 0,
+      "through": 0,
+      "ambiguous": 0,
+      "falseJ": 0,
+      "exterior": 0,
+      "crossings": 1,
+      "jumps": 1,
+      "missedJumps": 0,
+      "falseJumps": 0,
+      "bends": 2,
+      "routeLength": 3998,
+      "bounds": {
+        "minX": -472,
+        "minY": -224,
+        "maxX": 472,
+        "maxY": -85,
+        "width": 944,
+        "height": 139
+      },
+      "nodes": [
+        {
+          "id": "p001",
+          "x": -472,
+          "y": -224,
+          "g": -1,
+          "hh": "hh:p001+p002"
+        },
+        {
+          "id": "p002",
+          "x": -236,
+          "y": -224,
+          "g": -1,
+          "hh": "hh:p001+p002"
+        },
+        {
+          "id": "p003",
+          "x": -236,
+          "y": 0,
+          "g": 0,
+          "hh": "hh:p003+p010"
+        },
+        {
+          "id": "p004",
+          "x": 236,
+          "y": -224,
+          "g": -1,
+          "hh": "hh:p004+p005"
+        },
+        {
+          "id": "p005",
+          "x": 0,
+          "y": -224,
+          "g": -1,
+          "hh": "hh:p004+p005"
+        },
+        {
+          "id": "p006",
+          "x": 0,
+          "y": 0,
+          "g": 0,
+          "hh": "hh:p006"
+        },
+        {
+          "id": "p007",
+          "x": 236,
+          "y": 0,
+          "g": 0,
+          "hh": "hh:p007+p008"
+        },
+        {
+          "id": "p008",
+          "x": 472,
+          "y": 0,
+          "g": 0,
+          "hh": "hh:p007+p008"
+        },
+        {
+          "id": "p009",
+          "x": 472,
+          "y": -224,
+          "g": -1,
+          "hh": "hh:p009"
+        },
+        {
+          "id": "p010",
+          "x": -472,
+          "y": 0,
+          "g": 0,
+          "hh": "hh:p003+p010"
+        }
+      ]
+    },
+    {
+      "centerId": "p004",
+      "displayedCount": 4,
+      "ordering": [
+        {
+          "g": 0,
+          "ids": ["p005", "p004"]
+        },
+        {
+          "g": 1,
+          "ids": ["p010", "p003"]
+        }
+      ],
+      "overlaps": 0,
+      "through": 0,
+      "ambiguous": 0,
+      "falseJ": 0,
+      "exterior": 0,
+      "crossings": 0,
+      "jumps": 0,
+      "missedJumps": 0,
+      "falseJumps": 0,
+      "bends": 2,
+      "routeLength": 514,
+      "bounds": {
+        "minX": 0,
+        "minY": 0,
+        "maxX": 118,
+        "maxY": 139,
+        "width": 118,
+        "height": 139
+      },
+      "nodes": [
+        {
+          "id": "p003",
+          "x": 118,
+          "y": 224,
+          "g": 1,
+          "hh": "hh:p003+p010"
+        },
+        {
+          "id": "p004",
+          "x": 118,
+          "y": 0,
+          "g": 0,
+          "hh": "hh:p004+p005"
+        },
+        {
+          "id": "p005",
+          "x": -118,
+          "y": 0,
+          "g": 0,
+          "hh": "hh:p004+p005"
+        },
+        {
+          "id": "p010",
+          "x": -118,
+          "y": 224,
+          "g": 1,
+          "hh": "hh:p003+p010"
+        }
+      ]
+    },
+    {
+      "centerId": "p005",
+      "displayedCount": 4,
+      "ordering": [
+        {
+          "g": 0,
+          "ids": ["p005", "p004"]
+        },
+        {
+          "g": 1,
+          "ids": ["p010", "p003"]
+        }
+      ],
+      "overlaps": 0,
+      "through": 0,
+      "ambiguous": 0,
+      "falseJ": 0,
+      "exterior": 0,
+      "crossings": 0,
+      "jumps": 0,
+      "missedJumps": 0,
+      "falseJumps": 0,
+      "bends": 2,
+      "routeLength": 514,
+      "bounds": {
+        "minX": 0,
+        "minY": 0,
+        "maxX": 118,
+        "maxY": 139,
+        "width": 118,
+        "height": 139
+      },
+      "nodes": [
+        {
+          "id": "p003",
+          "x": 118,
+          "y": 224,
+          "g": 1,
+          "hh": "hh:p003+p010"
+        },
+        {
+          "id": "p004",
+          "x": 118,
+          "y": 0,
+          "g": 0,
+          "hh": "hh:p004+p005"
+        },
+        {
+          "id": "p005",
+          "x": -118,
+          "y": 0,
+          "g": 0,
+          "hh": "hh:p004+p005"
+        },
+        {
+          "id": "p010",
+          "x": -118,
+          "y": 224,
+          "g": 1,
+          "hh": "hh:p003+p010"
+        }
+      ]
+    },
+    {
+      "centerId": "p006",
+      "displayedCount": 10,
+      "ordering": [
+        {
+          "g": -1,
+          "ids": ["p001", "p002", "p005", "p004", "p009"]
+        },
+        {
+          "g": 0,
+          "ids": ["p010", "p003", "p006", "p007", "p008"]
+        }
+      ],
+      "overlaps": 0,
+      "through": 0,
+      "ambiguous": 0,
+      "falseJ": 0,
+      "exterior": 0,
+      "crossings": 1,
+      "jumps": 1,
+      "missedJumps": 0,
+      "falseJumps": 0,
+      "bends": 2,
+      "routeLength": 3998,
+      "bounds": {
+        "minX": -472,
+        "minY": -224,
+        "maxX": 472,
+        "maxY": -85,
+        "width": 944,
+        "height": 139
+      },
+      "nodes": [
+        {
+          "id": "p001",
+          "x": -472,
+          "y": -224,
+          "g": -1,
+          "hh": "hh:p001+p002"
+        },
+        {
+          "id": "p002",
+          "x": -236,
+          "y": -224,
+          "g": -1,
+          "hh": "hh:p001+p002"
+        },
+        {
+          "id": "p003",
+          "x": -236,
+          "y": 0,
+          "g": 0,
+          "hh": "hh:p003+p010"
+        },
+        {
+          "id": "p004",
+          "x": 236,
+          "y": -224,
+          "g": -1,
+          "hh": "hh:p004+p005"
+        },
+        {
+          "id": "p005",
+          "x": 0,
+          "y": -224,
+          "g": -1,
+          "hh": "hh:p004+p005"
+        },
+        {
+          "id": "p006",
+          "x": 0,
+          "y": 0,
+          "g": 0,
+          "hh": "hh:p006"
+        },
+        {
+          "id": "p007",
+          "x": 236,
+          "y": 0,
+          "g": 0,
+          "hh": "hh:p007+p008"
+        },
+        {
+          "id": "p008",
+          "x": 472,
+          "y": 0,
+          "g": 0,
+          "hh": "hh:p007+p008"
+        },
+        {
+          "id": "p009",
+          "x": 472,
+          "y": -224,
+          "g": -1,
+          "hh": "hh:p009"
+        },
+        {
+          "id": "p010",
+          "x": -472,
+          "y": 0,
+          "g": 0,
+          "hh": "hh:p003+p010"
+        }
+      ]
+    },
+    {
+      "centerId": "p007",
+      "displayedCount": 10,
+      "ordering": [
+        {
+          "g": -1,
+          "ids": ["p001", "p002", "p005", "p004", "p009"]
+        },
+        {
+          "g": 0,
+          "ids": ["p010", "p003", "p006", "p007", "p008"]
+        }
+      ],
+      "overlaps": 0,
+      "through": 0,
+      "ambiguous": 0,
+      "falseJ": 0,
+      "exterior": 0,
+      "crossings": 1,
+      "jumps": 1,
+      "missedJumps": 0,
+      "falseJumps": 0,
+      "bends": 2,
+      "routeLength": 3998,
+      "bounds": {
+        "minX": -472,
+        "minY": -224,
+        "maxX": 472,
+        "maxY": -85,
+        "width": 944,
+        "height": 139
+      },
+      "nodes": [
+        {
+          "id": "p001",
+          "x": -472,
+          "y": -224,
+          "g": -1,
+          "hh": "hh:p001+p002"
+        },
+        {
+          "id": "p002",
+          "x": -236,
+          "y": -224,
+          "g": -1,
+          "hh": "hh:p001+p002"
+        },
+        {
+          "id": "p003",
+          "x": -236,
+          "y": 0,
+          "g": 0,
+          "hh": "hh:p003+p010"
+        },
+        {
+          "id": "p004",
+          "x": 236,
+          "y": -224,
+          "g": -1,
+          "hh": "hh:p004+p005"
+        },
+        {
+          "id": "p005",
+          "x": 0,
+          "y": -224,
+          "g": -1,
+          "hh": "hh:p004+p005"
+        },
+        {
+          "id": "p006",
+          "x": 0,
+          "y": 0,
+          "g": 0,
+          "hh": "hh:p006"
+        },
+        {
+          "id": "p007",
+          "x": 236,
+          "y": 0,
+          "g": 0,
+          "hh": "hh:p007+p008"
+        },
+        {
+          "id": "p008",
+          "x": 472,
+          "y": 0,
+          "g": 0,
+          "hh": "hh:p007+p008"
+        },
+        {
+          "id": "p009",
+          "x": 472,
+          "y": -224,
+          "g": -1,
+          "hh": "hh:p009"
+        },
+        {
+          "id": "p010",
+          "x": -472,
+          "y": 0,
+          "g": 0,
+          "hh": "hh:p003+p010"
+        }
+      ]
+    },
+    {
+      "centerId": "p008",
+      "displayedCount": 10,
+      "ordering": [
+        {
+          "g": -1,
+          "ids": ["p001", "p002", "p005", "p004", "p009"]
+        },
+        {
+          "g": 0,
+          "ids": ["p010", "p003", "p006", "p007", "p008"]
+        }
+      ],
+      "overlaps": 0,
+      "through": 0,
+      "ambiguous": 0,
+      "falseJ": 0,
+      "exterior": 0,
+      "crossings": 1,
+      "jumps": 1,
+      "missedJumps": 0,
+      "falseJumps": 0,
+      "bends": 2,
+      "routeLength": 3998,
+      "bounds": {
+        "minX": -472,
+        "minY": -224,
+        "maxX": 472,
+        "maxY": -85,
+        "width": 944,
+        "height": 139
+      },
+      "nodes": [
+        {
+          "id": "p001",
+          "x": -472,
+          "y": -224,
+          "g": -1,
+          "hh": "hh:p001+p002"
+        },
+        {
+          "id": "p002",
+          "x": -236,
+          "y": -224,
+          "g": -1,
+          "hh": "hh:p001+p002"
+        },
+        {
+          "id": "p003",
+          "x": -236,
+          "y": 0,
+          "g": 0,
+          "hh": "hh:p003+p010"
+        },
+        {
+          "id": "p004",
+          "x": 236,
+          "y": -224,
+          "g": -1,
+          "hh": "hh:p004+p005"
+        },
+        {
+          "id": "p005",
+          "x": 0,
+          "y": -224,
+          "g": -1,
+          "hh": "hh:p004+p005"
+        },
+        {
+          "id": "p006",
+          "x": 0,
+          "y": 0,
+          "g": 0,
+          "hh": "hh:p006"
+        },
+        {
+          "id": "p007",
+          "x": 236,
+          "y": 0,
+          "g": 0,
+          "hh": "hh:p007+p008"
+        },
+        {
+          "id": "p008",
+          "x": 472,
+          "y": 0,
+          "g": 0,
+          "hh": "hh:p007+p008"
+        },
+        {
+          "id": "p009",
+          "x": 472,
+          "y": -224,
+          "g": -1,
+          "hh": "hh:p009"
+        },
+        {
+          "id": "p010",
+          "x": -472,
+          "y": 0,
+          "g": 0,
+          "hh": "hh:p003+p010"
+        }
+      ]
+    },
+    {
+      "centerId": "p009",
+      "displayedCount": 3,
+      "ordering": [
+        {
+          "g": 0,
+          "ids": ["p009"]
+        },
+        {
+          "g": 1,
+          "ids": ["p007", "p008"]
+        }
+      ],
+      "overlaps": 0,
+      "through": 0,
+      "ambiguous": 0,
+      "falseJ": 0,
+      "exterior": 0,
+      "crossings": 0,
+      "jumps": 0,
+      "missedJumps": 0,
+      "falseJumps": 0,
+      "bends": 2,
+      "routeLength": 172,
+      "bounds": {
+        "minX": 0,
+        "minY": 85,
+        "maxX": 118,
+        "maxY": 139,
+        "width": 118,
+        "height": 54
+      },
+      "nodes": [
+        {
+          "id": "p007",
+          "x": -118,
+          "y": 224,
+          "g": 1,
+          "hh": "hh:p007+p008"
+        },
+        {
+          "id": "p008",
+          "x": 118,
+          "y": 224,
+          "g": 1,
+          "hh": "hh:p007+p008"
+        },
+        {
+          "id": "p009",
+          "x": 0,
+          "y": 0,
+          "g": 0,
+          "hh": "hh:p009"
+        }
+      ]
+    },
+    {
+      "centerId": "p010",
+      "displayedCount": 10,
+      "ordering": [
+        {
+          "g": -1,
+          "ids": ["p001", "p002", "p005", "p004", "p009"]
+        },
+        {
+          "g": 0,
+          "ids": ["p010", "p003", "p006", "p007", "p008"]
+        }
+      ],
+      "overlaps": 0,
+      "through": 0,
+      "ambiguous": 0,
+      "falseJ": 0,
+      "exterior": 0,
+      "crossings": 1,
+      "jumps": 1,
+      "missedJumps": 0,
+      "falseJumps": 0,
+      "bends": 2,
+      "routeLength": 3998,
+      "bounds": {
+        "minX": -472,
+        "minY": -224,
+        "maxX": 472,
+        "maxY": -85,
+        "width": 944,
+        "height": 139
+      },
+      "nodes": [
+        {
+          "id": "p001",
+          "x": -472,
+          "y": -224,
+          "g": -1,
+          "hh": "hh:p001+p002"
+        },
+        {
+          "id": "p002",
+          "x": -236,
+          "y": -224,
+          "g": -1,
+          "hh": "hh:p001+p002"
+        },
+        {
+          "id": "p003",
+          "x": -236,
+          "y": 0,
+          "g": 0,
+          "hh": "hh:p003+p010"
+        },
+        {
+          "id": "p004",
+          "x": 236,
+          "y": -224,
+          "g": -1,
+          "hh": "hh:p004+p005"
+        },
+        {
+          "id": "p005",
+          "x": 0,
+          "y": -224,
+          "g": -1,
+          "hh": "hh:p004+p005"
+        },
+        {
+          "id": "p006",
+          "x": 0,
+          "y": 0,
+          "g": 0,
+          "hh": "hh:p006"
+        },
+        {
+          "id": "p007",
+          "x": 236,
+          "y": 0,
+          "g": 0,
+          "hh": "hh:p007+p008"
+        },
+        {
+          "id": "p008",
+          "x": 472,
+          "y": 0,
+          "g": 0,
+          "hh": "hh:p007+p008"
+        },
+        {
+          "id": "p009",
+          "x": 472,
+          "y": -224,
+          "g": -1,
+          "hh": "hh:p009"
+        },
+        {
+          "id": "p010",
+          "x": -472,
+          "y": 0,
+          "g": 0,
+          "hh": "hh:p003+p010"
+        }
+      ]
+    }
+  ]
+}
