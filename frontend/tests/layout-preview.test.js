@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { PrototypeFamilyTreeChart } from '../src/adapters/prototype-layout-adapter.js';
 import {
   LAYOUT_MODE_FAMILY_CHART,
+  LAYOUT_MODE_LEGACY,
   LAYOUT_MODE_PROTOTYPE,
   isPrototypeLayoutMode,
   resolveLayoutMode,
@@ -155,12 +156,13 @@ function createPreviewDom() {
   return { host, searchHost, viewport, links, cards, documentStub, listeners };
 }
 
-test('1. resolveLayoutMode defaults to Family Chart without query parameter', () => {
-  assert.equal(resolveLayoutMode(''), LAYOUT_MODE_FAMILY_CHART);
-  assert.equal(resolveLayoutMode('?foo=1'), LAYOUT_MODE_FAMILY_CHART);
+test('1. resolveLayoutMode defaults to prototype without query parameter', () => {
+  assert.equal(resolveLayoutMode(''), LAYOUT_MODE_PROTOTYPE);
+  assert.equal(resolveLayoutMode('?foo=1'), LAYOUT_MODE_PROTOTYPE);
   assert.equal(resolveLayoutMode('?layout=family-chart'), LAYOUT_MODE_FAMILY_CHART);
-  assert.equal(resolveLayoutMode('?layout=other'), LAYOUT_MODE_FAMILY_CHART);
-  assert.equal(isPrototypeLayoutMode(''), false);
+  assert.equal(resolveLayoutMode(`?layout=${LAYOUT_MODE_LEGACY}`), LAYOUT_MODE_FAMILY_CHART);
+  assert.equal(resolveLayoutMode('?layout=xxx'), LAYOUT_MODE_PROTOTYPE);
+  assert.equal(isPrototypeLayoutMode(''), true);
 });
 
 test('2. ?layout=prototype enables prototype renderer mode', () => {
@@ -170,7 +172,7 @@ test('2. ?layout=prototype enables prototype renderer mode', () => {
   assert.equal(isPrototypeLayoutMode('?layout=prototype'), true);
 });
 
-test('default factory wiring keeps Family Chart; prototype is opt-in', async () => {
+test('factory wiring keeps both prototype default and legacy Family Chart fallback', async () => {
   const [factory, main] = await Promise.all([
     source('src/adapters/create-tree-chart.js'),
     source('src/main.js'),
@@ -191,9 +193,9 @@ test('8. reload with query parameter keeps prototype mode', () => {
   assert.equal(resolveLayoutMode('?layout=prototype'), LAYOUT_MODE_PROTOTYPE);
 });
 
-test('9. without query parameter behavior stays on Family Chart path', async () => {
-  assert.equal(resolveLayoutMode(''), LAYOUT_MODE_FAMILY_CHART);
-  assert.equal(resolveLayoutMode('?draft=1'), LAYOUT_MODE_FAMILY_CHART);
+test('9. without query parameter behavior stays on prototype path', async () => {
+  assert.equal(resolveLayoutMode(''), LAYOUT_MODE_PROTOTYPE);
+  assert.equal(resolveLayoutMode('?draft=1'), LAYOUT_MODE_PROTOTYPE);
   const main = await source('src/main.js');
   assert.match(main, /createTreeChart\('#FamilyChart',\s*\{\s*layoutMode\s*\}\)/);
   assert.match(main, /const layoutMode = resolveLayoutMode\(\)/);

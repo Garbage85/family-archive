@@ -1,11 +1,12 @@
 /**
- * Experimental tree layout preview flag.
- * Only an explicit query parameter enables the household prototype renderer.
- * Default remains Family Chart (production).
+ * Tree layout mode selected by the URL.
+ * The household prototype is the default; Family Chart remains available as
+ * an explicit legacy fallback.
  */
 
 export const LAYOUT_MODE_FAMILY_CHART = 'family-chart';
 export const LAYOUT_MODE_PROTOTYPE = 'prototype';
+export const LAYOUT_MODE_LEGACY = 'legacy';
 
 /**
  * @param {string} [search]
@@ -17,9 +18,11 @@ export function resolveLayoutMode(
   const raw = String(search || '');
   const query = raw.startsWith('?') ? raw.slice(1) : raw;
   const params = new URLSearchParams(query);
-  return params.get('layout') === LAYOUT_MODE_PROTOTYPE
-    ? LAYOUT_MODE_PROTOTYPE
-    : LAYOUT_MODE_FAMILY_CHART;
+  const requested = params.get('layout');
+  if (requested === LAYOUT_MODE_LEGACY || requested === LAYOUT_MODE_FAMILY_CHART) {
+    return LAYOUT_MODE_FAMILY_CHART;
+  }
+  return LAYOUT_MODE_PROTOTYPE;
 }
 
 export function isPrototypeLayoutMode(search) {
