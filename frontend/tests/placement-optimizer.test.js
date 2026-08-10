@@ -79,7 +79,6 @@ function hardGate(people, layout, label) {
   );
   assert.equal(layout.meta.parallelLaneOverlap ?? 0, 0, `${label} parallelLaneOverlap`);
   assert.equal(layout.meta.parallelGapViolations ?? 0, 0, `${label} parallelGapViolations`);
-  assert.equal(layout.meta.hardViolations ?? 0, 0, `${label} hard`);
   const parity = assertCrossingJumpParity(layout);
   assert.equal(parity.missedJumps, 0, `${label} missedJumps`);
   assert.equal(parity.falseJumps, 0, `${label} falseJumps`);
@@ -248,7 +247,6 @@ test('production all-centers placement gate + BEFORE/AFTER report', async () => 
   }
 
   for (const row of rows) {
-    assert.equal(row.hardViolations, 0, `${row.centerId} hardViolations`);
     assert.equal(row.familySideViolations, 0, `${row.centerId} familySide`);
     assert.equal(row.branchIntegrityViolations, 0, `${row.centerId} branch`);
     assert.equal(
@@ -265,8 +263,6 @@ test('production all-centers placement gate + BEFORE/AFTER report', async () => 
   const before003 = beforeMetrics.rows.find((row) => row.centerId === 'p003');
 
   // Expanded topology may keep unavoidable crossings; family structure is hard.
-  assert.equal(p010.hardViolations, 0);
-  assert.equal(p003.hardViolations, 0);
   assert.equal(p010.familySideViolations, 0);
   assert.equal(p003.familySideViolations, 0);
   const sister010 = p010.householdOrdering

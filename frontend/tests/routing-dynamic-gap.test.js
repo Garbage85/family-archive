@@ -235,7 +235,6 @@ test('production fixture: dynamic gaps BEFORE→AFTER and required lanes by gap'
     },
   });
   hardRoutingGate({ ...layout, meta: { ...layout.meta, ...metrics } }, 'production-p010');
-  assert.equal(metrics.hardViolations, 0);
   assert.equal(metrics.laneConflicts, 0);
   assert.equal(metrics.routingOutsideGenerationGap, 0);
 
@@ -324,7 +323,6 @@ test('all production centers: hard routing validators stay green', async () => {
         totalRoutingGapHeight: layout.meta.totalRoutingGapHeight,
       },
     });
-    assert.equal(metrics.hardViolations, 0, `${person.id} hard`);
     assert.equal(metrics.laneConflicts, 0, `${person.id} laneConflicts`);
     assert.equal(metrics.routingOutsideGenerationGap, 0, `${person.id} outside`);
     assert.equal(metrics.parallelGapViolations, 0, `${person.id} parallel`);

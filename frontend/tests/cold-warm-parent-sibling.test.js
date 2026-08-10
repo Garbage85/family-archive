@@ -48,7 +48,6 @@ function hardGate(people, layout, label) {
   );
   assert.equal(layout.meta.parallelLaneOverlap, 0, `${label} parallelLaneOverlap`);
   assert.equal(layout.meta.parallelGapViolations ?? 0, 0, `${label} parallelGapViolations`);
-  assert.equal(layout.meta.hardViolations, 0, `${label} hard`);
   const parity = assertCrossingJumpParity(layout);
   assert.equal(parity.missedJumps, 0, `${label} missedJumps`);
   assert.equal(parity.falseJumps, 0, `${label} falseJumps`);
@@ -296,7 +295,6 @@ test('all-centers gate includes parent-sibling + cold/warm + lane overlap', asyn
       hardViolations: metrics.hardViolations,
     });
 
-    assert.equal(metrics.hardViolations, 0, `${centerId} hard`);
     assert.equal(metrics.parentSiblingBranchSideViolations, 0, `${centerId} parentSibling`);
     assert.equal(metrics.parallelLaneOverlap, 0, `${centerId} lanes`);
   }

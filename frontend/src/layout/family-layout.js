@@ -52,130 +52,60 @@ function childIds(person) {
   return unique(person?.rels?.children);
 }
 
-function closeUnderMarriage(visible, byId) {
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const id of [...visible]) {
-      for (const spouseId of spouseIds(byId.get(id))) {
-        if (byId.has(spouseId) && !visible.has(spouseId)) {
-          visible.add(spouseId);
-          changed = true;
-        }
-      }
-    }
-  }
-}
-
 /**
- * Visible set around center: spouse-symmetric family area.
+ * Build the complete connected component containing centerId.
  *
- * 1) Couple core = center ∪ direct spouses(center).
- * 2) For each core person: ancestry + progeny + siblings.
- * 3) Close under marriage (spouses of everyone already visible).
- * 4) Parent-sibling collateral (depth 1): for each displayed direct parent of
- *    the couple core, include that parent's direct siblings (aunts/uncles).
- *    Do NOT auto-include their children, cousins, or parents of their spouses.
- * 5) Close under marriage (spouses of newly added aunts/uncles).
- * 6) For each displayed sibling of the couple core, include direct parents
- *    of that sibling's displayed spouses (one parent level only).
- * 7) Close under marriage again for newly added parents.
- * 8) Deduplicate by id.
- *
- * Switching center between spouses keeps the same couple core, so the same
- * sibling / parent-sibling households are included.
+ * Parent, child and spouse relations are all graph edges for membership.
+ * Unknown targets are ignored, visited IDs make legacy cycles safe, and the
+ * sorted result keeps membership deterministic without mutating source data.
  */
-export function selectVisiblePeople(
-  people,
-  centerId,
-  { ancestryDepth = 8, progenyDepth = 8 } = {},
-) {
+export function buildFullFamilyGraph(people, centerId) {
   const byId = personMap(people);
   const center = byId.get(String(centerId));
   if (!center) return [];
 
-  const visible = new Set();
-
-  function walkParents(id, depth) {
-    if (depth <= 0) return;
-    for (const parentId of parentIds(byId.get(id))) {
-      if (!byId.has(parentId) || visible.has(parentId)) continue;
-      visible.add(parentId);
-      walkParents(parentId, depth - 1);
+  // Treat every recorded relation as an undirected membership edge. Building
+  // reciprocal adjacency here preserves one-sided legacy links without
+  // changing the source people or their relation arrays.
+  const adjacency = new Map([...byId.keys()].map((id) => [id, new Set()]));
+  for (const person of byId.values()) {
+    const id = String(person.id);
+    for (const neighborId of unique([
+      ...parentIds(person),
+      ...childIds(person),
+      ...spouseIds(person),
+    ])) {
+      if (!byId.has(neighborId)) continue;
+      adjacency.get(id).add(neighborId);
+      adjacency.get(neighborId).add(id);
     }
   }
 
-  function walkChildren(id, depth) {
-    if (depth <= 0) return;
-    for (const childId of childIds(byId.get(id))) {
-      if (!byId.has(childId) || visible.has(childId)) continue;
-      visible.add(childId);
-      walkChildren(childId, depth - 1);
+  const component = new Set([String(center.id)]);
+  const queue = [String(center.id)];
+  while (queue.length) {
+    const id = queue.shift();
+    for (const neighborId of adjacency.get(id) || []) {
+      if (component.has(neighborId)) continue;
+      component.add(neighborId);
+      queue.push(neighborId);
     }
   }
 
-  function addPersonalFamilyArea(seedId) {
-    const seed = String(seedId);
-    if (!byId.has(seed)) return;
-    visible.add(seed);
-    walkParents(seed, ancestryDepth);
-    walkChildren(seed, progenyDepth);
-    for (const parentId of parentIds(byId.get(seed))) {
-      for (const siblingId of childIds(byId.get(parentId))) {
-        if (byId.has(siblingId)) visible.add(siblingId);
-      }
-    }
-  }
-
-  const coupleCore = unique([String(centerId), ...spouseIds(center)]);
-  for (const id of coupleCore) addPersonalFamilyArea(id);
-  closeUnderMarriage(visible, byId);
-
-  // Parent-sibling collateral (depth 1): siblings of direct parents of couple core.
-  for (const coreId of coupleCore) {
-    for (const parentId of parentIds(byId.get(coreId))) {
-      if (!visible.has(parentId)) continue;
-      for (const grandparentId of parentIds(byId.get(parentId))) {
-        for (const auntUncleId of childIds(byId.get(grandparentId))) {
-          if (auntUncleId === parentId) continue;
-          if (byId.has(auntUncleId)) visible.add(auntUncleId);
-        }
-      }
-    }
-  }
-  closeUnderMarriage(visible, byId);
-
-  // Sibling-spouse direct parents (one level): e.g. p010 → sibling p007 → spouse p008 → father p009.
-  const coupleCoreSet = new Set(coupleCore);
-  const siblingsOfCore = new Set();
-  for (const coreId of coupleCore) {
-    for (const parentId of parentIds(byId.get(coreId))) {
-      for (const siblingId of childIds(byId.get(parentId))) {
-        if (!coupleCoreSet.has(siblingId) && visible.has(siblingId)) {
-          siblingsOfCore.add(siblingId);
-        }
-      }
-    }
-  }
-  for (const siblingId of siblingsOfCore) {
-    for (const spouseId of spouseIds(byId.get(siblingId))) {
-      if (!visible.has(spouseId)) continue;
-      for (const parentId of parentIds(byId.get(spouseId))) {
-        if (byId.has(parentId)) visible.add(parentId);
-      }
-    }
-  }
-  closeUnderMarriage(visible, byId);
-
-  return [...visible]
+  return [...component]
     .sort((left, right) => left.localeCompare(right))
     .map((id) => byId.get(id))
     .filter(Boolean);
 }
 
+/** The visible graph is currently the full component; filtering is deferred. */
+export function selectVisiblePeople(people, centerId) {
+  return buildFullFamilyGraph(people, centerId);
+}
+
 /**
  * Generation indices relative to center. Parent/child and spouse edges are
- * traversed so in-laws from the couple-symmetric visible set stay aligned.
+ * traversed so every member of the full visible component stays aligned.
  */
 function assignGenerations(people, centerId) {
   const byId = personMap(people);
@@ -263,15 +193,20 @@ function buildDraftLinks(visible, nodeById) {
         points: [],
       });
     }
-    for (const parentId of parentIds(person)) {
+    const parentChildEdges = [
+      ...parentIds(person).map((parentId) => [parentId, person.id]),
+      ...childIds(person).map((childId) => [person.id, childId]),
+    ];
+    for (const [parentId, childId] of parentChildEdges) {
       if (!nodeById.has(parentId)) continue;
-      const key = `${parentId}->${person.id}`;
+      if (!nodeById.has(childId)) continue;
+      const key = `${parentId}->${childId}`;
       if (parentSeen.has(key)) continue;
       parentSeen.add(key);
       draftLinks.push({
         type: 'parent-child',
         source: parentId,
-        target: person.id,
+        target: childId,
         points: [],
       });
     }
@@ -398,8 +333,6 @@ export function layoutFamilyTree(
     orientation = 'vertical',
     nodeSeparation = 236,
     levelSeparation = 224,
-    ancestryDepth = 8,
-    progenyDepth = 8,
     returnCandidates = false,
     // previousLayout is accepted for optional stability *reporting* only.
     // Canonical geometry/routing must ignore it so cold === warm.
@@ -410,7 +343,9 @@ export function layoutFamilyTree(
     return { nodes: [], links: [], households: [], meta: { centerId, orientation } };
   }
 
-  const visible = selectVisiblePeople(people, centerId, { ancestryDepth, progenyDepth });
+  const fullGraph = buildFullFamilyGraph(people, centerId);
+  const visibleGraph = fullGraph;
+  const visible = visibleGraph;
   const generation = assignGenerations(visible, centerId);
   const households = buildHouseholds(visible);
   const peopleById = personMap(visible);
@@ -611,6 +546,8 @@ export function layoutFamilyTree(
       nodeSeparation,
       levelSeparation,
       visibleCount: nodes.length,
+      fullGraphCount: fullGraph.length,
+      visibleGraphCount: visibleGraph.length,
       inputCount: people.length,
       spouseSide: winner.candidate.spouseSide,
       candidateId: winner.candidate.candidateId,
