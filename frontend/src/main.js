@@ -21,7 +21,7 @@ import {
   resolveCenterPersonId,
   selectCenterPersonId,
 } from './kinship-state.js';
-import { isPrototypeLayoutMode, resolveLayoutMode } from './layout/layout-mode.js';
+import { resolveLayoutMode } from './layout/layout-mode.js';
 import { applyPersonAction, canEditPeople, persistTreeChanges } from './person-editor.js';
 import { formatPersonName } from './person-card-formatters.js';
 import { preparePersonSidebarData } from './person-sidebar-model.js';
@@ -238,20 +238,13 @@ async function enterApplication(authUser) {
   configureRoleUi();
   mountTree();
   updateSaveButton();
-  if (isPrototypeLayoutMode()) {
-    setStatus(
-      'Экспериментальный layout (?layout=prototype). Координаты не сохраняются в trees.data.',
-      'warning',
-    );
-  } else {
-    setStatus(
-      user.role === 'viewer'
-        ? 'Режим просмотра.'
-        : user.role === 'member'
-          ? 'Изменения отправляются администратору.'
-          : 'Нажмите на человека, чтобы открыть карточку.',
-    );
-  }
+  setStatus(
+    user.role === 'viewer'
+      ? 'Режим просмотра.'
+      : user.role === 'member'
+        ? 'Изменения отправляются администратору.'
+        : 'Нажмите на человека, чтобы открыть карточку.',
+  );
   if (user.role === 'admin') await refreshProposals();
 }
 

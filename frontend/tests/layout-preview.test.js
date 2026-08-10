@@ -183,6 +183,7 @@ test('factory wiring keeps both prototype default and legacy Family Chart fallba
   assert.match(factory, /mode === LAYOUT_MODE_PROTOTYPE/);
   assert.match(main, /createTreeChart\('#FamilyChart'/);
   assert.match(main, /resolveLayoutMode\(/);
+  assert.doesNotMatch(main, /Экспериментальный layout|Координаты не сохраняются/);
   assert.doesNotMatch(main, /new FamilyTreeChart\(/);
   assert.doesNotMatch(main, /new PrototypeFamilyTreeChart\(/);
 });
@@ -322,9 +323,11 @@ test('prototype adapter reuses Family Archive cards with standard gender shell c
   assert.match(adapter, /card-female/);
   assert.match(adapter, /card-genderless/);
   assert.match(adapter, /card-main/);
+  assert.doesNotMatch(adapter, /Эксперимент|prototype-layout-badge/);
   assert.match(css, /--male-color:\s*rgb\(120,\s*159,\s*172\)/);
   assert.match(css, /--female-color:\s*rgb\(196,\s*138,\s*146\)/);
   assert.match(css, /\.card-male \.card-inner/);
+  assert.doesNotMatch(css, /prototype-layout-badge|Experimental household layout/);
   // Layout engine stays ours — no family-chart JS/CSS module import.
   assert.doesNotMatch(adapter, /from ['"]family-chart['"]|family-chart\/styles/);
   assert.doesNotMatch(adapter, /saveTree|trees\.data\s*=/);

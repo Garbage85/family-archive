@@ -108,7 +108,6 @@ export class PrototypeFamilyTreeChart {
 
     this._host.innerHTML = `
       <div class="prototype-layout-root">
-        <div class="prototype-layout-badge" aria-live="polite">Эксперимент: prototype layout</div>
         <div class="prototype-layout-viewport" data-prototype-viewport>
           <svg class="prototype-layout-links" data-prototype-links aria-hidden="true"></svg>
           <div class="prototype-layout-cards" data-prototype-cards></div>
