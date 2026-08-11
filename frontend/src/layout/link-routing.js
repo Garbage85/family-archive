@@ -40,6 +40,7 @@ export const LINE_JUMP_RADIUS = 10;
 const LANE_GAP = 16;
 const BUS_INSET = 10;
 const EPS = 0.51;
+export const MIN_BUS_CARD_GAP = 16;
 
 function half(node, axis) {
   if (axis === 'x') return (node.width ?? 184) / 2;
@@ -175,6 +176,157 @@ export function assignFamilyLanes(families, isHorizontal = false) {
     family.laneOffset = family.laneIndex * LANE_GAP;
   }
   return families;
+}
+
+/**
+ * Find only true horizontal family-bus collisions on the final geometry.
+ * Earlier parallel-lane demand also considers stems and child rails; moving a
+ * parent bus for those crossings can change jump topology. This narrower pass
+ * handles the semantic defect directly: independent buses with overlapping X
+ * spans and the same Y receive deterministic, equally spaced offsets.
+ */
+function overlappingHorizontalBusOffsets(links, gap, nodesById = null, isHorizontal = false) {
+  // In horizontal tree orientation parent buses run vertically; horizontal
+  // segments here are card-row junctions, not the buses covered by this pass.
+  if (isHorizontal) return new Map();
+  const buses = new Map();
+  // Group non-terminal horizontal parent-child segments by logical family key
+  // and retain their actual final intervals.
+  for (const link of links || []) {
+    if (link.type !== 'parent-child' || !link.familyKey) continue;
+    const points = link.points || [];
+    const target = nodesById?.get(String(link.target));
+    for (let index = 0; index < points.length - 1; index += 1) {
+      const [a, b] = [points[index], points[index + 1]];
+      if (Math.abs(a[1] - b[1]) >= EPS || Math.abs(a[0] - b[0]) <= EPS) continue;
+      if (target && Math.abs(a[1] - target.y) < EPS) continue;
+      const y = a[1];
+      if (!buses.has(link.familyKey)) buses.set(link.familyKey, []);
+      const cardTop = target ? target.y - (target.height ?? 170) / 2 : null;
+      const cardBottom = target ? target.y + (target.height ?? 170) / 2 : null;
+      buses.get(link.familyKey).push({
+        y,
+        x0: Math.min(a[0], b[0]),
+        x1: Math.max(a[0], b[0]),
+        cardTop,
+        cardBottom,
+      });
+    }
+  }
+
+  const keys = [...buses.keys()].sort();
+  const conflicts = new Map(keys.map((key) => [key, new Set()]));
+  for (let i = 0; i < keys.length; i += 1) {
+    for (let j = i + 1; j < keys.length; j += 1) {
+      const left = buses.get(keys[i]);
+      const right = buses.get(keys[j]);
+      const conflict = left.some((a) =>
+        right.some(
+          (b) =>
+            Math.abs(a.y - b.y) < gap - EPS && Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0) > EPS,
+        ),
+      );
+      if (conflict) {
+        conflicts.get(keys[i]).add(keys[j]);
+        conflicts.get(keys[j]).add(keys[i]);
+      }
+    }
+  }
+
+  const offsets = new Map();
+  const visited = new Set();
+  for (const key of keys) {
+    if (visited.has(key)) continue;
+    if (!conflicts.get(key)?.size) {
+      visited.add(key);
+      const record = buses.get(key)[0];
+      const natural = record.y;
+      let offset = 0;
+      if (record.cardTop != null && record.cardBottom != null) {
+        if (natural <= record.cardTop)
+          offset = Math.min(0, record.cardTop - MIN_BUS_CARD_GAP - natural);
+        else if (natural >= record.cardBottom)
+          offset = Math.max(0, record.cardBottom + MIN_BUS_CARD_GAP - natural);
+        else offset = record.cardTop - MIN_BUS_CARD_GAP - natural;
+      }
+      offsets.set(key, offset);
+      continue;
+    }
+    const component = [];
+    const queue = [key];
+    visited.add(key);
+    while (queue.length) {
+      const current = queue.shift();
+      component.push(current);
+      for (const neighbor of conflicts.get(current) || []) {
+        if (visited.has(neighbor)) continue;
+        visited.add(neighbor);
+        queue.push(neighbor);
+      }
+    }
+    component.sort();
+    const centered = (component.length - 1) / 2;
+    const base =
+      component.reduce((sum, familyKey) => sum + buses.get(familyKey)[0].y, 0) / component.length;
+    component.forEach((familyKey, index) => {
+      const natural = buses.get(familyKey)[0].y;
+      offsets.set(familyKey, base + (index - centered) * gap - natural);
+    });
+
+    // Keep each bus outside the actual card bounds. For the normal vertical
+    // tree case buses are above child cards, so moving upward is preferred;
+    // the opposite constraint handles a bus below a card as well.
+    for (const familyKey of component) {
+      const records = buses.get(familyKey);
+      const natural = records[0].y;
+      let minOffset = Number.NEGATIVE_INFINITY;
+      let maxOffset = Number.POSITIVE_INFINITY;
+      for (const record of records) {
+        if (record.cardTop == null || record.cardBottom == null) continue;
+        const current = natural + (offsets.get(familyKey) || 0);
+        if (current <= record.cardTop) {
+          maxOffset = Math.min(maxOffset, record.cardTop - MIN_BUS_CARD_GAP - natural);
+        } else if (current >= record.cardBottom) {
+          minOffset = Math.max(minOffset, record.cardBottom + MIN_BUS_CARD_GAP - natural);
+        } else {
+          maxOffset = Math.min(maxOffset, record.cardTop - MIN_BUS_CARD_GAP - natural);
+        }
+      }
+      const desired = offsets.get(familyKey) || 0;
+      offsets.set(familyKey, Math.min(maxOffset, Math.max(minOffset, desired)));
+    }
+
+    // Card clearance can move one bus farther than its peers. Re-pack only
+    // the conflicting component, using the same deterministic gap constraint.
+    for (let pass = 0; pass < component.length * component.length; pass += 1) {
+      let changed = false;
+      for (let leftIndex = 0; leftIndex < component.length; leftIndex += 1) {
+        for (let rightIndex = leftIndex + 1; rightIndex < component.length; rightIndex += 1) {
+          const leftKey = component[leftIndex];
+          const rightKey = component[rightIndex];
+          const left = buses.get(leftKey)[0];
+          const right = buses.get(rightKey)[0];
+          if (
+            Math.min(...buses.get(leftKey).map((record) => record.x1)) <=
+              Math.max(...buses.get(rightKey).map((record) => record.x0)) + EPS ||
+            Math.min(...buses.get(rightKey).map((record) => record.x1)) <=
+              Math.max(...buses.get(leftKey).map((record) => record.x0)) + EPS
+          ) {
+            continue;
+          }
+          const leftY = left.y + (offsets.get(leftKey) || 0);
+          const rightY = right.y + (offsets.get(rightKey) || 0);
+          if (Math.abs(leftY - rightY) + EPS >= gap) continue;
+          const deficit = gap - Math.abs(leftY - rightY);
+          if (leftY <= rightY) offsets.set(leftKey, (offsets.get(leftKey) || 0) - deficit);
+          else offsets.set(rightKey, (offsets.get(rightKey) || 0) - deficit);
+          changed = true;
+        }
+      }
+      if (!changed) break;
+    }
+  }
+  return offsets;
 }
 
 function naturalVerticalBusY(family) {
@@ -786,8 +938,6 @@ function routeLayoutLinksOnce(
   let routed = buildRoutedLinks(layout, families, isHorizontal);
 
   // Pass 2: separate near-parallel unrelated corridors.
-  // Anchored family stems are immovable obstacles — only lower-priority
-  // routes may receive offsets. Never apply stemOffset to parent families.
   if (applyParallelLanes) {
     const nodesById = new Map((layout.nodes || []).map((node) => [String(node.id), node]));
     const { offsetXByFamily, offsetYByFamily } = assignParallelLanes(routed, {
@@ -795,8 +945,8 @@ function routeLayoutLinksOnce(
       nodesById,
     });
 
-    // Drop any offsets that would shift an anchored family stem. Parent
-    // families always keep stemOffset = 0 (hard semantic rule).
+    // Preserve the existing rule that anchored family stems are immovable.
+    // The targeted bus check below handles overlapping horizontal buses.
     for (const family of families) {
       family.stemOffset = 0;
       offsetXByFamily.delete(family.familyKey);
@@ -805,8 +955,6 @@ function routeLayoutLinksOnce(
 
     let changed = false;
     if (!routingPlan && (offsetXByFamily.size || offsetYByFamily.size)) {
-      // Legacy path only: pack movable horizontal buses into fixed gaps.
-      // Structured routingPlan already owns bus lanes.
       const familyGapMeta = families.map((family) =>
         isHorizontal
           ? {
@@ -826,14 +974,29 @@ function routeLayoutLinksOnce(
       if (fittedBus.size) {
         fittedBus = fitBusOffsetsToGenerationGaps(familyGapMeta, fittedBus, parallelGap);
         for (const family of families) {
-          // Still never shift the anchored stem; busOffset alone is legacy.
           family.busOffset = fittedBus.get(family.familyKey) || 0;
           if (family.busOffset) changed = true;
         }
       }
     }
-
     if (changed) routed = buildRoutedLinks(layout, families, isHorizontal);
+
+    // Final geometry can expose a bus collision that provisional demand did
+    // not see. Keep the old H/V routing behavior, then separate only the
+    // overlapping horizontal family buses.
+    const busOffsets = overlappingHorizontalBusOffsets(
+      routed,
+      parallelGap,
+      new Map((layout.nodes || []).map((node) => [String(node.id), node])),
+      isHorizontal,
+    );
+    if (busOffsets.size) {
+      for (const family of families) {
+        family.stemOffset = 0;
+        family.busOffset = busOffsets.get(family.familyKey) || 0;
+      }
+      routed = buildRoutedLinks(layout, families, isHorizontal);
+    }
   }
 
   // Pass 3: line-jumps only for remaining true H×V crossings.

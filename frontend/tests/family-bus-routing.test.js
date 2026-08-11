@@ -13,9 +13,12 @@ import {
 import {
   findFalseJunctionsBetweenUnrelatedFamilies,
   findUnrelatedCrossingSites,
+  MIN_BUS_CARD_GAP,
+  routeLayoutLinks,
   uniqueRenderedJumpPoints,
   routingMetrics,
 } from '../src/layout/link-routing.js';
+import { MIN_PARALLEL_GAP } from '../src/layout/parallel-lanes.js';
 
 const productionFixturePath = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -94,6 +97,77 @@ test('production-shaped independent parental buses remain deterministic after la
     layout.nodes.map(({ id, x, y }) => ({ id, x, y })),
     repeat.nodes.map(({ id, x, y }) => ({ id, x, y })),
   );
+});
+
+test('final bus routing separates overlapping independent horizontal segments', () => {
+  const node = (id, x, y) => ({ id, x, y, width: 20, height: 20 });
+  const layout = {
+    nodes: [
+      node('a-parent', 0, 0),
+      node('a-child-1', 120, 300),
+      node('a-child-2', 180, 300),
+      node('b-parent', 60, 0),
+      node('b-child', 180, 300),
+      node('d-parent', 100, 0),
+      node('d-child', 220, 300),
+      node('c-parent', 400, 0),
+      node('c-child', 520, 300),
+    ],
+    links: [
+      { type: 'parent-child', source: 'a-parent', target: 'a-child-1' },
+      { type: 'parent-child', source: 'a-parent', target: 'a-child-2' },
+      { type: 'parent-child', source: 'b-parent', target: 'b-child' },
+      { type: 'parent-child', source: 'd-parent', target: 'd-child' },
+      { type: 'parent-child', source: 'c-parent', target: 'c-child' },
+    ],
+  };
+  const routingPlan = {
+    laneByFamilyKey: new Map([
+      ['fam:a-parent', { axis: 285, laneIndex: 0 }],
+      ['fam:b-parent', { axis: 285, laneIndex: 0 }],
+      ['fam:d-parent', { axis: 285, laneIndex: 0 }],
+      ['fam:c-parent', { axis: 150, laneIndex: 0 }],
+    ]),
+  };
+  const links = routeLayoutLinks(layout, {
+    orientation: 'vertical',
+    routingPlan,
+    optimizeStemAwareLanes: false,
+  });
+  const buses = new Map();
+  for (const link of links) {
+    for (let index = 0; index < link.points.length - 1; index += 1) {
+      const [a, b] = [link.points[index], link.points[index + 1]];
+      if (Math.abs(a[1] - b[1]) < 0.51 && Math.abs(a[0] - b[0]) > 0.51) {
+        buses.set(link.familyKey, { y: a[1], x0: Math.min(a[0], b[0]), x1: Math.max(a[0], b[0]) });
+      }
+    }
+  }
+  for (const left of ['fam:a-parent', 'fam:b-parent', 'fam:d-parent']) {
+    for (const right of ['fam:a-parent', 'fam:b-parent', 'fam:d-parent']) {
+      if (left >= right) continue;
+      assert.ok(Math.abs(buses.get(left).y - buses.get(right).y) >= MIN_PARALLEL_GAP);
+    }
+  }
+  for (const familyKey of ['fam:a-parent', 'fam:b-parent', 'fam:d-parent', 'fam:c-parent']) {
+    assert.ok(290 - buses.get(familyKey).y >= MIN_BUS_CARD_GAP);
+  }
+  assert.equal(buses.get('fam:c-parent').y, 150);
+  assert.equal(
+    new Set(
+      links
+        .filter((link) => link.familyKey === 'fam:a-parent')
+        .flatMap((link) =>
+          link.points
+            .slice(0, -1)
+            .map((point, index) => [point, link.points[index + 1]])
+            .filter(([a, b]) => Math.abs(a[1] - b[1]) < 0.51 && Math.abs(a[0] - b[0]) > 0.51)
+            .map(([a]) => a[1]),
+        ),
+    ).size,
+    1,
+  );
+  assert.ok(Number.isFinite(buses.get('fam:c-parent').y));
 });
 
 test('anonymized production snapshot remains routing-safe after the fix', async () => {
