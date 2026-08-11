@@ -12,6 +12,7 @@
 
 import { optimizeStemAwareRoutingPlan, routeLayoutLinks } from './link-routing.js';
 import {
+  buildAdjacentHouseholdOrderCandidates,
   buildPlacementCandidates,
   compareCandidateScores,
   extractPlacementSnapshot,
@@ -34,6 +35,42 @@ import {
 
 function unique(ids) {
   return [...new Set((ids || []).map(String).filter(Boolean))];
+}
+
+// The bounded local search is deterministic for a given placement snapshot.
+// Keep only the selected adjacent-swap signature so repeated cold renders
+// (for example viewport redraws) do not re-run every routing candidate.
+const localOrderDecisionCache = new Map();
+
+function localOrderCacheKey(candidate, centerId, isHorizontal) {
+  const households = (candidate?.households || [])
+    .map((household) => [
+      household.id,
+      household.generation ?? 0,
+      household.side || '',
+      Math.round((household.x0 || 0) * 1000) / 1000,
+      Math.round((household.x1 || 0) * 1000) / 1000,
+      [...(household.memberIds || [])].map(String).sort(),
+    ])
+    .sort((left, right) => String(left[0]).localeCompare(String(right[0])));
+  const positions = [...(candidate?.nodePositions || new Map())]
+    .map(([id, position]) => [
+      String(id),
+      Math.round((position?.x || 0) * 1000) / 1000,
+      Math.round((position?.y || 0) * 1000) / 1000,
+    ])
+    .sort(([left], [right]) => left.localeCompare(right));
+  return JSON.stringify([String(centerId), isHorizontal, households, positions]);
+}
+
+function sameGenerationOrders(left, right) {
+  const generations = new Set([...Object.keys(left || {}), ...Object.keys(right || {})]);
+  for (const generation of generations) {
+    if (JSON.stringify(left?.[generation] || []) !== JSON.stringify(right?.[generation] || [])) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function personMap(people) {
@@ -218,6 +255,34 @@ function buildDraftLinks(visible, nodeById) {
     return leftKey.localeCompare(rightKey);
   });
   return draftLinks;
+}
+
+function localOrderCost(metrics, candidate) {
+  const interleave =
+    (metrics.childrenBlockInterleavingViolations || 0) + (metrics.familyInterleave || 0);
+  const orderKey = Object.values(candidate.generationOrders || {})
+    .flat()
+    .map(String)
+    .join('|');
+  return [
+    metrics.hardViolations || 0,
+    metrics.crossings || 0,
+    metrics.jumps || 0,
+    interleave,
+    candidate.orderingDisplacement || 0,
+    metrics.width || 0,
+    metrics.routeLength || 0,
+    orderKey,
+  ];
+}
+
+function compareLocalOrderCosts(left, right) {
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] === right[index]) continue;
+    if (typeof left[index] === 'string') return left[index].localeCompare(right[index]);
+    return left[index] - right[index];
+  }
+  return 0;
 }
 
 /**
@@ -491,7 +556,7 @@ export function layoutFamilyTree(
     ),
   );
 
-  const winner = scored[0];
+  let winner = scored[0];
   const fullRoutingEvaluations = scored.length;
   const candidateCount = candidates.length;
 
@@ -521,6 +586,100 @@ export function layoutFamilyTree(
   });
   winner.metrics.spouseSide = winner.candidate.spouseSide;
   winner.metrics.candidateId = winner.candidate.candidateId;
+
+  // CENTER-LOCAL PHASE 2B — consider only the baseline household order and
+  // one adjacent swap per generation. The full graph membership is unchanged;
+  // only this center's cross-axis geometry may improve.
+  let acceptedLocalOrderSwaps = 0;
+  let localOrderCandidatesEvaluated = 0;
+  const localCandidates = buildAdjacentHouseholdOrderCandidates(winner.candidate, {
+    centerId,
+    isHorizontal,
+    cardCross,
+    gap,
+    // Keep large synthetic/stress trees responsive. Production fixture has
+    // eleven households and retains the complete bounded local search.
+    limit: winner.candidate.households.length > 12 ? 2 : 11,
+  });
+  const baselineLocalCost = localOrderCost(winner.metrics, winner.candidate);
+  let bestLocal = { entry: winner, cost: baselineLocalCost };
+  const localOrderKey = localOrderCacheKey(winner.candidate, centerId, isHorizontal);
+  const cachedDecision = localOrderDecisionCache.get(localOrderKey);
+  const candidatesToEvaluate = cachedDecision
+    ? cachedDecision.generationOrders
+      ? localCandidates.filter((candidate) =>
+          sameGenerationOrders(candidate.generationOrders, cachedDecision.generationOrders),
+        )
+      : []
+    : localCandidates;
+  for (const candidate of candidatesToEvaluate) {
+    const layout = materializeCandidateLayout({
+      visible,
+      generation,
+      candidate,
+      cardWidth,
+      cardHeight,
+      orientation,
+      optimizeStemAwareLanes: true,
+    });
+    layout.meta = {
+      centerId: String(centerId),
+      orientation,
+      spouseSide: candidate.spouseSide,
+      branchOrderByGeneration: candidate.branchOrderByGeneration,
+      requiredLaneCountByGap: layout.routingPlan?.requiredLaneCountByGap || {},
+      routingGapHeightByGap: layout.routingPlan?.routingGapHeightByGap || {},
+      maxLaneCount: layout.routingPlan?.maxLaneCount || 0,
+      totalLaneCount: layout.routingPlan?.totalLaneCount || 0,
+      totalRoutingGapHeight: layout.routingPlan?.totalRoutingGapHeight || 0,
+      generationBaselines: layout.baselines || {},
+      routingConstants: { ROUTING_LANE_GAP, ROUTING_EDGE_PADDING },
+      mirroredHouseholds: candidate.orientationReport?.mirroredHouseholds || 0,
+      householdOrientationChanges: candidate.orientationReport?.householdOrientationChanges || 0,
+      orientationOscillations: candidate.orientationReport?.orientationOscillations || 0,
+      orientationCostBefore: candidate.orientationReport?.orientationCostBefore || 0,
+      orientationCostAfter: candidate.orientationReport?.orientationCostAfter || 0,
+      householdOrientationById: candidate.orientationReport?.householdOrientationById || {},
+    };
+    const metrics = collectPlacementMetrics(people, layout, {
+      expectedVisibleIds,
+      households: layout.households,
+      canonicalOrderKey,
+      spouseSide: candidate.spouseSide,
+      householdToBranch: candidate.householdToBranch,
+      routingPlan: layout.routingPlan,
+    });
+    metrics.spouseSide = candidate.spouseSide;
+    metrics.candidateId = candidate.candidateId;
+    localOrderCandidatesEvaluated += 1;
+    const cost = localOrderCost(metrics, candidate);
+    const baseCrossings = winner.metrics.crossings || 0;
+    const baseJumps = winner.metrics.jumps || 0;
+    const crossingReduction = baseCrossings - (metrics.crossings || 0);
+    const jumpReduction = baseJumps - (metrics.jumps || 0);
+    // Do not trade a large visual reorder for a one-event cosmetic win.
+    if (
+      crossingReduction <= 1 &&
+      jumpReduction <= 1 &&
+      (candidate.orderingDisplacement || 0) > cardCross * 2
+    ) {
+      continue;
+    }
+    if (compareLocalOrderCosts(cost, bestLocal.cost) < 0) {
+      bestLocal = { entry: { candidate, layout, metrics }, cost };
+    }
+  }
+  localOrderDecisionCache.set(localOrderKey, {
+    generationOrders:
+      bestLocal.entry === winner ? null : bestLocal.entry.candidate.generationOrders,
+  });
+  if (localOrderDecisionCache.size > 256) {
+    localOrderDecisionCache.delete(localOrderDecisionCache.keys().next().value);
+  }
+  if (bestLocal.entry !== winner) {
+    winner = bestLocal.entry;
+    acceptedLocalOrderSwaps = winner.candidate.orderingSwapCount || 0;
+  }
   const nodes = winner.layout.nodes;
   const links = winner.layout.links;
   const placedHouseholds = winner.layout.households.map((household) => ({
@@ -646,6 +805,9 @@ export function layoutFamilyTree(
       coldWarmSignatureMismatch: 0,
       candidateCount,
       fullRoutingEvaluations,
+      localOrderCandidatesEvaluated,
+      acceptedLocalOrderSwaps,
+      orderingDisplacement: winner.candidate.orderingDisplacement || 0,
       stage1Skipped: Math.max(0, candidateCount - fullRoutingEvaluations),
     },
   };

@@ -1232,6 +1232,147 @@ export function materializePlacement({
 }
 
 /**
+ * Build a bounded set of center-local household-order alternatives.
+ *
+ * Only the baseline order and one adjacent swap per generation are emitted.
+ * Household member order, branch metadata and generation assignment remain
+ * untouched; re-packing moves a whole household as one atomic block.
+ */
+export function buildAdjacentHouseholdOrderCandidates(
+  candidate,
+  { centerId = null, isHorizontal = false, gap = 52, limit = 128 } = {},
+) {
+  const sourceHouseholds = (candidate?.households || []).map((household) => ({
+    ...household,
+    memberIds: [...(household.memberIds || [])],
+  }));
+  if (sourceHouseholds.length < 2) return [];
+
+  const byGeneration = new Map();
+  for (const household of sourceHouseholds) {
+    const generation = household.generation ?? 0;
+    if (!byGeneration.has(generation)) byGeneration.set(generation, []);
+    byGeneration.get(generation).push(household);
+  }
+  const rows = [...byGeneration.entries()]
+    .sort(([left], [right]) => left - right)
+    .map(([generation, households]) => {
+      const ordered = households.slice().sort((left, right) => left.x0 - right.x0);
+      const choices = [ordered];
+      for (let index = 0; index < ordered.length - 1; index += 1) {
+        // Crossing family sides is a hard structural violation. Restrict the
+        // local search to swaps that keep the side boundary intact.
+        if (ordered[index].side !== ordered[index + 1].side) continue;
+        const swapped = ordered.slice();
+        [swapped[index], swapped[index + 1]] = [swapped[index + 1], swapped[index]];
+        choices.push(swapped);
+      }
+      return { generation, choices };
+    });
+
+  const alternatives = [];
+  const visit = (index, selected) => {
+    if (alternatives.length >= limit) return;
+    if (index >= rows.length) {
+      const orders = new Map(
+        selected.map(({ generation, households }) => [generation, households]),
+      );
+      const orderingSwapCount = selected.reduce((count, row) => {
+        const baseline = rows.find((item) => item.generation === row.generation)?.choices[0] || [];
+        const changed = row.households.some(
+          (household, itemIndex) => household.id !== baseline[itemIndex]?.id,
+        );
+        return count + (changed ? 1 : 0);
+      }, 0);
+      const nodePositions = new Map(
+        [...(candidate.nodePositions || new Map())].map(([id, position]) => [id, { ...position }]),
+      );
+      const households = [];
+      let displacement = 0;
+
+      for (const { generation, choices } of rows) {
+        const ordered = orders.get(generation) || choices[0];
+        let cursor = Math.min(...ordered.map((household) => household.x0));
+        const deltas = new Map();
+        for (const household of ordered) {
+          const width = household.x1 - household.x0;
+          const delta = cursor - household.x0;
+          deltas.set(household.id, delta);
+          cursor += width + gap;
+        }
+
+        // Preserve the selected person's baseline cross-axis focus while the
+        // row is re-packed around a swapped household block.
+        const centerHousehold = ordered.find((household) =>
+          household.memberIds.includes(String(centerId)),
+        );
+        if (centerHousehold) {
+          const member = centerHousehold.memberIds.find((id) => id === String(centerId));
+          const oldPosition = candidate.nodePositions?.get(member);
+          const newPosition =
+            oldPosition && deltas.get(centerHousehold.id) != null
+              ? oldPosition[isHorizontal ? 'y' : 'x'] + deltas.get(centerHousehold.id)
+              : null;
+          if (
+            Number.isFinite(newPosition) &&
+            Number.isFinite(oldPosition?.[isHorizontal ? 'y' : 'x'])
+          ) {
+            const focusDelta = oldPosition[isHorizontal ? 'y' : 'x'] - newPosition;
+            for (const household of ordered)
+              deltas.set(household.id, deltas.get(household.id) + focusDelta);
+          }
+        }
+
+        for (const household of ordered) {
+          const delta = deltas.get(household.id) || 0;
+          const shifted = {
+            ...household,
+            x0: household.x0 + delta,
+            x1: household.x1 + delta,
+          };
+          households.push(shifted);
+          for (const memberId of household.memberIds) {
+            const position = nodePositions.get(memberId);
+            if (!position) continue;
+            displacement += Math.abs(delta);
+            if (isHorizontal) position.y += delta;
+            else position.x += delta;
+          }
+        }
+      }
+
+      if (orderingSwapCount === 0) return;
+
+      alternatives.push({
+        ...candidate,
+        candidateId: `${candidate.candidateId}:adj:${alternatives.length}`,
+        nodePositions,
+        households,
+        generationOrders: Object.fromEntries(
+          [...byGeneration.keys()].map((generation) => [
+            generation,
+            households
+              .filter((household) => (household.generation ?? 0) === generation)
+              .sort((left, right) => left.x0 - right.x0)
+              .map((household) => household.id),
+          ]),
+        ),
+        orderingDisplacement: displacement,
+        orderingSwapCount,
+      });
+      return;
+    }
+    const row = rows[index];
+    for (const households of row.choices) {
+      visit(index + 1, [...selected, { generation: row.generation, households }]);
+      if (alternatives.length >= limit) return;
+    }
+  };
+  visit(0, []);
+  return alternatives;
+}
+
+/**
  * Extract a lightweight in-memory snapshot for growth stability.
  * Never persisted to trees.data.
  */

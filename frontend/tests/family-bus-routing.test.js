@@ -113,7 +113,8 @@ test('anonymized production snapshot remains routing-safe after the fix', async 
   assert.ok((layout.meta.maxLaneCount || 0) <= 4);
   assert.equal(findFalseJunctionsBetweenUnrelatedFamilies(layout).length, 0);
   assert.equal(findAmbiguousSharedSegments(layout).length, 0);
-  assert.equal(routingMetrics(layout.links).totalParentChildLength, 14412.405);
+  assert.equal(routingMetrics(layout.links).totalParentChildLength, 9177.681);
+  assert.equal(layout.meta.acceptedLocalOrderSwaps, 3);
   assert.equal(findCardOverlaps(layout.nodes).length, 0);
   assert.equal(findMissingVisibleParentChildLinks(fixture.people, layout).length, 0);
   assert.equal(findMissingVisibleSpouseLinks(fixture.people, layout).length, 0);
@@ -126,6 +127,26 @@ test('production routing lane optimization is deterministic for every connected 
     .map((person) => person.id)
     .sort();
   const snapshots = [];
+  const phaseOneBaseline = {
+    p001: [40, 8],
+    p002: [28, 5],
+    p003: [32, 5],
+    p004: [44, 9],
+    p005: [24, 6],
+    p006: [24, 6],
+    p007: [34, 7],
+    p010: [16, 3],
+    p011: [28, 4],
+    p012: [16, 3],
+    p013: [14, 4],
+    p014: [14, 4],
+    p015: [26, 5],
+    p016: [28, 4],
+    p017: [32, 8],
+    p018: [26, 5],
+    p019: [18, 5],
+    p020: [16, 3],
+  };
   for (const centerId of ids) {
     const layout = layoutFamilyTree(fixture.people, { centerId, orientation: 'vertical' });
     const crossings = findUnrelatedCrossingSites(layout.links).filter(
@@ -138,21 +159,32 @@ test('production routing lane optimization is deterministic for every connected 
       jumps: uniqueRenderedJumpPoints(layout.links).length,
       lanes: layout.meta.maxLaneCount,
       pathLength: routingMetrics(layout.links).totalParentChildLength,
+      acceptedSwaps: layout.meta.acceptedLocalOrderSwaps || 0,
     });
     assert.equal(findCardOverlaps(layout.nodes).length, 0);
     assert.equal(findMissingVisibleParentChildLinks(fixture.people, layout).length, 0);
     assert.equal(findMissingVisibleSpouseLinks(fixture.people, layout).length, 0);
     assert.equal(findFalseJunctionsBetweenUnrelatedFamilies(layout).length, 0);
     assert.equal(findAmbiguousSharedSegments(layout).length, 0);
+    const baseline = phaseOneBaseline[centerId];
+    assert.ok(baseline, `missing baseline for ${centerId}`);
+    assert.ok(crossings.length <= baseline[0]);
+    assert.ok(uniqueRenderedJumpPoints(layout.links).length <= baseline[1]);
+    assert.ok((layout.meta.acceptedLocalOrderSwaps || 0) <= ids.length);
     const repeat = layoutFamilyTree(fixture.people, { centerId, orientation: 'vertical' });
     assert.deepEqual(
       layout.nodes.map(({ id, x, y }) => ({ id, x, y })),
       repeat.nodes.map(({ id, x, y }) => ({ id, x, y })),
     );
   }
-  assert.equal(snapshots.find((row) => row.centerId === 'p001').crossings, 40);
-  assert.equal(snapshots.find((row) => row.centerId === 'p001').jumps, 8);
-  assert.equal(snapshots.find((row) => row.centerId === 'p004').crossings, 44);
-  assert.equal(snapshots.find((row) => row.centerId === 'p004').jumps, 9);
+  assert.equal(snapshots.find((row) => row.centerId === 'p001').crossings, 20);
+  assert.equal(snapshots.find((row) => row.centerId === 'p001').jumps, 4);
+  assert.equal(snapshots.find((row) => row.centerId === 'p004').crossings, 16);
+  assert.equal(snapshots.find((row) => row.centerId === 'p004').jumps, 3);
+  assert.equal(snapshots.find((row) => row.centerId === 'p007').crossings, 14);
+  assert.equal(snapshots.find((row) => row.centerId === 'p007').jumps, 4);
+  assert.equal(snapshots.find((row) => row.centerId === 'p019').crossings, 18);
+  assert.equal(snapshots.find((row) => row.centerId === 'p019').jumps, 5);
+  assert.equal(snapshots.find((row) => row.centerId === 'p019').acceptedSwaps, 0);
   assert.ok(snapshots.every((row) => row.lanes <= 4));
 });
